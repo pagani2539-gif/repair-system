@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { repairApi } from '../api';
+import { repairApi, UPLOAD_URL } from '../api';
 import { useNotification } from '../components/Layout';
 import type { RepairDetail as IRepairDetail } from '../types';
 import { 
@@ -19,7 +19,6 @@ import {
   Clock,
   Settings
 } from 'lucide-react';
-import { generateRepairPDF } from '../utils/pdfGenerator';
 import PrintTemplate from '../components/PrintTemplate';
 
 const RepairDetail: React.FC = () => {
@@ -31,7 +30,6 @@ const RepairDetail: React.FC = () => {
   const [showStatusModal, setShowStatusModal] = useState(false);
   const [showDeviceModal, setShowDeviceModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
-  const [pdfLoading, setPdfLoading] = useState(false);
   
   const [statusForm, setStatusForm] = useState({ status: '', note: '' });
   const [deviceForm, setDeviceForm] = useState({
@@ -47,6 +45,15 @@ const RepairDetail: React.FC = () => {
     problem: '',
     priority: ''
   });
+
+  const parseDate = (dateStr: string) => {
+    if (!dateStr) return new Date();
+    // If it's SQLite format "YYYY-MM-DD HH:MM:SS", convert to ISO UTC
+    if (dateStr.includes(' ') && !dateStr.includes('T')) {
+      return new Date(dateStr.replace(' ', 'T') + 'Z');
+    }
+    return new Date(dateStr);
+  };
 
   const fetchRepair = React.useCallback(async () => {
     if (!id) return;
@@ -81,7 +88,8 @@ const RepairDetail: React.FC = () => {
     };
     markAsRead();
     fetchRepair();
-  }, [fetchRepair, id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   const handleStatusUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -141,33 +149,53 @@ const RepairDetail: React.FC = () => {
     }
   };
 
-  const [showPrintModal, setShowPrintModal] = useState(false);
-  const [pdfBlob, setPdfBlob] = useState<Blob | null>(null);
+  const handlePrint = () => {
+    const element = document.getElementById('pdf-print-template');
+    if (!element) return;
 
-  const handlePrint = async () => {
-    if (!repair) return;
-    setPdfLoading(true);
-    try {
-      const blob = await generateRepairPDF('pdf-print-template');
-      if (blob) {
-        setPdfBlob(blob);
-        setShowPrintModal(true);
-      }
-    } catch {
-      notify('ไม่สามารถสร้างไฟล์ PDF ได้', 'error');
-    } finally {
-      setPdfLoading(false);
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      alert('กรุณาอนุญาตให้เปิด Pop-up window เพื่อพิมพ์ใบงาน\n(Allow pop-up in your browser)');
+      return;
     }
-  };
 
-  const downloadPDF = () => {
-    if (!pdfBlob || !repair) return;
-    const url = URL.createObjectURL(pdfBlob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${repair.location}_${repair.device_name}_${repair.technician || 'ไม่ระบุ'}.pdf`;
-    link.click();
-    setShowPrintModal(false);
+    printWindow.document.write(`<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <title>ใบงาน - ${repair?.ticket_no || ''}</title>
+  <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    @page { size: A4 portrait; margin: 0; }
+    html, body {
+      margin: 0; padding: 0;
+      width: 210mm; height: 297mm;
+      background: #fff;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+      overflow: hidden;
+    }
+    * { box-sizing: border-box; }
+    #pdf-print-template {
+      position: relative !important;
+      left: 0 !important;
+      top: 0 !important;
+    }
+  </style>
+</head>
+<body>
+  ${element.outerHTML}
+</body>
+</html>`);
+
+    printWindow.document.close();
+    printWindow.focus();
+
+    // Wait for fonts/images to load then print
+    setTimeout(() => {
+      printWindow.print();
+      printWindow.close();
+    }, 800);
   };
 
   if (loading) return (
@@ -187,28 +215,27 @@ const RepairDetail: React.FC = () => {
           <ArrowLeft size={18} /> ย้อนกลับ
         </button>
         <div style={{ display: 'flex', gap: '10px' }}>
-          <button className="btn btn-outline" style={{ borderColor: '#ef4444', color: '#ef4444' }} onClick={handleDelete}>
+          <button className="btn btn-outline" style={{ borderColor: '#dc2626', color: '#dc2626' }} onClick={handleDelete}>
             <Trash2 size={18} /> ลบรายการ
           </button>
           <button 
             className="btn btn-primary" 
-            style={{ backgroundColor: '#ef4444' }} 
+            style={{ backgroundColor: '#dc2626' }} 
             onClick={handlePrint}
-            disabled={pdfLoading}
           >
-            {pdfLoading ? <div className="spinner" style={{ width: '16px', height: '16px', borderTopColor: 'white' }}></div> : <FileText size={18} />}
-            ปริ้น PDF
+            <FileText size={18} /> ปริ้นใบงาน
           </button>
         </div>
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2.5rem', padding: '1.5rem', backgroundColor: '#f8fafc', borderRadius: '12px', border: '1px solid var(--border)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2.5rem', padding: '1.5rem', backgroundColor: '#f1f5f9', borderRadius: '12px', border: '1px solid var(--border)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
           <div>
             <h2 style={{ margin: 0, fontSize: '1.75rem', fontWeight: 800 }}>TICKET: {repair.ticket_no}</h2>
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginTop: '0.5rem', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Calendar size={14}/> {new Date(repair.created_at).toLocaleString('th-TH')}</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Clock size={14}/> ล่าสุด: {new Date(repair.updated_at).toLocaleString('th-TH')}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Clock size={14}/> รับเรื่องเมื่อ: {parseDate(repair.received_at).toLocaleString('th-TH')}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Calendar size={14}/> บันทึกเมื่อ: {parseDate(repair.created_at).toLocaleString('th-TH')}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Settings size={14}/> อัปเดตล่าสุด: {parseDate(repair.updated_at).toLocaleString('th-TH')}</div>
             </div>
           </div>
           <span className={`badge badge-${repair.status}`} style={{ fontSize: '0.9rem', padding: '6px 16px' }}>
@@ -261,18 +288,18 @@ const RepairDetail: React.FC = () => {
               </div>
             </div>
             <div style={{ marginTop: '2rem', borderTop: '1px solid var(--border)', paddingTop: '1.5rem' }}>
-              <label style={{ color: 'var(--text-muted)', fontSize: '0.85rem', fontWeight: 600, display: 'block', marginBottom: '10px' }}>อาการเสีย / ปัญหาที่พบ</label>
-              <p style={{ background: '#f8fafc', padding: '1.25rem', borderRadius: '12px', border: '1px solid var(--border)', fontSize: '1rem', lineHeight: '1.6' }}>
-                {repair.problem}
-              </p>
+            <label style={{ color: 'var(--text-muted)', fontSize: '0.85rem', fontWeight: 600, display: 'block', marginBottom: '10px' }}>อาการเสีย / ปัญหาที่พบ</label>
+            <p style={{ background: '#f1f5f9', padding: '1.25rem', borderRadius: '12px', border: '1px solid var(--border)', fontSize: '1rem', lineHeight: '1.6' }}>
+              {repair.problem}
+            </p>
             </div>
             {repair.repair_note && (
-              <div style={{ marginTop: '1.5rem' }}>
-                <label style={{ color: '#166534', fontSize: '0.85rem', fontWeight: 700, display: 'block', marginBottom: '10px' }}>บันทึกการแก้ไขจากช่าง (Final Note)</label>
-                <p style={{ background: '#f0fdf4', padding: '1.25rem', borderRadius: '12px', border: '1px solid #bbf7d0', color: '#166534', fontWeight: 500 }}>
-                  {repair.repair_note}
-                </p>
-              </div>
+            <div style={{ marginTop: '1.5rem' }}>
+              <label style={{ color: '#15803d', fontSize: '0.85rem', fontWeight: 700, display: 'block', marginBottom: '10px' }}>บันทึกการแก้ไขจากช่าง (Final Note)</label>
+              <p style={{ background: '#f0fdf4', padding: '1.25rem', borderRadius: '12px', border: '1px solid #bbf7d0', color: '#15803d', fontWeight: 500 }}>
+                {repair.repair_note}
+              </p>
+            </div>
             )}
           </div>
 
@@ -297,7 +324,7 @@ const RepairDetail: React.FC = () => {
                   <div style={{ paddingBottom: '0.5rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.5rem' }}>
                       <span style={{ fontWeight: 800, color: index === 0 ? 'var(--text-main)' : 'var(--text-muted)' }}>{log.action}</span>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', background: '#f1f5f9', padding: '2px 8px', borderRadius: '4px' }}>{new Date(log.created_at).toLocaleString('th-TH')}</span>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', background: '#f1f5f9', padding: '2px 8px', borderRadius: '4px' }}>{parseDate(log.created_at).toLocaleString('th-TH')}</span>
                     </div>
                     <p style={{ fontSize: '0.95rem', color: 'var(--text-main)', marginBottom: '0.5rem', lineHeight: '1.5' }}>{log.note}</p>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: 'var(--primary)', fontWeight: 600 }}>
@@ -320,11 +347,11 @@ const RepairDetail: React.FC = () => {
                 {repair.images.map(img => (
                   <div key={img.id} style={{ borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--border)', cursor: 'zoom-in' }}>
                     <img 
-                      src={`http://localhost:5221/${img.file_path}`} 
+                      src={`${UPLOAD_URL}/${img.file_path}`} 
                       crossOrigin="anonymous"
                       alt="repair evidence" 
                       style={{ width: '100%', height: '120px', objectFit: 'cover' }} 
-                      onClick={() => window.open(`http://localhost:5000/${img.file_path}`, '_blank')}
+                      onClick={() => window.open(`${UPLOAD_URL}/${img.file_path}`, '_blank')}
                     />
                   </div>
                 ))}
@@ -350,7 +377,7 @@ const RepairDetail: React.FC = () => {
                 {repair.devices.map(dev => (
                   <div key={dev.id} style={{ padding: '1rem', background: '#f8fafc', border: '1px solid var(--border)', borderRadius: '12px', fontSize: '0.9rem' }}>
                     <div style={{ marginBottom: '0.75rem', fontWeight: 700, color: 'var(--primary)', borderBottom: '1px solid var(--border)', paddingBottom: '4px' }}>
-                      <Calendar size={14} /> {new Date(dev.changed_at).toLocaleDateString('th-TH')}
+                      <Calendar size={14} /> {parseDate(dev.changed_at).toLocaleDateString('th-TH')}
                     </div>
                     <div style={{ color: '#ef4444', marginBottom: '8px' }}>
                        <strong>ถอดออก:</strong> {dev.old_model} <br/>
@@ -471,25 +498,6 @@ const RepairDetail: React.FC = () => {
                 <button type="submit" className="btn btn-primary">ยืนยันการเปลี่ยน</button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
-      {/* Print Preview Modal */}
-      {showPrintModal && repair && (
-        <div className="modal-overlay">
-          <div className="modal-content" style={{ maxWidth: '820px', maxHeight: '90vh', overflowY: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <h3><FileText size={20} color="var(--primary)" /> ตัวอย่างใบรายงาน</h3>
-              <button type="button" className="btn btn-outline" onClick={() => setShowPrintModal(false)}>ปิด</button>
-            </div>
-            
-            <div style={{ transform: 'scale(0.7)', transformOrigin: 'top center', marginBottom: '-250px' }}>
-              <PrintTemplate repair={repair} isPreview={true} />
-            </div>
-
-            <div className="modal-actions" style={{ marginTop: '1.5rem', borderTop: '1px solid var(--border)', paddingTop: '1rem' }}>
-              <button type="button" className="btn btn-primary" onClick={downloadPDF}>ดาวน์โหลด PDF</button>
-            </div>
           </div>
         </div>
       )}

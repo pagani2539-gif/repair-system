@@ -10,7 +10,8 @@ import {
   MapPin, 
   Laptop, 
   AlertCircle,
-  FileText
+  FileText,
+  Clock
 } from 'lucide-react';
 
 const NewClaim: React.FC = () => {
@@ -22,15 +23,16 @@ const NewClaim: React.FC = () => {
     location: '',
     device_name: '',
     problem: '',
-    priority: 'ปกติ'
+    priority: 'ปกติ',
+    received_at: new Date().toLocaleString('sv-SE').replace(' ', 'T').slice(0, 16)
   });
   const [images, setImages] = useState<File[]>([]);
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       const newImages = Array.from(e.target.files);
-      if (images.length + newImages.length > 2) {
-        notify('จำกัดการอัปโหลดสูงสุด 2 รูปเท่านั้น', 'error');
+      if (images.length + newImages.length > 4) {
+        notify('จำกัดการอัปโหลดสูงสุด 4 รูปเท่านั้น', 'error');
         return;
       }
       setImages([...images, ...newImages]);
@@ -56,7 +58,11 @@ const NewClaim: React.FC = () => {
     try {
       const data = new FormData();
       Object.entries(formData).forEach(([key, value]) => {
-        data.append(key, value);
+        if (key === 'received_at') {
+          data.append(key, new Date(value).toISOString());
+        } else {
+          data.append(key, value);
+        }
       });
       images.forEach(image => {
         data.append('images', image);
@@ -96,6 +102,24 @@ const NewClaim: React.FC = () => {
               />
             </div>
             <div className="form-group">
+              <label><Clock size={16} color="var(--primary)" /> เวลาที่รับเรื่อง</label>
+              <input 
+                type="datetime-local" 
+                required 
+                value={formData.received_at}
+                onChange={(e) => setFormData({...formData, received_at: e.target.value})}
+              />
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                เวลาไทย: {new Date(formData.received_at).toLocaleString('th-TH', { 
+                  year: 'numeric', month: 'long', day: 'numeric', 
+                  hour: '2-digit', minute: '2-digit' 
+                })}
+              </div>
+            </div>
+          </div>
+
+          <div className="form-grid">
+            <div className="form-group">
               <label><AlertTriangle size={16} color="var(--warning)" /> ระดับความสำคัญ</label>
               <select 
                 value={formData.priority}
@@ -104,19 +128,6 @@ const NewClaim: React.FC = () => {
                 <option value="ปกติ">ปกติ (Normal)</option>
                 <option value="ด่วน">ด่วน (High)</option>
               </select>
-            </div>
-          </div>
-
-          <div className="form-grid">
-            <div className="form-group">
-              <label><Laptop size={16} color="var(--primary)" /> ชื่ออุปกรณ์ / รุ่น (เพื่อการเคลม)</label>
-              <input 
-                type="text" 
-                required 
-                placeholder="ชื่ออุปกรณ์และ Serial Number"
-                value={formData.device_name}
-                onChange={(e) => setFormData({...formData, device_name: e.target.value})}
-              />
             </div>
             <div className="form-group">
               <label><MapPin size={16} color="var(--danger)" /> สถานที่ / จุดติดตั้ง</label>
@@ -131,6 +142,17 @@ const NewClaim: React.FC = () => {
           </div>
 
           <div className="form-group">
+            <label><Laptop size={16} color="var(--primary)" /> ชื่ออุปกรณ์ / รุ่น (เพื่อการเคลม)</label>
+            <input 
+              type="text" 
+              required 
+              placeholder="ชื่ออุปกรณ์และ Serial Number"
+              value={formData.device_name}
+              onChange={(e) => setFormData({...formData, device_name: e.target.value})}
+            />
+          </div>
+
+          <div className="form-group">
             <label><AlertCircle size={16} color="var(--primary)" /> เหตุผลการเคลม / อาการเสีย</label>
             <textarea 
               required 
@@ -142,26 +164,18 @@ const NewClaim: React.FC = () => {
           </div>
 
           <div className="form-group">
-            <label><FileText size={16} color="var(--primary)" /> รูปภาพหลักฐานการเคลม (สูงสุด 2 รูป)</label>
-            <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
-              {images.map((image, index) => (
-                <div key={index} style={{ position: 'relative', width: '140px', height: '140px', border: '1px solid var(--border)', borderRadius: '16px', overflow: 'hidden' }}>
-                  <img 
-                    src={URL.createObjectURL(image)} 
-                    alt="preview" 
-                    style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
-                  />
-                  <button 
-                    type="button" 
-                    onClick={() => removeImage(index)}
-                    style={{ position: 'absolute', top: '8px', right: '8px', background: 'rgba(239, 68, 68, 0.9)', border: 'none', borderRadius: '50%', width: '28px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'white', backdropFilter: 'blur(4px)' }}
-                  >
+            <label><FileText size={16} color="var(--primary)" /> รูปภาพหลักฐานการเคลม (สูงสุด 4 รูป)</label>
+            <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginTop: '0.85rem' }}>
+               {images.map((image, index) => (
+                <div key={index} className="image-preview-card">
+                  <img src={URL.createObjectURL(image)} alt="preview" />
+                  <button type="button" className="remove-btn" onClick={() => removeImage(index)}>
                     <X size={16} />
                   </button>
                 </div>
               ))}
-              {images.length < 2 && (
-                <label style={{ width: '140px', height: '140px', border: '2px dashed var(--border)', borderRadius: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-muted)', transition: 'all 0.2s', background: '#f8fafc' }}>
+              {images.length < 4 && (
+                <label className="image-uploader-box">
                   <Upload size={24} />
                   <span style={{ fontSize: '0.85rem', marginTop: '0.5rem', fontWeight: 600 }}>เพิ่มรูปภาพ</span>
                   <input type="file" multiple accept="image/*" style={{ display: 'none' }} onChange={handleImageChange} />

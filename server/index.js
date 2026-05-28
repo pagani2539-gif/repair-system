@@ -30,15 +30,25 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
   }
 }));
 
-// Simple check
-app.get('/', (req, res) => {
-  res.json({ message: 'Repair System API is running' });
-});
-
 // Import Routes
 const repairRoutes = require('./routes/repairs');
 app.use('/api/repairs', repairRoutes);
 console.log('Routes mounted on /api/repairs');
+
+// Serve static frontend files in production if dist folder exists
+const distPath = path.join(__dirname, '../client/dist');
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath));
+  console.log('Serving production frontend from client/dist');
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+} else {
+  // Simple check in development/API-only mode
+  app.get('/', (req, res) => {
+    res.json({ message: 'Repair System API is running (Development Mode)' });
+  });
+}
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);

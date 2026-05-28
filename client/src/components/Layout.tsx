@@ -34,7 +34,8 @@ export const useNotification = () => {
 };
 
 const Layout: React.FC = () => {
-  const [unreadCount, setUnreadCount] = useState(0);
+  const [unreadRepairCount, setUnreadRepairCount] = useState(0);
+  const [unreadClaimCount, setUnreadClaimCount] = useState(0);
   const [notifications, setNotifications] = useState<Notification[]>([]);
 
   const notify = (message: string, type: NotificationType = 'success') => {
@@ -49,21 +50,56 @@ const Layout: React.FC = () => {
     setNotifications(prev => prev.filter(n => n.id !== id));
   };
 
-  const prevUnreadCount = React.useRef(0);
+  const prevUnreadRepairCount = React.useRef(0);
+  const prevUnreadClaimCount = React.useRef(0);
+
+  const playNotificationSound = () => {
+    try {
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(880, audioContext.currentTime); // A5 note
+
+      gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+      gainNode.gain.linearRampToValueAtTime(0.3, audioContext.currentTime + 0.05);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+
+      oscillator.start();
+      oscillator.stop(audioContext.currentTime + 0.5);
+    } catch (err) {
+      console.error('Failed to play notification sound:', err);
+    }
+  };
 
   useEffect(() => {
     const fetchUnread = async () => {
       try {
-        const { count } = await repairApi.getUnreadCount();
-        
-        // If unread count increased, notify user
-        if (count > prevUnreadCount.current && prevUnreadCount.current !== 0) {
-          console.log('New ticket detected, triggering notification...');
-          notify(`มีงานแจ้งซ่อมใหม่เข้ามา ${count - prevUnreadCount.current} รายการ`, 'info');
+        const data = await repairApi.getUnreadCount();
+        const { repair, claim } = data;
+
+        // If unread repair count increased, notify user
+        if (repair > prevUnreadRepairCount.current && prevUnreadRepairCount.current !== 0) {
+          console.log('New repair ticket detected, triggering notification...');
+          notify(`มีงานแจ้งซ่อมใหม่เข้ามา ${repair - prevUnreadRepairCount.current} รายการ`, 'info');
+          playNotificationSound();
         }
-        
-        prevUnreadCount.current = count;
-        setUnreadCount(count);
+
+        // If unread claim count increased, notify user
+        if (claim > prevUnreadClaimCount.current && prevUnreadClaimCount.current !== 0) {
+          console.log('New claim ticket detected, triggering notification...');
+          notify(`มีงานแจ้งเคลมใหม่เข้ามา ${claim - prevUnreadClaimCount.current} รายการ`, 'info');
+          playNotificationSound();
+        }
+
+        prevUnreadRepairCount.current = repair;
+        prevUnreadClaimCount.current = claim;
+        setUnreadRepairCount(repair);
+        setUnreadClaimCount(claim);
       } catch (err) {
         console.error('Failed to fetch unread count:', err);
       }
@@ -109,7 +145,7 @@ const Layout: React.FC = () => {
             </NavLink>
             <NavLink to="/repairs" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
               <ClipboardList size={18} /> ติดตามสถานะ
-              {unreadCount > 0 && <span className="badge" style={{ marginLeft: 'auto', backgroundColor: '#ef4444', color: 'white', fontSize: '0.7rem' }}>{unreadCount}</span>}
+              {unreadRepairCount > 0 && <span className="badge" style={{ marginLeft: 'auto', backgroundColor: '#dc2626', color: 'white', fontSize: '0.7rem' }}>{unreadRepairCount}</span>}
             </NavLink>
             <NavLink to="/new" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
               <PlusCircle size={18} /> แจ้งซ่อมใหม่
@@ -118,7 +154,8 @@ const Layout: React.FC = () => {
               <PlusCircle size={18} /> แจ้งเคลมอุปกรณ์
             </NavLink>
             <NavLink to="/claim-history" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-              <History size={18} /> ประวัติการส่งเคลม
+              <History size={18} /> สถานะเคลมสินค้า
+              {unreadClaimCount > 0 && <span className="badge" style={{ marginLeft: 'auto', backgroundColor: '#dc2626', color: 'white', fontSize: '0.7rem' }}>{unreadClaimCount}</span>}
             </NavLink>
           </nav>
         </aside>

@@ -21,6 +21,9 @@ db.serialize(() => {
       status TEXT DEFAULT 'รอดำเนินการ',
       technician TEXT,
       repair_note TEXT,
+      is_read INTEGER DEFAULT 0,
+      type TEXT DEFAULT 'repair',
+      received_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )

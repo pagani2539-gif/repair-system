@@ -8,13 +8,22 @@ const generateTicketNo = () => {
 };
 
 exports.getUnreadCount = (req, res) => {
-  db.get("SELECT COUNT(*) as count FROM repairs WHERE is_read = 0", (err, row) => {
+  db.all("SELECT type, COUNT(*) as count FROM repairs WHERE is_read = 0 GROUP BY type", (err, rows) => {
     if (err) {
       console.error("Database error in getUnreadCount:", err);
       return res.status(500).json({ error: err.message });
     }
-    console.log("Unread count from DB:", row.count);
-    res.json({ count: row.count });
+    
+    const repairUnread = (rows && rows.find(r => r.type === 'repair')?.count) || 0;
+    const claimUnread = (rows && rows.find(r => r.type === 'claim')?.count) || 0;
+    
+    console.log("Unread count from DB: repair =", repairUnread, ", claim =", claimUnread);
+    res.json({ 
+      repair: repairUnread, 
+      claim: claimUnread, 
+      total: repairUnread + claimUnread,
+      count: repairUnread + claimUnread
+    });
   });
 };
 
@@ -94,13 +103,13 @@ exports.getRepairById = (req, res) => {
 };
 
 exports.createRepair = (req, res) => {
-  const { reporter, location, device_name, problem, priority } = req.body;
+  const { reporter, location, device_name, problem, priority, received_at } = req.body;
   const ticket_no = generateTicketNo();
 
   db.run(`
-    INSERT INTO repairs (ticket_no, reporter, location, device_name, problem, priority, status, is_read, type)
-    VALUES (?, ?, ?, ?, ?, ?, 'รอดำเนินการ', 0, 'repair')
-  `, [ticket_no, reporter, location, device_name, problem, priority || 'ปกติ'], function(err) {
+    INSERT INTO repairs (ticket_no, reporter, location, device_name, problem, priority, status, is_read, type, received_at)
+    VALUES (?, ?, ?, ?, ?, ?, 'รอดำเนินการ', 0, 'repair', ?)
+  `, [ticket_no, reporter, location, device_name, problem, priority || 'ปกติ', received_at || new Date().toISOString()], function(err) {
     if (err) return res.status(500).json({ error: err.message });
     
     const repairId = this.lastID;
@@ -123,13 +132,13 @@ exports.createRepair = (req, res) => {
 };
 
 exports.createClaim = (req, res) => {
-  const { reporter, location, device_name, problem, priority } = req.body;
+  const { reporter, location, device_name, problem, priority, received_at } = req.body;
   const ticket_no = generateTicketNo();
 
   db.run(`
-    INSERT INTO repairs (ticket_no, reporter, location, device_name, problem, priority, status, is_read, type)
-    VALUES (?, ?, ?, ?, ?, ?, 'รอดำเนินการ', 0, 'claim')
-  `, [ticket_no, reporter, location, device_name, problem, priority || 'ปกติ'], function(err) {
+    INSERT INTO repairs (ticket_no, reporter, location, device_name, problem, priority, status, is_read, type, received_at)
+    VALUES (?, ?, ?, ?, ?, ?, 'รอดำเนินการ', 0, 'claim', ?)
+  `, [ticket_no, reporter, location, device_name, problem, priority || 'ปกติ', received_at || new Date().toISOString()], function(err) {
     if (err) return res.status(500).json({ error: err.message });
     
     const repairId = this.lastID;

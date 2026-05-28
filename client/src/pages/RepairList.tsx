@@ -34,6 +34,14 @@ const RepairList: React.FC = () => {
   const [showModal, setShowModal] = useState<{ id: number, type: 'receive' | 'complete' | 'hold' } | null>(null);
   const [modalData, setModalData] = useState({ technician: '', note: '' });
 
+  const parseDate = (dateStr: string) => {
+    if (!dateStr) return new Date();
+    if (dateStr.includes(' ') && !dateStr.includes('T')) {
+      return new Date(dateStr.replace(' ', 'T') + 'Z');
+    }
+    return new Date(dateStr);
+  };
+
   const fetchData = React.useCallback(async () => {
     setLoading(true);
     try {
@@ -118,21 +126,21 @@ const RepairList: React.FC = () => {
         </div>
       </div>
 
-      <div className="stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '1.5rem', marginBottom: '2.5rem' }}>
+      <div className="stats-grid">
         {[
-          { label: 'งานทั้งหมด', val: stats?.repair.total, icon: Layers, color: '#3b82f6', bg: '#eff6ff' },
-          { label: 'รอดำเนินการ', val: stats?.repair.pending, icon: AlertCircle, color: '#ef4444', bg: '#fef2f2' },
-          { label: 'กำลังซ่อม', val: stats?.repair.in_progress, icon: Clock, color: '#f59e0b', bg: '#fffbeb' },
-          { label: 'รออะไหล่', val: stats?.repair.on_hold, icon: PauseCircle, color: '#8b5cf6', bg: '#f5f3ff' },
-          { label: 'เสร็จสิ้น', val: stats?.repair.completed, icon: CheckCircle2, color: '#10b981', bg: '#f0fdf4' }
+            { label: 'งานทั้งหมด', val: stats?.repair.total, icon: Layers },
+            { label: 'รอดำเนินการ', val: stats?.repair.pending, icon: AlertCircle },
+            { label: 'กำลังซ่อม', val: stats?.repair.in_progress, icon: Clock },
+            { label: 'รออะไหล่', val: stats?.repair.on_hold, icon: PauseCircle },
+            { label: 'เสร็จสิ้น', val: stats?.repair.completed, icon: CheckCircle2 }
         ].map((s, i) => (
-          <div key={i} className="card" style={{ display: 'flex', alignItems: 'center', gap: '1rem', padding: '1.5rem' }} onClick={() => setFilters({...filters, status: s.label === 'งานทั้งหมด' ? 'All' : s.label})}>
-            <div style={{ background: s.bg, color: s.color, padding: '12px', borderRadius: '12px' }}>
+          <div key={i} className="card" onClick={() => setFilters({...filters, status: s.label === 'งานทั้งหมด' ? 'All' : s.label})}>
+            <div className="stat-icon-wrapper">
               <s.icon size={24} />
             </div>
             <div>
-              <div style={{ fontSize: '1.5rem', fontWeight: 800 }}>{s.val || 0}</div>
-              <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{s.label}</div>
+              <div className="stat-value">{s.val || 0}</div>
+              <div className="stat-label">{s.label}</div>
             </div>
           </div>
         ))}
@@ -158,7 +166,7 @@ const RepairList: React.FC = () => {
           <p style={{ marginTop: '1rem', color: 'var(--text-muted)' }}>กำลังโหลดข้อมูล...</p>
         </div>
       ) : (
-        <div className="status-board" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))', gap: '1.5rem' }}>
+        <div className="status-board">
           {currentRepairs.length === 0 ? (
             <div className="card" style={{ gridColumn: '1/-1', textAlign: 'center', padding: '4rem', color: 'var(--text-muted)' }}>
               <Layers size={48} style={{ opacity: 0.2, marginBottom: '1rem' }} />
@@ -166,27 +174,32 @@ const RepairList: React.FC = () => {
             </div>
           ) : (
             currentRepairs.map((repair) => (
-              <div key={repair.id} className="card repair-card" style={{ padding: '1.5rem' }}>
-                <div className="repair-card-header" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
-                  <div>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.5px' }}>TICKET: {repair.ticket_no}</span>
-                    <div style={{ fontSize: '1.1rem', fontWeight: 800, marginTop: '2px' }}>{repair.device_name}</div>
-                  </div>
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    {repair.is_read === 0 && <span className="badge" style={{ backgroundColor: '#ef4444', color: 'white' }}>ใหม่</span>}
-                    <span className={`badge badge-${repair.status}`}>{repair.status}</span>
+              <div key={repair.id} className="card repair-card">
+                <div className="repair-card-header">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', width: '100%' }}>
+                    <div>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.5px' }}>TICKET: {repair.ticket_no}</span>
+                      <div style={{ fontSize: '1.1rem', fontWeight: 800, marginTop: '2px' }}>{repair.device_name}</div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      {repair.is_read === 0 && <span className="badge" style={{ backgroundColor: 'var(--danger)', color: 'white' }}>ใหม่</span>}
+                      <span className={`badge badge-${repair.status}`}>{repair.status}</span>
+                    </div>
                   </div>
                 </div>
-                <div className="repair-card-body" style={{ color: 'var(--text-main)', fontSize: '0.95rem' }}>
-                  <p style={{ margin: '0 0 1rem 0', color: 'var(--text-muted)' }}>{repair.problem}</p>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '0.5rem' }}>
+                <div className="repair-card-body">
+                  <p style={{ margin: 0, color: 'var(--text-muted)' }}>{repair.problem}</p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-main)', fontWeight: 500 }}>
                     <MapPin size={16} color="var(--danger)" /> {repair.location}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                    <User size={16} /> {repair.reporter}
+                    <User size={16} color="var(--primary)" /> {repair.reporter}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                    <Clock size={16} color="var(--primary)" /> {parseDate(repair.received_at).toLocaleString('th-TH')}
                   </div>
                 </div>
-                <div className="repair-card-footer" style={{ display: 'flex', gap: '3px', justifyContent: 'flex-end', marginTop: '1.5rem' }}>
+                <div className="repair-card-footer">
                   {repair.status === 'รอดำเนินการ' && (
                     <button className="btn btn-primary" onClick={() => setShowModal({ id: repair.id, type: 'receive' })}>
                       รับงาน
@@ -197,7 +210,7 @@ const RepairList: React.FC = () => {
                       <button className="btn btn-outline" onClick={() => setShowModal({ id: repair.id, type: 'hold' })}>
                         รออะไหล่
                       </button>
-                      <button className="btn btn-primary" style={{ backgroundColor: '#10b981' }} onClick={() => setShowModal({ id: repair.id, type: 'complete' })}>
+                      <button className="btn btn-primary" style={{ background: 'linear-gradient(135deg, var(--success) 0%, #047857 100%)', color: 'white', boxShadow: '0 4px 12px rgba(16, 185, 129, 0.2)' }} onClick={() => setShowModal({ id: repair.id, type: 'complete' })}>
                         ปิดงาน
                       </button>
                     </>
@@ -210,7 +223,7 @@ const RepairList: React.FC = () => {
                   <Link to={`/repairs/${repair.id}`} className="btn btn-outline" title="ดูรายละเอียด">
                     <Eye size={18} />
                   </Link>
-                  <button className="btn btn-outline" style={{ color: 'var(--danger)', borderColor: '#fee2e2' }} onClick={() => handleDelete(repair.id)} title="ลบ">
+                  <button className="btn btn-outline" style={{ color: 'var(--danger)', borderColor: 'var(--danger-border)' }} onClick={() => handleDelete(repair.id)} title="ลบ">
                     <Trash2 size={18} />
                   </button>
                 </div>

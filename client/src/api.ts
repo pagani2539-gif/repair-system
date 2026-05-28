@@ -1,7 +1,13 @@
 import axios from 'axios';
 import type { Repair, RepairDetail, RepairStatsResponse } from './types';
 
-const API_URL = 'http://localhost:5221/api';
+const API_URL = import.meta.env.DEV 
+  ? 'http://localhost:5221/api' 
+  : '/api';
+
+export const UPLOAD_URL = import.meta.env.DEV 
+  ? 'http://localhost:5221' 
+  : window.location.origin;
 
 const api = axios.create({
   baseURL: API_URL,
@@ -30,7 +36,7 @@ export const repairApi = {
   },
   
   getUnreadCount: async () => {
-    const response = await api.get<{ count: number }>('/repairs/unread-count');
+    const response = await api.get<{ repair: number; claim: number; total: number; count: number }>('/repairs/unread-count');
     return response.data;
   },
   
