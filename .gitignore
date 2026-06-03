@@ -4,5 +4,7 @@ dist/
 *.log
 .DS_Store
 server/database/repair_system.db
+server/database/backups/
 server/uploads/*
 !server/uploads/.gitkeep
+

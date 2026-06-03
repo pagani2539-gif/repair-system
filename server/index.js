@@ -32,8 +32,24 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
 
 // Import Routes
 const repairRoutes = require('./routes/repairs');
+const inventoryRoutes = require('./routes/inventory');
+const withdrawalRoutes = require('./routes/withdrawals');
+const transactionRoutes = require('./routes/transactions');
+const poRoutes = require('./routes/purchaseOrders');
+const searchRoutes = require('./routes/search');
+const errorHandler = require('./middlewares/errorHandler');
+
 app.use('/api/repairs', repairRoutes);
-console.log('Routes mounted on /api/repairs');
+app.use('/api/inventory', inventoryRoutes);
+app.use('/api/withdrawals', withdrawalRoutes);
+app.use('/api/transactions', transactionRoutes);
+app.use('/api/purchase-orders', poRoutes);
+app.use('/api/search', searchRoutes);
+
+// Mount central error handler
+app.use(errorHandler);
+
+console.log('Routes mounted on /api/repairs, /api/inventory, /api/withdrawals, /api/purchase-orders');
 
 // Serve static frontend files in production if dist folder exists
 const distPath = path.join(__dirname, '../client/dist');

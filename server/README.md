@@ -28,9 +28,7 @@
       ```
     - หากมีการอัปเดตระบบ ให้รันไฟล์ migration (ถ้ามี):
       ```bash
-      node ../migrate.js
-      node ../migrate_type.js
-      node ../migrate_received_at.js
+      node ../scripts/migrate.js
       ```
 
 4.  **เริ่มการทำงาน (Start Server)**:
