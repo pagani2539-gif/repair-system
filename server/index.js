@@ -39,16 +39,24 @@ const poRoutes = require('./routes/purchaseOrders');
 const searchRoutes = require('./routes/search');
 const stationRoutes = require('./routes/stations');
 const settingsRoutes = require('./routes/settings');
+const authRoutes = require('./routes/auth');
+const usersRoutes = require('./routes/users');
 const errorHandler = require('./middlewares/errorHandler');
+const { requireAuth } = require('./middlewares/auth');
 
-app.use('/api/repairs', repairRoutes);
-app.use('/api/inventory', inventoryRoutes);
-app.use('/api/withdrawals', withdrawalRoutes);
-app.use('/api/transactions', transactionRoutes);
-app.use('/api/purchase-orders', poRoutes);
-app.use('/api/search', searchRoutes);
-app.use('/api/stations', stationRoutes);
-app.use('/api/settings', settingsRoutes);
+// Public auth routes — must be mounted BEFORE the global auth guard
+app.use('/api/auth', authRoutes);
+
+// All other API routes require authentication
+app.use('/api/repairs', requireAuth, repairRoutes);
+app.use('/api/inventory', requireAuth, inventoryRoutes);
+app.use('/api/withdrawals', requireAuth, withdrawalRoutes);
+app.use('/api/transactions', requireAuth, transactionRoutes);
+app.use('/api/purchase-orders', requireAuth, poRoutes);
+app.use('/api/search', requireAuth, searchRoutes);
+app.use('/api/stations', requireAuth, stationRoutes);
+app.use('/api/settings', requireAuth, settingsRoutes);
+app.use('/api/users', requireAuth, usersRoutes);
 
 // Health check endpoint
 app.get('/api', (req, res) => {

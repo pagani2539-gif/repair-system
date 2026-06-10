@@ -1,4 +1,6 @@
 const db = require('../database/init');
+const { validateStationExists, validateStationAreaBelongsToStation, getStationSnapshotName } = require('../utils/stationValidation');
+const { logAudit } = require('../utils/auditLogger');
 
 // SQLite Query Helpers for Async/Await
 const queryAll = (sql, params = []) => new Promise((resolve, reject) => {
@@ -50,7 +52,10 @@ exports.getDashboardStats = async (req, res) => {
       stockMovements,
       purchaseOrderKpis,
       purchaseOrderSpent,
-      recentPurchaseOrders
+      recentPurchaseOrders,
+      topRecipients,
+      pendingReturns,
+      pendingReturnsCount
     ] = await Promise.all([
       // 1. KPIs
       queryGet(`
@@ -180,6 +185,54 @@ exports.getDashboardStats = async (req, res) => {
         GROUP BY po.id
         ORDER BY po.created_at DESC
         LIMIT 5
+      `),
+      // 18. Top Recipients (ผู้เบิกบ่อยที่สุด)
+      queryAll(`
+        SELECT
+          w.recipient as name,
+          COUNT(DISTINCT w.id) as count,
+          COALESCE(SUM(wi.quantity), 0) as items,
+          MAX(w.created_at) as last_withdrawal
+        FROM withdrawals w
+        LEFT JOIN withdrawal_items wi ON wi.withdrawal_id = w.id
+        WHERE w.recipient IS NOT NULL AND w.recipient != ''
+          AND ${timeCondition === "1=1" ? "1=1" : timeCondition.replace(/created_at/g, 'w.created_at')}
+        GROUP BY w.recipient
+        ORDER BY count DESC, items DESC
+        LIMIT 5
+      `, params),
+      // 19. Pending Returns (อุปกรณ์ค้างคืน — ยืม หรือ เบิกแบบทดสอบ/สำรอง ที่ยังไม่คืน)
+      // ต้อง JOIN withdrawals เพื่อดึง withdrawal_type และ JOIN inventory_instances เพื่อดึง serial_number
+      queryAll(`
+        SELECT
+          t.user_name as name,
+          i.name as product_name,
+          inst.serial_number,
+          t.transaction_type,
+          w.type as withdrawal_type,
+          CAST(julianday('now') - julianday(t.created_at) AS INTEGER) as days_out
+        FROM inventory_transactions t
+        JOIN inventory i ON t.inventory_id = i.id
+        LEFT JOIN inventory_instances inst ON t.instance_id = inst.id
+        LEFT JOIN withdrawals w ON t.withdrawal_id = w.id
+        WHERE (t.status IS NULL OR t.status != 'RETURNED')
+          AND (
+            t.transaction_type = 'BORROW'
+            OR (t.transaction_type = 'WITHDRAW' AND w.type IN ('ทดสอบ', 'สำรองใช้งาน'))
+          )
+        ORDER BY days_out DESC
+        LIMIT 6
+      `),
+      // 20. Pending Returns Count (จำนวนรวมที่ค้างคืน)
+      queryGet(`
+        SELECT COUNT(*) as count
+        FROM inventory_transactions t
+        LEFT JOIN withdrawals w ON t.withdrawal_id = w.id
+        WHERE (t.status IS NULL OR t.status != 'RETURNED')
+          AND (
+            t.transaction_type = 'BORROW'
+            OR (t.transaction_type = 'WITHDRAW' AND w.type IN ('ทดสอบ', 'สำรองใช้งาน'))
+          )
       `)
     ]);
 
@@ -211,6 +264,11 @@ exports.getDashboardStats = async (req, res) => {
       },
       withdrawalBreakdown,
       stockMovements,
+      people: {
+        topRecipients,
+        pendingReturns,
+        pendingReturnsCount: pendingReturnsCount.count || 0
+      },
       purchaseOrders: {
         total_po: purchaseOrderKpis.total_po || 0,
         pending_po: purchaseOrderKpis.pending_po || 0,
@@ -255,8 +313,12 @@ exports.getUnreadCount = (req, res) => {
 };
 
 exports.getAllRepairs = (req, res) => {
-  const { status, location, search, type, priority, sortBy } = req.query;
-  let query = 'SELECT * FROM repairs WHERE 1=1';
+  const { status, location, station_id, search, type, priority, sortBy } = req.query;
+  let query = `
+    SELECT *
+    FROM repairs_view
+    WHERE 1=1
+  `;
   const params = [];
 
   if (type) {
@@ -269,9 +331,12 @@ exports.getAllRepairs = (req, res) => {
     params.push(status);
   }
 
-  if (location && location !== 'All' && location !== 'ทั้งหมด') {
-    query += ' AND location = ?';
-    params.push(location);
+  if (station_id) {
+    query += ' AND station_id = ?';
+    params.push(station_id);
+  } else if (location && location !== 'All' && location !== 'ทั้งหมด') {
+    query += ' AND (location = ? OR location_snapshot = ? OR station_name = ?)';
+    params.push(location, location, location);
   }
 
   if (priority && priority !== 'All' && priority !== 'ทั้งหมด') {
@@ -280,9 +345,9 @@ exports.getAllRepairs = (req, res) => {
   }
 
   if (search) {
-    query += ' AND (ticket_no LIKE ? OR reporter LIKE ? OR problem LIKE ? OR device_name LIKE ? OR location LIKE ? OR project_name LIKE ?)';
+    query += ' AND (ticket_no LIKE ? OR reporter LIKE ? OR problem LIKE ? OR device_name LIKE ? OR location LIKE ? OR location_snapshot LIKE ? OR project_name LIKE ? OR station_name LIKE ?)';
     const searchParam = `%${search}%`;
-    params.push(searchParam, searchParam, searchParam, searchParam, searchParam, searchParam);
+    params.push(searchParam, searchParam, searchParam, searchParam, searchParam, searchParam, searchParam, searchParam);
   }
 
   if (sortBy === 'oldest') {
@@ -322,17 +387,19 @@ exports.getStats = (req, res) => {
     res.json(stats);
   });
 };
-
 exports.getRepairById = (req, res) => {
   const { id } = req.params;
   
-  db.get('SELECT * FROM repairs WHERE id = ?', [id], (err, repair) => {
+  db.get('SELECT * FROM repairs_view WHERE id = ?', [id], (err, repair) => {
     if (err) return res.status(500).json({ error: err.message });
     if (!repair) return res.status(404).json({ message: 'ไม่พบข้อมูล' });
 
     db.all('SELECT * FROM repair_logs WHERE repair_id = ? ORDER BY created_at DESC', [id], (err, logs) => {
+      if (err) return res.status(500).json({ error: err.message });
       db.all('SELECT * FROM repair_images WHERE repair_id = ?', [id], (err, images) => {
+        if (err) return res.status(500).json({ error: err.message });
         db.all('SELECT * FROM device_changes WHERE repair_id = ?', [id], (err, devices) => {
+          if (err) return res.status(500).json({ error: err.message });
           res.json({ ...repair, logs, images, devices });
         });
       });
@@ -340,62 +407,84 @@ exports.getRepairById = (req, res) => {
   });
 };
 
-exports.createRepair = (req, res) => {
-  const { reporter, location, device_name, problem, priority, received_at, project_name } = req.body;
-  const ticket_no = generateTicketNo();
-
-  db.run(`
-    INSERT INTO repairs (ticket_no, reporter, location, device_name, problem, priority, status, is_read, type, received_at, project_name)
-    VALUES (?, ?, ?, ?, ?, ?, 'รอดำเนินการ', 0, 'repair', ?, ?)
-  `, [ticket_no, reporter, location, device_name, problem, priority || 'ปกติ', received_at || new Date().toISOString(), project_name], function(err) {
-    if (err) return res.status(500).json({ error: err.message });
+exports.createRepair = async (req, res) => {
+  const { location, station_id, station_area_id, device_name, problem, priority, received_at, project_name } = req.body;
+  const reporter = req.user.full_name;
+  
+  try {
+    await validateStationExists(station_id);
+    await validateStationAreaBelongsToStation(station_id, station_area_id);
+    const officialLocation = (station_id ? await getStationSnapshotName(station_id) : null) || location;
     
-    const repairId = this.lastID;
-    
-    // Log creation
-    db.run('INSERT INTO repair_logs (repair_id, action, user, note) VALUES (?, ?, ?, ?)', 
-      [repairId, 'เปิดตั๋วแจ้งซ่อม', reporter, 'ส่งข้อมูลแจ้งซ่อมใหม่เข้าสู่ระบบ']);
+    const ticket_no = generateTicketNo();
 
-    // Handle images if any
-    if (req.files && req.files.length > 0) {
-      const stmt = db.prepare('INSERT INTO repair_images (repair_id, file_path, image_type) VALUES (?, ?, ?)');
-      req.files.forEach(file => {
-        stmt.run(repairId, file.filename, 'รูปก่อนซ่อม');
-      });
-      stmt.finalize();
-    }
+    db.run(`
+      INSERT INTO repairs (ticket_no, reporter, location, station_id, station_area_id, device_name, problem, priority, status, is_read, type, received_at, project_name)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'รอดำเนินการ', 0, 'repair', ?, ?)
+    `, [ticket_no, reporter, officialLocation, station_id || null, station_area_id || null, device_name, problem, priority || 'ปกติ', received_at || new Date().toISOString(), project_name], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      const repairId = this.lastID;
+      
+      // Log creation
+      db.run('INSERT INTO repair_logs (repair_id, action, user, note) VALUES (?, ?, ?, ?)', 
+        [repairId, 'เปิดตั๋วแจ้งซ่อม', reporter, 'ส่งข้อมูลแจ้งซ่อมใหม่เข้าสู่ระบบ']);
 
-    res.status(201).json({ id: repairId, ticket_no });
-  });
+      // Handle images if any
+      if (req.files && req.files.length > 0) {
+        const stmt = db.prepare('INSERT INTO repair_images (repair_id, file_path, image_type) VALUES (?, ?, ?)');
+        req.files.forEach(file => {
+          stmt.run(repairId, file.filename, 'รูปก่อนซ่อม');
+        });
+        stmt.finalize();
+      }
+
+      res.status(201).json({ id: repairId, ticket_no });
+    });
+  } catch (err) {
+    console.error('Create Repair Error:', err);
+    res.status(err.status || 500).json({ error: err.message });
+  }
 };
 
-exports.createClaim = (req, res) => {
-  const { reporter, location, device_name, problem, priority, received_at, project_name } = req.body;
-  const ticket_no = generateTicketNo();
-
-  db.run(`
-    INSERT INTO repairs (ticket_no, reporter, location, device_name, problem, priority, status, is_read, type, received_at, project_name)
-    VALUES (?, ?, ?, ?, ?, ?, 'รอดำเนินการ', 0, 'claim', ?, ?)
-  `, [ticket_no, reporter, location, device_name, problem, priority || 'ปกติ', received_at || new Date().toISOString(), project_name], function(err) {
-    if (err) return res.status(500).json({ error: err.message });
+exports.createClaim = async (req, res) => {
+  const { location, station_id, station_area_id, device_name, problem, priority, received_at, project_name } = req.body;
+  const reporter = req.user.full_name;
+  
+  try {
+    await validateStationExists(station_id);
+    await validateStationAreaBelongsToStation(station_id, station_area_id);
+    const officialLocation = (station_id ? await getStationSnapshotName(station_id) : null) || location;
     
-    const repairId = this.lastID;
-    
-    // Log creation
-    db.run('INSERT INTO repair_logs (repair_id, action, user, note) VALUES (?, ?, ?, ?)', 
-      [repairId, 'เปิดตั๋วแจ้งเคลม', reporter, 'ส่งข้อมูลแจ้งเคลมใหม่เข้าสู่ระบบ']);
+    const ticket_no = generateTicketNo();
 
-    // Handle images if any
-    if (req.files && req.files.length > 0) {
-      const stmt = db.prepare('INSERT INTO repair_images (repair_id, file_path, image_type) VALUES (?, ?, ?)');
-      req.files.forEach(file => {
-        stmt.run(repairId, file.filename, 'รูปก่อนเคลม');
-      });
-      stmt.finalize();
-    }
+    db.run(`
+      INSERT INTO repairs (ticket_no, reporter, location, station_id, station_area_id, device_name, problem, priority, status, is_read, type, received_at, project_name)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'รอดำเนินการ', 0, 'claim', ?, ?)
+    `, [ticket_no, reporter, officialLocation, station_id || null, station_area_id || null, device_name, problem, priority || 'ปกติ', received_at || new Date().toISOString(), project_name], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      const repairId = this.lastID;
+      
+      // Log creation
+      db.run('INSERT INTO repair_logs (repair_id, action, user, note) VALUES (?, ?, ?, ?)', 
+        [repairId, 'เปิดตั๋วแจ้งเคลม', reporter, 'ส่งข้อมูลแจ้งเคลมใหม่เข้าสู่ระบบ']);
 
-    res.status(201).json({ id: repairId, ticket_no });
-  });
+      // Handle images if any
+      if (req.files && req.files.length > 0) {
+        const stmt = db.prepare('INSERT INTO repair_images (repair_id, file_path, image_type) VALUES (?, ?, ?)');
+        req.files.forEach(file => {
+          stmt.run(repairId, file.filename, 'รูปก่อนเคลม');
+        });
+        stmt.finalize();
+      }
+
+      res.status(201).json({ id: repairId, ticket_no });
+    });
+  } catch (err) {
+    console.error('Create Claim Error:', err);
+    res.status(err.status || 500).json({ error: err.message });
+  }
 };
 
 exports.markAsRead = (req, res) => {
@@ -408,67 +497,97 @@ exports.markAsRead = (req, res) => {
 
 exports.updateStatus = (req, res) => {
   const { id } = req.params;
-  const { status, user, note, technician, repair_note } = req.body;
+  const { status, note, repair_note } = req.body;
+  const actor = req.user.full_name;
 
-  let query = 'UPDATE repairs SET status = ?, updated_at = CURRENT_TIMESTAMP';
-  const params = [status];
-
-  if (technician) {
-    query += ', technician = ?';
-    params.push(technician);
-  }
-
-  if (repair_note) {
-    query += ', repair_note = ?';
-    params.push(repair_note);
-  }
-
-  query += ' WHERE id = ?';
-  params.push(id);
-
-  db.run(query, params, function(err) {
+  db.get('SELECT * FROM repairs WHERE id = ?', [id], (err, oldRepair) => {
     if (err) return res.status(500).json({ error: err.message });
-    
-    const logUser = technician || user || 'ระบบ';
-    const logNote = repair_note || note || '';
+    if (!oldRepair) return res.status(404).json({ error: 'ไม่พบใบงาน' });
 
-    db.run('INSERT INTO repair_logs (repair_id, action, user, note) VALUES (?, ?, ?, ?)', 
-      [id, `เปลี่ยนสถานะเป็น ${status}`, logUser, logNote]);
+    // Technician is the logged-in user performing the work
+    let query = 'UPDATE repairs SET status = ?, technician = ?, updated_at = CURRENT_TIMESTAMP';
+    const params = [status, actor];
 
-    res.json({ message: 'อัปเดตสถานะเรียบร้อย' });
+    if (repair_note) {
+      query += ', repair_note = ?';
+      params.push(repair_note);
+    }
+
+    query += ' WHERE id = ?';
+    params.push(id);
+
+    db.run(query, params, function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+
+      const logNote = repair_note || note || '';
+
+      db.run('INSERT INTO repair_logs (repair_id, action, user, note) VALUES (?, ?, ?, ?)',
+        [id, `เปลี่ยนสถานะเป็น ${status}`, actor, logNote]);
+
+      db.get('SELECT * FROM repairs WHERE id = ?', [id], (getErr, row) => {
+        if (!getErr && row) {
+          const actionType = row.type === 'claim' ? 'claim update' : 'repair update';
+          logAudit(row.type || 'repair', id, actionType, oldRepair, row, actor).catch(e => console.error(e));
+        }
+      });
+
+      res.json({ message: 'อัปเดตสถานะเรียบร้อย' });
+    });
   });
 };
 
-exports.updateRepair = (req, res) => {
+exports.updateRepair = async (req, res) => {
   const { id } = req.params;
-  const { reporter, location, device_name, problem, priority, project_name } = req.body;
+  const { location, station_id, station_area_id, device_name, problem, priority, project_name } = req.body;
+  const actor = req.user.full_name;
 
-  db.run(`
-    UPDATE repairs 
-    SET reporter = ?, location = ?, device_name = ?, problem = ?, priority = ?, project_name = ?, updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `, [reporter, location, device_name, problem, priority, project_name, id], function(err) {
-    if (err) return res.status(500).json({ error: err.message });
-    
-    db.run('INSERT INTO repair_logs (repair_id, action, user, note) VALUES (?, ?, ?, ?)', 
-      [id, 'แก้ไขข้อมูลใบแจ้งซ่อม', 'แอดมิน/ช่าง', 'แก้ไขรายละเอียดพื้นฐานของใบแจ้งซ่อม']);
+  try {
+    await validateStationExists(station_id);
+    await validateStationAreaBelongsToStation(station_id, station_area_id);
+    const officialLocation = (station_id ? await getStationSnapshotName(station_id) : null) || location;
 
-    res.json({ message: 'แก้ไขข้อมูลเรียบร้อย' });
-  });
+    const oldRepair = await queryGet('SELECT * FROM repairs WHERE id = ?', [id]);
+    if (!oldRepair) return res.status(404).json({ error: 'ไม่พบใบงานที่ต้องการแก้ไข' });
+
+    // Editor's identity tracked in logs; original reporter is preserved
+    db.run(`
+      UPDATE repairs
+      SET location = ?, station_id = ?, station_area_id = ?, device_name = ?, problem = ?, priority = ?, project_name = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [officialLocation, station_id || null, station_area_id || null, device_name, problem, priority, project_name, id], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+
+      db.run('INSERT INTO repair_logs (repair_id, action, user, note) VALUES (?, ?, ?, ?)',
+        [id, 'แก้ไขข้อมูลใบงานซ่อม', actor, 'แก้ไขรายละเอียดพื้นฐานของใบแจ้งซ่อม']);
+
+      db.get('SELECT * FROM repairs WHERE id = ?', [id], (getErr, row) => {
+        if (!getErr && row) {
+          const actionType = row.type === 'claim' ? 'claim update' : 'repair update';
+          logAudit(row.type || 'repair', id, actionType, oldRepair, row, actor).catch(e => console.error(e));
+        }
+      });
+
+      res.json({ message: 'แก้ไขข้อมูลเรียบร้อย' });
+    });
+  } catch (err) {
+    console.error('Update Repair Error:', err);
+    res.status(err.status || 500).json({ error: err.message });
+  }
 };
 
 exports.replaceDevice = (req, res) => {
   const { id } = req.params;
-  const { old_serial, old_model, new_serial, new_model, technician } = req.body;
+  const { old_serial, old_model, new_serial, new_model } = req.body;
+  const actor = req.user.full_name;
 
   db.run(`
     INSERT INTO device_changes (repair_id, old_serial, old_model, new_serial, new_model, changed_by)
     VALUES (?, ?, ?, ?, ?, ?)
-  `, [id, old_serial, old_model, new_serial, new_model, technician], function(err) {
+  `, [id, old_serial, old_model, new_serial, new_model, actor], function(err) {
     if (err) return res.status(500).json({ error: err.message });
-    
-    db.run('INSERT INTO repair_logs (repair_id, action, user, note) VALUES (?, ?, ?, ?)', 
-      [id, 'เปลี่ยนอะไหล่/อุปกรณ์', technician, `เปลี่ยน ${old_model} (${old_serial}) เป็น ${new_model} (${new_serial})`]);
+
+    db.run('INSERT INTO repair_logs (repair_id, action, user, note) VALUES (?, ?, ?, ?)',
+      [id, 'เปลี่ยนอะไหล่/อุปกรณ์', actor, `เปลี่ยน ${old_model} (${old_serial}) เป็น ${new_model} (${new_serial})`]);
 
     res.json({ message: 'บันทึกการเปลี่ยนอะไหล่เรียบร้อย' });
   });

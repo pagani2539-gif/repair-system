@@ -1,4 +1,5 @@
 const db = require('../database/init');
+const { logAudit } = require('../utils/auditLogger');
 
 // Helper to log a transaction
 const logTransaction = (data, callback) => {
@@ -12,6 +13,7 @@ const logTransaction = (data, callback) => {
     quantity_returned = 0,
     project_name = null,
     location = null,
+    station_id = null,
     user_name = null,
     note = null,
     withdrawal_id = null,
@@ -22,35 +24,54 @@ const logTransaction = (data, callback) => {
     INSERT INTO inventory_transactions (
       inventory_id, instance_id, transaction_type, 
       quantity_added, quantity_withdrawn, quantity_borrowed, quantity_returned,
-      project_name, location, user_name, note, withdrawal_id, return_image
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      project_name, location, station_id, user_name, note, withdrawal_id, return_image
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? IS NOT NULL THEN (SELECT name FROM stations WHERE id = ?) ELSE ? END, ?, ?, ?, ?, ?)
   `, [
     inventory_id, instance_id, transaction_type,
     quantity_added, quantity_withdrawn, quantity_borrowed, quantity_returned,
-    project_name, location, user_name, note, withdrawal_id, return_image
+    project_name, station_id || null, station_id || null, location, station_id || null, user_name, note, withdrawal_id, return_image
   ], function(err) {
+    if (!err) {
+      logAudit('inventory_transaction', this.lastID, 'inventory movement', null, data, user_name || 'System').catch(e => console.error(e));
+    }
     if (callback) callback(err, this.lastID);
   });
 };
 
 exports.getAllTransactions = (req, res) => {
-  const query = `
-    SELECT t.*, i.name as product_name, i.model as product_model, inst.serial_number, inst.condition,
-           w.type as withdrawal_type
-    FROM inventory_transactions t
-    JOIN inventory i ON t.inventory_id = i.id
-    LEFT JOIN inventory_instances inst ON t.instance_id = inst.id
-    LEFT JOIN withdrawals w ON t.withdrawal_id = w.id
-    ORDER BY t.created_at DESC
+  const { inventory_id, station_id, withdrawal_id } = req.query;
+  let query = `
+    SELECT *
+    FROM transactions_view
   `;
-  db.all(query, [], (err, rows) => {
+  const params = [];
+  let conditions = [];
+  if (inventory_id) {
+    conditions.push(`inventory_id = ?`);
+    params.push(inventory_id);
+  }
+  if (station_id) {
+    conditions.push(`station_id = ?`);
+    params.push(station_id);
+  }
+  if (withdrawal_id) {
+    conditions.push(`withdrawal_id = ?`);
+    params.push(withdrawal_id);
+  }
+  if (conditions.length > 0) {
+    query += ` WHERE ` + conditions.join(' AND ');
+  }
+  query += ` ORDER BY created_at DESC`;
+
+  db.all(query, params, (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(rows);
   });
 };
 
 exports.addStock = (req, res) => {
-  const { inventory_id, quantity, user_name, note, serial_numbers } = req.body; // serial_numbers is an array of strings
+  const { inventory_id, quantity, note, serial_numbers } = req.body; // serial_numbers is an array of strings
+  const user_name = req.user.full_name;
 
   db.serialize(() => {
     db.run('BEGIN TRANSACTION');
@@ -102,7 +123,8 @@ exports.addStock = (req, res) => {
 };
 
 exports.borrowItem = (req, res) => {
-  const { inventory_id, instance_id, quantity, user_name, project_name, location, note } = req.body;
+  const { inventory_id, instance_id, quantity, project_name, location, station_id, note } = req.body;
+  const user_name = req.user.full_name;
 
   db.serialize(() => {
     db.run('BEGIN TRANSACTION');
@@ -121,14 +143,14 @@ exports.borrowItem = (req, res) => {
 
         // 3. Update instance status if provided
         if (instance_id) {
-          db.run(`UPDATE inventory_instances SET status = 'Borrowed', current_location = ? WHERE id = ?`, 
-            [location, instance_id], (err) => {
+          db.run(`UPDATE inventory_instances SET status = 'Borrowed', current_location = ?, station_id = ? WHERE id = ?`, 
+            [location, station_id || null, instance_id], (err) => {
             if (err) { db.run('ROLLBACK'); return res.status(500).json({ error: err.message }); }
             
             // 4. Log transaction
             logTransaction({
               inventory_id, instance_id, transaction_type: 'BORROW',
-              quantity_borrowed: quantity, user_name, project_name, location, note
+              quantity_borrowed: quantity, user_name, project_name, location, station_id, note
             }, (err) => {
               if (err) { db.run('ROLLBACK'); return res.status(500).json({ error: err.message }); }
               db.run('COMMIT');
@@ -143,7 +165,7 @@ exports.borrowItem = (req, res) => {
           // Bulk borrow
           logTransaction({
             inventory_id, transaction_type: 'BORROW',
-            quantity_borrowed: quantity, user_name, project_name, location, note
+            quantity_borrowed: quantity, user_name, project_name, location, station_id, note
           }, (err) => {
             if (err) { db.run('ROLLBACK'); return res.status(500).json({ error: err.message }); }
             db.run('COMMIT');
@@ -160,33 +182,40 @@ exports.borrowItem = (req, res) => {
 };
 
 exports.returnItem = (req, res) => {
-  const { inventory_id, instance_id, quantity, user_name, condition, note, transaction_id } = req.body;
+  const { inventory_id, instance_id, quantity, condition, note, transaction_id } = req.body;
+  const user_name = req.user.full_name;
 
   db.serialize(() => {
     db.run('BEGIN TRANSACTION');
 
     let withdrawal_id = null;
+    let original_station_id = null;
+    let original_project_name = null;
+    let original_location = null;
 
     const return_image = req.file ? req.file.filename : null;
 
     // 1. If transaction_id provided, mark original as RETURNED
     const finalizeReturn = () => {
       // 2. Update inventory
-      db.run('UPDATE inventory SET quantity = quantity + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', 
+      db.run('UPDATE inventory SET quantity = quantity + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
         [quantity, inventory_id], (err) => {
         if (err) { db.run('ROLLBACK'); return res.status(500).json({ error: err.message }); }
 
         // 3. Update instance status if provided
         if (instance_id) {
-          db.run(`UPDATE inventory_instances SET status = 'In Stock', condition = ?, current_location = 'Warehouse' WHERE id = ?`, 
+          db.run(`UPDATE inventory_instances SET status = 'In Stock', condition = ?, current_location = 'Warehouse', station_id = NULL WHERE id = ?`,
             [condition || 'Good', instance_id], (err) => {
             if (err) { db.run('ROLLBACK'); return res.status(500).json({ error: err.message }); }
-            
-            // 4. Log transaction
+
+            // 4. Log transaction (inherit station_id/project from original so it appears in station history)
             logTransaction({
               inventory_id, instance_id, transaction_type: 'RETURN',
               quantity_returned: quantity, user_name, note: note || `Returned in ${condition} condition`,
-              withdrawal_id, return_image
+              withdrawal_id, return_image,
+              station_id: original_station_id,
+              project_name: original_project_name,
+              location: original_location
             }, (err) => {
               if (err) { db.run('ROLLBACK'); return res.status(500).json({ error: err.message }); }
               db.run('COMMIT');
@@ -198,7 +227,10 @@ exports.returnItem = (req, res) => {
           logTransaction({
             inventory_id, transaction_type: 'RETURN',
             quantity_returned: quantity, user_name, note,
-            withdrawal_id, return_image
+            withdrawal_id, return_image,
+            station_id: original_station_id,
+            project_name: original_project_name,
+            location: original_location
           }, (err) => {
             if (err) { db.run('ROLLBACK'); return res.status(500).json({ error: err.message }); }
             db.run('COMMIT');
@@ -209,10 +241,13 @@ exports.returnItem = (req, res) => {
     };
 
     if (transaction_id) {
-      db.get('SELECT withdrawal_id FROM inventory_transactions WHERE id = ?', [transaction_id], (err, row) => {
+      db.get('SELECT withdrawal_id, station_id, project_name, location FROM inventory_transactions WHERE id = ?', [transaction_id], (err, row) => {
         if (err) { db.run('ROLLBACK'); return res.status(500).json({ error: err.message }); }
         if (row) {
           withdrawal_id = row.withdrawal_id;
+          original_station_id = row.station_id;
+          original_project_name = row.project_name;
+          original_location = row.location;
         }
         db.run(`UPDATE inventory_transactions SET status = 'RETURNED' WHERE id = ? AND transaction_type IN ('BORROW', 'WITHDRAW')`, [transaction_id], (err) => {
           if (err) { db.run('ROLLBACK'); return res.status(500).json({ error: err.message }); }
