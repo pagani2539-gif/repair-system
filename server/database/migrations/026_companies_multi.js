@@ -61,7 +61,7 @@ module.exports = {
 
               db.run(
                 `INSERT INTO companies (id, name_th, name_en, address, phone, email, tax_id, website, is_default)
-                 VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+                 VALUES (1, ?, ?, ?, ?, ?, ?, ?, 1)`,
                 [
                   oldRow.name_th || '',
                   oldRow.name_en || '',
