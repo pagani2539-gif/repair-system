@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { withdrawalApi, transactionApi } from '../api';
 import { useNotification } from '../components/Layout';
+import { useAuth } from '../contexts/AuthContext';
 import { useApi } from '../hooks/useApi';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
@@ -27,12 +28,14 @@ import {
 } from 'lucide-react';
 import PrintWithdrawalTemplate from '../components/PrintWithdrawalTemplate';
 import PrintDialog from '../components/PrintDialog';
+import PermissionGate from '../components/PermissionGate';
 import { ProvideSnModal } from '../components/ProvideSnModal';
 
 const WithdrawalDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { notify } = useNotification();
+  const { user } = useAuth();
 
   const [snModal, setSnModal] = useState<{
     isOpen: boolean;
@@ -81,15 +84,9 @@ const WithdrawalDetail: React.FC = () => {
     if (!returnModal.transaction) return;
     
     const target = e.target as any;
-    const userName = target.user_name.value.trim();
     const condition = target.condition.value;
     const note = target.note.value.trim();
     const imageFile = returnImageFile;
-
-    if (!userName) {
-      notify('กรุณาระบุชื่อผู้คืนอุปกรณ์', 'error');
-      return;
-    }
 
     setReturning(true);
     try {
@@ -100,7 +97,6 @@ const WithdrawalDetail: React.FC = () => {
         formData.append('instance_id', String(returnModal.transaction.instance_id));
       }
       formData.append('quantity', String(returnModal.transaction.quantity_borrowed || returnModal.transaction.quantity_withdrawn || 1));
-      formData.append('user_name', userName);
       formData.append('condition', condition);
       formData.append('note', note);
       if (imageFile) {
@@ -237,9 +233,11 @@ const WithdrawalDetail: React.FC = () => {
             </div>
           </div>
           <div style={{ display: 'flex', gap: '12px' }}>
-            <button className="btn btn-outline" style={{ borderColor: 'var(--danger)', color: 'var(--danger)' }} onClick={handleDelete}>
-              <Trash2 size={18} /> <span className="hide-on-mobile">ลบประวัติ</span>
-            </button>
+            <PermissionGate require="delete.withdrawals">
+              <button className="btn btn-outline" style={{ borderColor: 'var(--danger)', color: 'var(--danger)' }} onClick={handleDelete}>
+                <Trash2 size={18} /> <span className="hide-on-mobile">ลบประวัติ</span>
+              </button>
+            </PermissionGate>
             <button className="btn btn-primary" style={{ background: 'var(--text-main)' }} onClick={handlePrint}>
               <Download size={18} /> <span className="hide-on-mobile">พิมพ์ใบเบิก (PDF)</span>
             </button>
@@ -492,17 +490,18 @@ const WithdrawalDetail: React.FC = () => {
                 </Card>
 
                 <div className="form-group">
-                  <label>ชื่อผู้คืนอุปกรณ์ <span style={{ color: 'var(--danger)' }}>*</span></label>
-                  <div style={{ position: 'relative' }}>
-                    <User size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-                    <input 
-                      name="user_name" 
-                      type="text" 
-                      required 
-                      placeholder="ระบุชื่อผู้คืน..." 
-                      style={{ paddingLeft: '38px' }}
-                      defaultValue={withdrawal?.recipient || ''}
-                    />
+                  <label>ผู้คืนอุปกรณ์</label>
+                  <div style={{
+                    padding: '10px 14px', background: 'var(--bg-app)',
+                    border: '1px solid var(--border)', borderRadius: '10px',
+                    fontSize: '0.9rem', color: 'var(--text-main)', fontWeight: 600,
+                    display: 'flex', alignItems: 'center', gap: '8px',
+                  }}>
+                    <User size={16} color="var(--text-muted)" />
+                    {user?.full_name || '—'}
+                    <span style={{ marginLeft: 'auto', fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 400 }}>
+                      (ดึงจากบัญชี)
+                    </span>
                   </div>
                 </div>
 

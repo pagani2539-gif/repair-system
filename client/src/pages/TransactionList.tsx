@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useCallback, useState } from 'react';
 import { transactionApi, UPLOAD_URL } from '../api';
 import { useApi } from '../hooks/useApi';
 import { useNotification } from '../components/Layout';
+import { useAuth } from '../contexts/AuthContext';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { formatDateTimeThai } from '../utils/formatDate';
@@ -38,6 +39,7 @@ import PrintDialog from '../components/PrintDialog';
 
 const TransactionList: React.FC = () => {
   const { notify } = useNotification();
+  const { hasPermission, user: currentUser } = useAuth();
   const { urlState, setTableState } = useTableUrlState(20);
   const [returnModal, setReturnModal] = useState<{ isOpen: boolean; transaction: InventoryTransaction | null }>({
     isOpen: false,
@@ -300,22 +302,16 @@ const TransactionList: React.FC = () => {
       onClick: handlePrintReturn,
       hidden: (row) => row.transaction_type !== 'RETURN'
     },
-    { id: 'delete', label: 'ลบรายการ', icon: <Trash size={14} />, variant: 'danger', onClick: (row) => handleDelete(row.id) }
+    { id: 'delete', label: 'ลบรายการ', icon: <Trash size={14} />, variant: 'danger', onClick: (row) => handleDelete(row.id), hidden: () => !hasPermission('delete.transactions') }
   ];
 
   const handleReturn = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!returnModal.transaction) return;
-    
+
     const target = e.target as any;
-    const userName = target.user_name.value.trim();
     const condition = target.condition.value;
     const note = target.note.value.trim();
-
-    if (!userName) {
-      notify('กรุณาระบุชื่อผู้คืนอุปกรณ์', 'error');
-      return;
-    }
 
     setReturning(true);
     try {
@@ -326,7 +322,6 @@ const TransactionList: React.FC = () => {
         formData.append('instance_id', String(returnModal.transaction.instance_id));
       }
       formData.append('quantity', String(returnModal.transaction.quantity_borrowed || returnModal.transaction.quantity_withdrawn || 1));
-      formData.append('user_name', userName);
       formData.append('condition', condition);
       formData.append('note', note);
       if (imageFile) {
@@ -550,17 +545,18 @@ const TransactionList: React.FC = () => {
                 </Card>
 
                 <div className="form-group">
-                  <label>ชื่อผู้คืนอุปกรณ์ <span style={{ color: 'var(--danger)' }}>*</span></label>
-                  <div style={{ position: 'relative' }}>
-                    <User size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-                    <input 
-                      name="user_name" 
-                      type="text" 
-                      required 
-                      placeholder="ระบุชื่อผู้คืน..." 
-                      style={{ paddingLeft: '38px' }}
-                      defaultValue={returnModal.transaction.user_name || ''}
-                    />
+                  <label>ผู้คืนอุปกรณ์</label>
+                  <div style={{
+                    padding: '10px 14px', background: 'var(--bg-app)',
+                    border: '1px solid var(--border)', borderRadius: '10px',
+                    fontSize: '0.9rem', color: 'var(--text-main)', fontWeight: 600,
+                    display: 'flex', alignItems: 'center', gap: '8px',
+                  }}>
+                    <User size={16} color="var(--text-muted)" />
+                    {currentUser?.full_name || '—'}
+                    <span style={{ marginLeft: 'auto', fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 400 }}>
+                      (ดึงจากบัญชี)
+                    </span>
                   </div>
                 </div>
 

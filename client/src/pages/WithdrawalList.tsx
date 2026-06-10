@@ -1,60 +1,135 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { withdrawalApi } from '../api';
 import { useNotification } from '../components/Layout';
+import { useAuth } from '../contexts/AuthContext';
 import { useApi } from '../hooks/useApi';
-import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
-import { Skeleton } from '../components/ui/Skeleton';
-import { formatDateTimeThai, formatDateThai, parseDate } from '../utils/formatDate';
-import DatePicker from '../components/ui/DatePicker';
-import { 
-  Search, 
-  Calendar, 
-  User, 
-  ChevronRight,
+import { Card } from '../components/ui/Card';
+import { formatDateTimeThai } from '../utils/formatDate';
+import {
+  User,
   Trash,
   Plus,
   Boxes,
-  X,
-  Printer
+  Printer,
+  MapPin,
+  FileText,
+  Eye,
+  MessageSquare,
+  Package,
+  Tag,
+  AlertTriangle,
+  X
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import PrintWithdrawalTemplate from '../components/PrintWithdrawalTemplate';
 import { printElement } from '../utils/pdfGenerator';
-import type { Withdrawal } from '../types';
+import { ProvideSnModal } from '../components/ProvideSnModal';
+import type { Withdrawal, WithdrawalItem } from '../types';
+import type { TableColumn, TableAction, TableFilter } from '../types/table.types';
+import StationCell from '../components/shared/StationCell';
+import BaseDataTable from '../components/tables/BaseDataTable';
+import TableToolbar from '../components/tables/TableToolbar';
+import TablePagination from '../components/tables/TablePagination';
+import { useTableUrlState } from '../hooks/useTableUrlState';
 
 const WithdrawalList: React.FC = () => {
   const { notify } = useNotification();
-  const [searchTerm, setSearchTerm] = useState('');
-  const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 15;
-
-  const [colFilters, setColFilters] = useState({
-    id: '',
-    recipient: '',
-    project_name: '',
-    location: '',
-    type: 'All',
-    items_summary: '',
-    created_at: ''
-  });
-
-  const filterInputStyle: React.CSSProperties = {
-    width: '100%',
-    padding: '6px 10px',
-    fontSize: '0.8rem',
-    borderRadius: '6px',
-    border: '1px solid var(--border)',
-    backgroundColor: 'var(--bg-app)',
-    color: 'var(--text-main)',
-    outline: 'none',
-    fontFamily: 'inherit',
-    fontWeight: 'normal'
-  };
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  const { hasPermission } = useAuth();
+  const { urlState, setTableState } = useTableUrlState(20);
+  
   const [printingWithdrawal, setPrintingWithdrawal] = useState<Withdrawal | null>(null);
   const [isPrintLoading, setIsPrintLoading] = useState<number | null>(null);
+
+  // === S/N Provision Flow ===
+  // 1) picker: เลือกรายการอุปกรณ์ที่ขาด S/N (กรณีในใบเบิกมีหลายรายการ)
+  const [snPicker, setSnPicker] = useState<{ isOpen: boolean; withdrawalId: number | null; items: WithdrawalItem[] }>({
+    isOpen: false,
+    withdrawalId: null,
+    items: []
+  });
+  const [loadingPicker, setLoadingPicker] = useState<number | null>(null);
+  // 2) modal กรอก S/N สำหรับ item ที่เลือก
+  const [snModal, setSnModal] = useState<{
+    isOpen: boolean;
+    withdrawalId: number | null;
+    itemId: number | null;
+    itemName: string;
+    totalQty: number;
+    existingSns: string[];
+  }>({
+    isOpen: false,
+    withdrawalId: null,
+    itemId: null,
+    itemName: '',
+    totalQty: 0,
+    existingSns: []
+  });
+
+  const { data: withdrawals = [], loading, error, request: fetchWithdrawals } = useApi(withdrawalApi.getAll);
+
+  // เปิด picker: โหลด detail ของ withdrawal แล้ว filter เฉพาะ item ที่ขาด S/N
+  const openSnPicker = async (withdrawalId: number) => {
+    setLoadingPicker(withdrawalId);
+    try {
+      const detail = await withdrawalApi.getById(withdrawalId);
+      const itemsMissing = (detail.items || []).filter((it: WithdrawalItem) => {
+        if (it.requires_sn !== 1) return false;
+        const currentSns = it.serial_numbers ? it.serial_numbers.split(', ').filter(s => s.trim()) : [];
+        return currentSns.length < it.quantity;
+      });
+      if (itemsMissing.length === 0) {
+        notify('รายการนี้ระบุ S/N ครบแล้ว', 'success');
+        fetchWithdrawals();
+        return;
+      }
+      // ถ้ามีรายการเดียว → เปิด modal กรอกเลย ไม่ต้อง picker
+      if (itemsMissing.length === 1) {
+        const it = itemsMissing[0];
+        const currentSns = it.serial_numbers ? it.serial_numbers.split(', ').filter(s => s.trim()) : [];
+        setSnModal({
+          isOpen: true,
+          withdrawalId,
+          itemId: it.id,
+          itemName: it.item_name,
+          totalQty: it.quantity,
+          existingSns: currentSns
+        });
+      } else {
+        setSnPicker({ isOpen: true, withdrawalId, items: itemsMissing });
+      }
+    } catch {
+      notify('ไม่สามารถโหลดข้อมูลรายการเบิกได้', 'error');
+    } finally {
+      setLoadingPicker(null);
+    }
+  };
+
+  // กดเลือกรายการใน picker → เปิด modal กรอก S/N
+  const handlePickItem = (item: WithdrawalItem) => {
+    const currentSns = item.serial_numbers ? item.serial_numbers.split(', ').filter(s => s.trim()) : [];
+    setSnModal({
+      isOpen: true,
+      withdrawalId: snPicker.withdrawalId,
+      itemId: item.id,
+      itemName: item.item_name,
+      totalQty: item.quantity,
+      existingSns: currentSns
+    });
+    setSnPicker({ ...snPicker, isOpen: false });
+  };
+
+  useEffect(() => {
+    fetchWithdrawals();
+  }, [fetchWithdrawals]);
+
+  const uniqueTypes = useMemo(() => {
+    const types = new Set<string>();
+    (withdrawals || []).forEach(w => {
+      if (w.type) types.add(w.type);
+    });
+    return Array.from(types).map(t => ({ label: t, value: t }));
+  }, [withdrawals]);
 
   const handlePrint = async (wId: number) => {
     setIsPrintLoading(wId);
@@ -79,24 +154,8 @@ const WithdrawalList: React.FC = () => {
     }
   }, [printingWithdrawal]);
 
-  const parseInputDate = (dateStr: string, isEnd: boolean): Date => {
-    const [year, month, day] = dateStr.split('-').map(Number);
-    if (isEnd) {
-      return new Date(year, month - 1, day, 23, 59, 59, 999);
-    } else {
-      return new Date(year, month - 1, day, 0, 0, 0, 0);
-    }
-  };
-
-  const { data: withdrawals = [], loading, request: fetchWithdrawals } = useApi(withdrawalApi.getAll);
-
-  useEffect(() => {
-    fetchWithdrawals();
-  }, [fetchWithdrawals]);
-
   const handleDelete = async (id: number) => {
     if (!window.confirm('คุณต้องการลบประวัติการเบิกนี้ใช่หรือไม่? ระบบจะทำการคืนสต็อกอุปกรณ์ทั้งหมดในรายการนี้ให้โดยอัตโนมัติ')) return;
-    
     try {
       await withdrawalApi.delete(id);
       notify('ลบประวัติและคืนสต็อกเรียบร้อยแล้ว');
@@ -106,386 +165,523 @@ const WithdrawalList: React.FC = () => {
     }
   };
 
-  const filteredWithdrawals = (withdrawals || []).filter(w => {
-    const wDate = parseDate(w.created_at);
-    if (startDate) {
-      const start = parseInputDate(startDate, false);
-      if (wDate < start) return false;
-    }
-    if (endDate) {
-      const end = parseInputDate(endDate, true);
-      if (wDate > end) return false;
-    }
-
-    const matchesSearch = w.recipient.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (w.items_summary && w.items_summary.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      w.type.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (w.project_name && w.project_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      (w.location && w.location.toLowerCase().includes(searchTerm.toLowerCase()));
-
-    if (!matchesSearch) return false;
-
-    // Column Filters
-    if (colFilters.id && !`WD-${w.id.toString().padStart(6, '0')}`.toLowerCase().includes(colFilters.id.toLowerCase())) return false;
-    if (colFilters.created_at) {
-      const formattedDate = formatDateThai(w.created_at).toLowerCase();
-      if (!formattedDate.includes(colFilters.created_at.toLowerCase())) return false;
-    }
-    if (colFilters.recipient && !w.recipient.toLowerCase().includes(colFilters.recipient.toLowerCase())) return false;
-    if (colFilters.project_name && (!w.project_name || !w.project_name.toLowerCase().includes(colFilters.project_name.toLowerCase()))) return false;
-    if (colFilters.location && (!w.location || !w.location.toLowerCase().includes(colFilters.location.toLowerCase()))) return false;
-    if (colFilters.type !== 'All' && w.type !== colFilters.type) return false;
-    
-    if (colFilters.items_summary) {
-      const itemCountStr = (w.items_summary ? w.items_summary.split(',').length : 0).toString();
-      const summaryText = (w.items_summary || '').toLowerCase();
-      if (!itemCountStr.includes(colFilters.items_summary) && !summaryText.includes(colFilters.items_summary.toLowerCase())) return false;
-    }
-
-    return true;
-  });
-
-  const totalPages = Math.ceil((filteredWithdrawals.length || 0) / itemsPerPage);
-  const indexOfLastItem = currentPage * itemsPerPage;
-  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
-  const currentWithdrawals = filteredWithdrawals.slice(indexOfFirstItem, indexOfLastItem);
-
   const getBadgeClass = (type: string) => {
     switch (type) {
-      case 'ติดตั้งใหม่':
-        return 'badge-withdrawal-install';
-      case 'ซ่อมแซม':
-        return 'badge-withdrawal-repair';
-      case 'สำรองใช้งาน':
-        return 'badge-withdrawal-backup';
-      case 'ทดสอบ':
-        return 'badge-withdrawal-test';
-      default:
-        return 'badge-withdrawal-custom';
+      case 'ติดตั้งใหม่': return 'badge-withdrawal-install';
+      case 'ซ่อมแซม': return 'badge-withdrawal-repair';
+      case 'สำรองใช้งาน': return 'badge-withdrawal-backup';
+      case 'ทดสอบ': return 'badge-withdrawal-test';
+      default: return 'badge-withdrawal-custom';
     }
   };
 
-  return (
-    <div className="withdrawal-list-page" style={{ padding: '2rem' }}>
-      <div className="page-header" style={{ marginBottom: '2.5rem' }}>
-        <div className="page-title">
-          <h2>ประวัติการเบิกอุปกรณ์</h2>
-          <p>ตรวจสอบรายการเบิกอุปกรณ์ย้อนหลังทั้งหมดในระบบคลังพัสดุ</p>
-        </div>
-        <Link to="/withdrawal">
-          <Button variant="primary" icon={<Plus size={20} style={{ marginRight: '8px' }} />}>
-            ทำการเบิกใหม่
-          </Button>
-        </Link>
-      </div>
+  const getAccentColor = (type: string): string => {
+    switch (type) {
+      case 'ติดตั้งใหม่': return 'var(--primary)';
+      case 'ซ่อมแซม': return 'var(--warning)';
+      case 'สำรองใช้งาน': return '#d97706';
+      case 'ทดสอบ': return 'var(--success)';
+      default: return 'var(--text-muted)';
+    }
+  };
 
-      <Card style={{ marginBottom: '1.5rem', padding: '1.25rem 1.5rem', position: 'relative', zIndex: 50 }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          <div className="search-container" style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-            <Search size={18} className="search-icon" style={{ position: 'absolute', left: '16px', color: 'var(--text-muted)' }} />
-            <input 
-              type="text" 
-              className="search-input"
-              style={{ 
-                paddingLeft: '44px', 
-                height: '42px', 
-                width: '100%', 
-                border: '1px solid var(--border)', 
-                borderRadius: 'var(--radius-md)', 
-                outline: 'none',
-                fontSize: '0.95rem',
-                backgroundColor: 'var(--bg-app)',
-                transition: 'all 0.2s ease'
-              }}
-              placeholder="ค้นหาชื่อผู้เบิก, รายการอุปกรณ์, หรือประเภท..." 
-              value={searchTerm}
-              onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
-            />
+  const columns: TableColumn<Withdrawal>[] = [
+    {
+      id: 'wd_no',
+      header: 'เลขที่ใบเบิก',
+      accessor: (row) => `WD-${row.id.toString().padStart(6, '0')}`,
+      priority: 1,
+      width: '140px',
+      render: (val) => (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 800, color: 'var(--primary)', fontSize: '0.9rem' }}>
+          <FileText size={14} color="var(--primary)" style={{ flexShrink: 0, opacity: 0.6 }} />
+          {val}
+        </div>
+      )
+    },
+    {
+      id: 'date',
+      header: 'วันที่เบิก',
+      accessor: 'created_at',
+      priority: 1,
+      width: '120px',
+      render: (val) => {
+        const [datePart, timePart] = formatDateTimeThai(val).split(' เวลา ');
+        return (
+          <div className="cell-date-stack">
+            <span className="cd-primary">{datePart}</span>
+            {timePart && <span className="cd-secondary">{timePart}</span>}
           </div>
-
-          {/* Date Range Filters */}
-          <div style={{ 
-            display: 'flex', 
-            gap: '1rem', 
-            alignItems: 'center', 
-            flexWrap: 'wrap', 
-            borderTop: '1px solid var(--border)', 
-            paddingTop: '1.25rem',
-            paddingBottom: '0.25rem'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-muted)' }}>เริ่มต้น:</span>
-              <DatePicker 
-                value={startDate}
-                onChange={(val) => { setStartDate(val); setCurrentPage(1); }}
-                placeholder="เลือกวันเริ่มต้น"
-              />
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-muted)' }}>สิ้นสุด:</span>
-              <DatePicker 
-                value={endDate}
-                onChange={(val) => { setEndDate(val); setCurrentPage(1); }}
-                placeholder="เลือกวันสิ้นสุด"
-              />
-            </div>
-            {(startDate || endDate) && (
-              <button
-                type="button"
-                onClick={() => { setStartDate(''); setEndDate(''); setCurrentPage(1); }}
-                style={{
-                  padding: '8px 16px',
-                  borderRadius: '10px',
-                  border: '1px solid var(--danger-border)',
-                  backgroundColor: 'var(--danger-light)',
-                  color: 'var(--danger)',
-                  fontSize: '0.85rem',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                  transition: 'all 0.2s',
-                  fontFamily: 'inherit'
-                }}
-              >
-                <X size={14} /> ล้างตัวกรอง
-              </button>
-            )}
+        );
+      }
+    },
+    {
+      id: 'recipient',
+      header: 'ผู้เบิก / หน่วยงาน',
+      accessor: 'recipient',
+      priority: 1,
+      width: '180px',
+      render: (val) => (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
+          <div style={{ width: 26, height: 26, background: 'var(--primary-light)', color: 'var(--primary)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <User size={13} />
           </div>
+          <span style={{ fontWeight: 800, fontSize: '0.88rem', color: 'var(--text-main)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={val as string}>{val}</span>
         </div>
-      </Card>
+      )
+    },
+    {
+      id: 'items_count',
+      header: 'จำนวน',
+      accessor: 'items_summary',
+      priority: 1,
+      width: '120px',
+      align: 'center',
+      render: (_, row) => {
+        // นับจาก items[] (จาก backend ส่งมา) ถ้าไม่มีใช้ items_summary
+        let itemCount = 0;
+        let totalQty = 0;
+        if (Array.isArray(row.items) && row.items.length > 0) {
+          itemCount = row.items.length;
+          totalQty = row.items.reduce((sum, it) => sum + (it.quantity || 0), 0);
+        } else if (row.items_summary) {
+          // items_summary format: "Cable RJ45 x5, Switch x2" — แยกด้วย comma แล้วนับ
+          const parts = row.items_summary.split(',').map(s => s.trim()).filter(Boolean);
+          itemCount = parts.length;
+          // ดึงตัวเลข qty จาก "ชื่อ xN" pattern
+          totalQty = parts.reduce((sum, p) => {
+            const m = p.match(/x\s*(\d+)\s*$/i);
+            return sum + (m ? parseInt(m[1], 10) : 1);
+          }, 0);
+        }
+        if (itemCount === 0) return <span className="cell-empty">—</span>;
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'center', lineHeight: 1.15 }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: 800, fontSize: '0.85rem', color: 'var(--primary)' }}>
+              <Boxes size={13} /> {itemCount} <span style={{ fontWeight: 600, fontSize: '0.7rem', color: 'var(--text-muted)' }}>รายการ</span>
+            </span>
+            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 600 }}>
+              รวม {totalQty} ชิ้น
+            </span>
+          </div>
+        );
+      }
+    },
+    {
+      id: 'project',
+      header: 'โครงการ / งาน',
+      accessor: 'project_name',
+      priority: 2,
+      width: 'auto',
+      render: (val) => (
+        val
+          ? <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>{val}</span>
+          : <span className="cell-empty">—</span>
+      )
+    },
+    {
+      id: 'location',
+      header: 'สถานที่',
+      accessor: 'station_name',
+      priority: 2,
+      width: 'auto',
+      render: (_, row) => {
+        const hasStation = row.station_name || row.location;
+        if (!hasStation) return <span className="cell-empty">— ไม่ระบุสถานี —</span>;
+        return (
+          <StationCell
+            stationName={row.station_name}
+            areaName={row.station_area_name}
+            province={row.station_province}
+            fallbackLocation={row.location}
+            compact={true}
+          />
+        );
+      }
+    },
+    {
+      id: 'status',
+      header: 'ประเภทการเบิก',
+      accessor: 'type',
+      priority: 1,
+      width: '140px',
+      align: 'center',
+      render: (val) => (
+        <span className={`badge ${getBadgeClass(val)}`} style={{ minWidth: '100px', justifyContent: 'center' }}>
+          {val}
+        </span>
+      )
+    },
+    {
+      id: 'sn_alert',
+      header: 'S/N',
+      accessor: 'items_missing_sn',
+      priority: 1,
+      width: '130px',
+      align: 'center',
+      render: (val, row) => {
+        const missing = (val as number) || 0;
+        if (missing <= 0) {
+          return (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.72rem', fontWeight: 700, color: 'var(--success)' }}>
+              <Tag size={12} /> ครบแล้ว
+            </span>
+          );
+        }
+        const isLoading = loadingPicker === row.id;
+        return (
+          <button
+            type="button"
+            disabled={isLoading}
+            onClick={(e) => {
+              e.stopPropagation();
+              openSnPicker(row.id);
+            }}
+            className="sn-alert-btn-blink"
+            title={`มีอุปกรณ์ที่ยังไม่ระบุ S/N จำนวน ${missing} เครื่อง — คลิกเพื่อกรอก`}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '6px 12px',
+              background: 'var(--danger)',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '0.75rem',
+              fontWeight: 800,
+              cursor: isLoading ? 'wait' : 'pointer',
+              boxShadow: '0 0 0 0 rgba(239, 68, 68, 0.5)',
+              whiteSpace: 'nowrap'
+            }}
+          >
+            <AlertTriangle size={13} />
+            {isLoading ? 'กำลังโหลด...' : `ขาด ${missing} S/N`}
+          </button>
+        );
+      }
+    }
+  ];
 
-      {loading ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} variant="rect" height="70px" />
-          ))}
+  const actions: TableAction<Withdrawal>[] = [
+    {
+      id: 'view_page',
+      label: 'ดูหน้าหลัก',
+      icon: <Eye size={14} />,
+      onClick: (row) => window.location.href = `/withdrawal/${row.id}`
+    },
+    {
+      id: 'print',
+      label: 'พิมพ์ใบเบิก (PDF)',
+      icon: <Printer size={14} />,
+      onClick: (row) => handlePrint(row.id),
+      disabled: (row) => isPrintLoading === row.id
+    },
+    {
+      id: 'delete',
+      label: 'ลบรายการ',
+      icon: <Trash size={14} />,
+      variant: 'danger',
+      onClick: (row) => handleDelete(row.id),
+      hidden: () => !hasPermission('delete.withdrawals')
+    }
+  ];
+
+  const filtersConfig: TableFilter[] = [
+    { id: 'type', label: 'ประเภท', type: 'select', options: uniqueTypes }
+  ];
+
+  const filteredData = useMemo(() => {
+    return (withdrawals || []).filter(w => {
+      if (urlState.search) {
+        const s = urlState.search.toLowerCase();
+        const matchesSearch = 
+          w.recipient.toLowerCase().includes(s) ||
+          (w.items_summary && w.items_summary.toLowerCase().includes(s)) ||
+          w.type.toLowerCase().includes(s) ||
+          (w.project_name && w.project_name.toLowerCase().includes(s)) ||
+          (w.location && w.location.toLowerCase().includes(s)) ||
+          `WD-${w.id.toString().padStart(6, '0')}`.toLowerCase().includes(s);
+        if (!matchesSearch) return false;
+      }
+
+      if (urlState.filters.type && w.type !== urlState.filters.type) return false;
+      
+      return true;
+    }).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }, [withdrawals, urlState.search, urlState.filters]);
+
+  const indexOfLastItem = urlState.page * urlState.pageSize;
+  const indexOfFirstItem = indexOfLastItem - urlState.pageSize;
+  const paginatedData = filteredData.slice(indexOfFirstItem, indexOfLastItem);
+
+  const renderDetailDrawer = useCallback((row: Withdrawal) => {
+    const itemCount = row.items_summary ? row.items_summary.split(',').length : 0;
+    
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span className={`badge ${getBadgeClass(row.type)}`}>{row.type}</span>
+          <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{formatDateTimeThai(row.created_at)}</span>
         </div>
-      ) : (
-        <>
-          <Card style={{ padding: 0 }}>
-            <div className="data-table-container">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th style={{ width: '10%', whiteSpace: 'nowrap' }}>เลขที่ใบเบิก</th>
-                    <th style={{ width: '12%', whiteSpace: 'nowrap' }}>วันที่เบิก</th>
-                    <th style={{ width: '14%', whiteSpace: 'nowrap' }}>ผู้เบิก / หน่วยงาน</th>
-                    <th style={{ width: '15%', whiteSpace: 'nowrap' }}>โครงการ / งาน</th>
-                    <th style={{ width: '15%', whiteSpace: 'nowrap' }}>สถานที่</th>
-                    <th style={{ width: '11%', whiteSpace: 'nowrap' }}>ประเภท</th>
-                    <th style={{ width: '11%', whiteSpace: 'nowrap' }}>รายการอุปกรณ์</th>
-                    <th style={{ width: '12%', textAlign: 'right', whiteSpace: 'nowrap' }}>จัดการ</th>
-                  </tr>
-                  <tr className="filter-row" style={{ backgroundColor: 'var(--bg-card)' }}>
-                    <th style={{ padding: '4px 8px' }}>
-                      <input 
-                        type="text" 
-                        placeholder="เลขใบเบิก..." 
-                        style={filterInputStyle}
-                        value={colFilters.id}
-                        onChange={(e) => setColFilters({ ...colFilters, id: e.target.value })}
-                      />
-                    </th>
-                    <th style={{ padding: '4px 8px' }}>
-                      <input 
-                        type="text" 
-                        placeholder="วันที่เบิก..." 
-                        style={filterInputStyle}
-                        value={colFilters.created_at}
-                        onChange={(e) => setColFilters({ ...colFilters, created_at: e.target.value })}
-                      />
-                    </th>
-                    <th style={{ padding: '4px 8px' }}>
-                      <input 
-                        type="text" 
-                        placeholder="ผู้เบิก..." 
-                        style={filterInputStyle}
-                        value={colFilters.recipient}
-                        onChange={(e) => setColFilters({ ...colFilters, recipient: e.target.value })}
-                      />
-                    </th>
-                    <th style={{ padding: '4px 8px' }}>
-                      <input 
-                        type="text" 
-                        placeholder="โครงการ..." 
-                        style={filterInputStyle}
-                        value={colFilters.project_name}
-                        onChange={(e) => setColFilters({ ...colFilters, project_name: e.target.value })}
-                      />
-                    </th>
-                    <th style={{ padding: '4px 8px' }}>
-                      <input 
-                        type="text" 
-                        placeholder="สถานที่..." 
-                        style={filterInputStyle}
-                        value={colFilters.location}
-                        onChange={(e) => setColFilters({ ...colFilters, location: e.target.value })}
-                      />
-                    </th>
-                    <th style={{ padding: '4px 8px' }}>
-                      <select
-                        style={filterInputStyle}
-                        value={colFilters.type}
-                        onChange={(e) => setColFilters({ ...colFilters, type: e.target.value })}
-                      >
-                        <option value="All">ทั้งหมด</option>
-                        <option value="ติดตั้งใหม่">ติดตั้งใหม่</option>
-                        <option value="ซ่อมแซม">ซ่อมแซม</option>
-                        <option value="สำรองใช้งาน">สำรองใช้งาน</option>
-                        <option value="ทดสอบ">ทดสอบ</option>
-                        <option value="อื่นๆ">อื่นๆ</option>
-                      </select>
-                    </th>
-                    <th style={{ padding: '4px 8px' }}>
-                      <input 
-                        type="text" 
-                        placeholder="ค้นหาอุปกรณ์..." 
-                        style={filterInputStyle}
-                        value={colFilters.items_summary}
-                        onChange={(e) => setColFilters({ ...colFilters, items_summary: e.target.value })}
-                      />
-                    </th>
-                    <th style={{ padding: '4px 8px' }}></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {currentWithdrawals.length === 0 ? (
-                    <tr>
-                      <td colSpan={8} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
-                        ไม่พบข้อมูลประวัติการเบิกอุปกรณ์
-                      </td>
-                    </tr>
-                  ) : (
-                    currentWithdrawals.map((w) => {
-                      const itemCount = w.items_summary ? w.items_summary.split(',').length : 0;
-                      
-                      return (
-                        <tr key={w.id}>
-                          <td style={{ fontWeight: 700, color: 'var(--primary)' }}>WD-{w.id.toString().padStart(6, '0')}</td>
-                          <td title={formatDateTimeThai(w.created_at)}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem' }}>
-                              <Calendar size={14} color="var(--primary)" style={{ flexShrink: 0 }} />
-                              {formatDateThai(w.created_at)}
-                            </div>
-                          </td>
-                          <td title={w.recipient}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}>
-                              <User size={14} color="var(--text-muted)" style={{ flexShrink: 0 }} />
-                              {w.recipient}
-                            </div>
-                          </td>
-                          <td title={w.project_name || '-'}>{w.project_name || '-'}</td>
-                          <td title={w.location || '-'}>{w.location || '-'}</td>
-                          <td>
-                            <span className={`badge ${getBadgeClass(w.type)}`}>
-                              {w.type}
-                            </span>
-                          </td>
-                          <td>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                              <div 
-                                style={{ 
-                                  display: 'inline-flex', 
-                                  alignItems: 'center', 
-                                  gap: '6px', 
-                                  padding: '4px 10px', 
-                                  background: 'var(--primary-light)', 
-                                  color: 'var(--primary)', 
-                                  borderRadius: '20px', 
-                                  fontSize: '0.8rem', 
-                                  fontWeight: 700,
-                                  cursor: 'help',
-                                  border: '1px solid rgba(41, 182, 246, 0.1)',
-                                  width: 'fit-content'
-                                }}
-                                title={w.items_summary}
-                              >
-                                <Boxes size={14} />
-                                {itemCount} รายการ
-                              </div>
-                              {w.items_missing_sn && w.items_missing_sn > 0 ? (
-                                <Link to={`/withdrawal/${w.id}`} style={{ textDecoration: 'none' }}>
-                                  <div 
-                                    className="btn-blink-alert"
-                                    style={{ 
-                                      display: 'inline-flex', 
-                                      alignItems: 'center', 
-                                      gap: '4px', 
-                                      backgroundColor: 'var(--danger)',
-                                      color: 'white', 
-                                      padding: '4px 10px',
-                                      borderRadius: '20px',
-                                      fontSize: '0.7rem', 
-                                      fontWeight: 700,
-                                      marginTop: '6px',
-                                      border: '1px solid var(--danger-border)'
-                                    }}
-                                  >
-                                    <X size={12} strokeWidth={3} /> ต้องระบุ S/N
-                                  </div>
-                                </Link>
-                              ) : null}
-                            </div>
-                          </td>
-                          <td style={{ textAlign: 'right', whiteSpace: 'nowrap', overflow: 'visible' }}>
-                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-                              <Button 
-                                variant="outline" 
-                                size="sm" 
-                                icon={<Printer size={16} />} 
-                                loading={isPrintLoading === w.id}
-                                onClick={() => handlePrint(w.id)} 
-                                title="พิมพ์ใบเบิก (PDF)" 
-                              />
-                              <Link to={`/withdrawal/${w.id}`}>
-                                <Button variant="outline" size="sm" icon={<ChevronRight size={16} />} title="ดูรายละเอียด" />
-                              </Link>
-                              <Button 
-                                variant="danger" 
-                                size="sm" 
-                                icon={<Trash size={16} />} 
-                                onClick={() => handleDelete(w.id)} 
-                                title="ลบรายการและคืนสต็อก" 
-                              />
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
+
+        <section>
+          <h4 style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '1rem', color: 'var(--primary)' }}>
+            <User size={18} /> ข้อมูลผู้เบิก
+          </h4>
+          <Card style={{ padding: '1rem', backgroundColor: 'var(--bg-app)' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              <div><strong>ผู้เบิก:</strong> {row.recipient}</div>
+              <div><strong>หน่วยงาน:</strong> {row.project_name || '-'}</div>
+              <div><strong>โครงการ:</strong> {row.project_name || '-'}</div>
             </div>
           </Card>
+        </section>
 
-          {totalPages > 1 && (
-            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '1rem', marginTop: '2rem' }}>
-              <Button 
-                variant="outline" 
-                size="sm"
-                disabled={currentPage === 1} 
-                onClick={() => setCurrentPage(currentPage - 1)}
-              >
-                ก่อนหน้า
-              </Button>
-              <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>หน้า {currentPage} จาก {totalPages}</span>
-              <Button 
-                variant="outline" 
-                size="sm"
-                disabled={currentPage === totalPages} 
-                onClick={() => setCurrentPage(currentPage + 1)}
-              >
-                ถัดไป
-              </Button>
+        <section>
+          <h4 style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '1rem', color: 'var(--primary)' }}>
+            <MapPin size={18} /> สถานที่ใช้งาน
+          </h4>
+          <Card style={{ padding: '1rem', backgroundColor: 'var(--bg-app)' }}>
+            <StationCell 
+              stationName={row.station_name} 
+              areaName={row.station_area_name}
+              province={row.station_province}
+              fallbackLocation={row.location}
+              compact={false}
+            />
+          </Card>
+        </section>
+
+        <section>
+          <h4 style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '1rem', color: 'var(--primary)' }}>
+            <Boxes size={18} /> รายการอุปกรณ์ ({itemCount} รายการ)
+          </h4>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            {row.items_summary?.split(',').map((item, idx) => (
+              <div key={idx} style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                alignItems: 'center',
+                padding: '0.75rem',
+                backgroundColor: 'var(--bg-card)',
+                borderRadius: '8px',
+                border: '1px solid var(--border)'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <Package size={16} color="var(--text-muted)" />
+                  <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>{item.trim()}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          {row.items_missing_sn !== undefined && row.items_missing_sn > 0 && (
+            <div style={{ marginTop: '1rem', padding: '0.75rem', backgroundColor: 'var(--danger-light)', borderRadius: '8px', color: 'var(--danger)', fontSize: '0.85rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Tag size={16} /> มีอุปกรณ์ที่ยังไม่ระบุ Serial Number ({row.items_missing_sn} เครื่อง)
             </div>
           )}
-        </>
-      )}
+        </section>
+
+        <section>
+          <h4 style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '1rem', color: 'var(--primary)' }}>
+            <MessageSquare size={18} /> หมายเหตุ
+          </h4>
+          <div style={{ padding: '1rem', backgroundColor: 'var(--bg-app)', borderRadius: '8px', fontSize: '0.9rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+            {row.note || 'ไม่มีหมายเหตุ'}
+          </div>
+        </section>
+
+        <div style={{ marginTop: 'auto', paddingTop: '2rem', display: 'flex', gap: '1rem' }}>
+          <Button variant="primary" style={{ flex: 1 }} onClick={() => handlePrint(row.id)} icon={<Printer size={18} />}>พิมพ์ใบเบิก</Button>
+          <Link to={`/withdrawal/${row.id}`} style={{ flex: 1 }}><Button variant="outline" style={{ width: '100%' }}>เปิดหน้าหลัก</Button></Link>
+        </div>
+      </div>
+    );
+  }, [isPrintLoading]);
+
+  return (
+    <div className="withdrawal-list-page" style={{ padding: '0 0 4rem 0', backgroundColor: 'var(--bg-app)', minHeight: '100vh' }}>
+      <div style={{ maxWidth: '1400px', margin: '0 auto', padding: '2rem 2.5rem' }}>
+        <div className="page-header boot-animate stagger-0" style={{ marginBottom: '2.5rem' }}>
+          <div className="page-title">
+            <h2>ประวัติการเบิกอุปกรณ์</h2>
+            <p>ตรวจสอบรายการเบิกอุปกรณ์ย้อนหลังทั้งหมดในระบบคลังพัสดุ</p>
+          </div>
+          <Link to="/withdrawal">
+            <Button variant="primary" icon={<Plus size={20} />}>
+              ทำการเบิกใหม่
+            </Button>
+          </Link>
+        </div>
+
+        <div className="boot-animate stagger-1">
+          <TableToolbar
+            searchValue={urlState.search}
+            onSearchChange={(val) => setTableState({ search: val, page: 1 })}
+            filters={filtersConfig}
+            activeFilters={urlState.filters}
+            onFilterChange={(f) => setTableState({ filters: f, page: 1 })}
+            onReset={() => setTableState({ search: '', filters: {}, page: 1 })}
+            searchPlaceholder="ค้นหาเลขใบเบิก, ผู้เบิก, หรือโครงการ..."
+          />
+
+          <BaseDataTable
+            columns={columns}
+            data={paginatedData}
+            state={{
+              loading,
+              error: error?.message || null,
+              empty: !loading && paginatedData.length === 0
+            }}
+            actions={actions}
+            onRetry={fetchWithdrawals}
+            drawerTitle={(row) => `รายละเอียดใบเบิก WD-${row.id.toString().padStart(6, '0')}`}
+            renderDetailDrawer={renderDetailDrawer}
+            getRowAccent={(r) => getAccentColor(r.type)}
+            mobileConfig={{
+              title: (row) => row.recipient,
+              subtitle: (row) => `WD-${row.id.toString().padStart(6, '0')} · ${row.project_name || 'ไม่ระบุโครงการ'}`,
+              statusBadge: (row) => <span className={`badge ${getBadgeClass(row.type)}`} style={{ width: '80px', textAlign: 'center' }}>{row.type}</span>
+            }}
+          />
+
+          {!loading && filteredData.length > 0 && (
+            <TablePagination
+              config={{
+                page: urlState.page,
+                pageSize: urlState.pageSize,
+                totalItems: filteredData.length
+              }}
+              onPageChange={(p) => setTableState({ page: p })}
+              onPageSizeChange={(s) => setTableState({ pageSize: s, page: 1 })}
+            />
+          )}
+        </div>
+      </div>
+
       {printingWithdrawal && (
         <PrintWithdrawalTemplate withdrawal={printingWithdrawal} />
       )}
+
+      {/* Picker Modal: เลือก item ที่ขาด S/N (กรณีในใบเบิกมีหลายรายการ) */}
+      {snPicker.isOpen && (
+        <div className="modal-overlay" style={{ zIndex: 1100 }} onClick={() => setSnPicker({ ...snPicker, isOpen: false })}>
+          <div className="modal-content" style={{ maxWidth: '600px' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <AlertTriangle size={22} color="var(--danger)" /> เลือกอุปกรณ์ที่ต้องการระบุ S/N
+              </h3>
+              <button className="close-btn" onClick={() => setSnPicker({ ...snPicker, isOpen: false })}><X size={20} /></button>
+            </div>
+            <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)', marginBottom: '1.25rem' }}>
+              ใบเบิก <strong style={{ color: 'var(--primary)' }}>WD-{(snPicker.withdrawalId || 0).toString().padStart(6, '0')}</strong> มีอุปกรณ์ <strong>{snPicker.items.length}</strong> รายการที่ยังระบุ S/N ไม่ครบ — เลือกรายการที่ต้องการกรอก:
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '420px', overflowY: 'auto' }}>
+              {snPicker.items.map((it) => {
+                const currentSns = it.serial_numbers ? it.serial_numbers.split(', ').filter(s => s.trim()) : [];
+                const missing = it.quantity - currentSns.length;
+                return (
+                  <button
+                    key={it.id}
+                    type="button"
+                    onClick={() => handlePickItem(it)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '14px 16px',
+                      background: 'var(--bg-app)',
+                      border: '1.5px solid var(--border)',
+                      borderRadius: '10px',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      transition: 'all 0.15s'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.borderColor = 'var(--danger)';
+                      e.currentTarget.style.background = 'rgba(239, 68, 68, 0.04)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.borderColor = 'var(--border)';
+                      e.currentTarget.style.background = 'var(--bg-app)';
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0, flex: 1 }}>
+                      <Package size={20} color="var(--primary)" style={{ flexShrink: 0 }} />
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 800, fontSize: '0.95rem', color: 'var(--text-main)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.item_name}</div>
+                        <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>
+                          {it.item_model || '-'} · กรอกแล้ว {currentSns.length}/{it.quantity}
+                        </div>
+                      </div>
+                    </div>
+                    <span style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      padding: '4px 10px',
+                      background: 'var(--danger)',
+                      color: '#fff',
+                      borderRadius: '6px',
+                      fontSize: '0.72rem',
+                      fontWeight: 800,
+                      whiteSpace: 'nowrap',
+                      flexShrink: 0
+                    }}>
+                      <AlertTriangle size={11} /> ขาด {missing}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal กรอก S/N สำหรับ item ที่เลือก */}
+      <ProvideSnModal
+        isOpen={snModal.isOpen}
+        onClose={() => setSnModal({ ...snModal, isOpen: false })}
+        onSuccess={() => fetchWithdrawals()}
+        title={`ระบุ S/N ย้อนหลัง: ${snModal.itemName}`}
+        totalQuantity={snModal.totalQty}
+        existingSns={snModal.existingSns}
+        onSubmit={async (newSns) => {
+          if (snModal.withdrawalId && snModal.itemId) {
+            await withdrawalApi.updateItemSn(snModal.withdrawalId, snModal.itemId, newSns);
+          }
+        }}
+      />
+
+      {/* Blinking animation สำหรับปุ่มแดงเตือน S/N */}
+      <style>{`
+        @keyframes snAlertPulse {
+          0%, 100% {
+            box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+            transform: scale(1);
+          }
+          50% {
+            box-shadow: 0 0 0 6px rgba(239, 68, 68, 0);
+            transform: scale(1.04);
+          }
+        }
+        @keyframes snAlertGlow {
+          0%, 100% { background: var(--danger); }
+          50% { background: #f87171; }
+        }
+        .sn-alert-btn-blink {
+          animation: snAlertPulse 1.4s ease-in-out infinite, snAlertGlow 1.4s ease-in-out infinite;
+        }
+        .sn-alert-btn-blink:hover {
+          animation-play-state: paused;
+          background: #dc2626 !important;
+          transform: scale(1.06) !important;
+        }
+        .sn-alert-btn-blink:disabled {
+          animation: none;
+          opacity: 0.7;
+        }
+      `}</style>
     </div>
   );
 };

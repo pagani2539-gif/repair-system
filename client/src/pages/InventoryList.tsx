@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { inventoryApi, transactionApi, UPLOAD_URL } from '../api';
 import { useNotification } from '../components/Layout';
+import { useAuth } from '../contexts/AuthContext';
 import { useApi } from '../hooks/useApi';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
@@ -34,6 +35,7 @@ import { ProvideSnModal } from '../components/ProvideSnModal';
 
 const InventoryList: React.FC = () => {
   const { notify, refreshUnreadCounts } = useNotification();
+  const { hasPermission } = useAuth();
   const { urlState, setTableState } = useTableUrlState(20);
 
   const [showModal, setShowModal] = useState<boolean>(false);
@@ -320,7 +322,7 @@ const InventoryList: React.FC = () => {
   const actions: TableAction<InventoryItem>[] = [
     { id: 'edit', label: 'แก้ไขข้อมูล', icon: <Pencil size={14} />, onClick: (row) => handleOpenModal(row) },
     { id: 'sn', label: 'จัดการ S/N', icon: <Zap size={14} />, onClick: (row) => handleOpenSnModal(row) },
-    { id: 'delete', label: 'ลบอุปกรณ์', icon: <Trash size={14} />, variant: 'danger', onClick: (row) => handleDelete(row.id) }
+    { id: 'delete', label: 'ลบอุปกรณ์', icon: <Trash size={14} />, variant: 'danger', onClick: (row) => handleDelete(row.id), hidden: () => !hasPermission('delete.inventory') }
   ];
 
   const renderDetailDrawer = useCallback((item: InventoryItem) => {

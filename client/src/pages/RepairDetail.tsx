@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import PrintTemplate from '../components/PrintTemplate';
 import PrintDialog from '../components/PrintDialog';
+import PermissionGate from '../components/PermissionGate';
 import { Select } from '../components/ui/Input';
 import StationSelector from '../components/ui/StationSelector';
 
@@ -301,9 +302,11 @@ const RepairDetail: React.FC = () => {
           </div>
         </div>
         <div style={{ display: 'flex', gap: '12px' }}>
-          <button className="btn btn-outline" style={{ borderColor: 'var(--danger)', color: 'var(--danger)' }} onClick={handleDelete}>
-            <Trash2 size={18} /> <span className="hide-on-mobile">ลบรายการ</span>
-          </button>
+          <PermissionGate require={[repair.type === 'claim' ? 'delete.claims' : 'delete.repairs']}>
+            <button className="btn btn-outline" style={{ borderColor: 'var(--danger)', color: 'var(--danger)' }} onClick={handleDelete}>
+              <Trash2 size={18} /> <span className="hide-on-mobile">ลบรายการ</span>
+            </button>
+          </PermissionGate>
           <button className="btn btn-primary" style={{ background: 'var(--text-main)' }} onClick={handlePrint}>
             <FileText size={18} /> <span className="hide-on-mobile">พิมพ์ใบงาน</span>
           </button>

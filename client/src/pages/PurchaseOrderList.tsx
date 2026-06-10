@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useCallback, useState } from 'react';
 import { purchaseOrderApi } from '../api';
 import { useApi } from '../hooks/useApi';
 import { useNotification } from '../components/Layout';
+import { useAuth } from '../contexts/AuthContext';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { formatDateTimeThai } from '../utils/formatDate';
@@ -31,6 +32,7 @@ import { useTableUrlState } from '../hooks/useTableUrlState';
 
 const PurchaseOrderList: React.FC = () => {
   const { notify } = useNotification();
+  const { hasPermission } = useAuth();
   const { urlState, setTableState } = useTableUrlState(20);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isNewPoModalOpen, setIsNewPoModalOpen] = useState(false);
@@ -239,7 +241,7 @@ const PurchaseOrderList: React.FC = () => {
       onClick: (row) => handleReceive(row.id),
       hidden: (row) => row.status === 'Received' || row.status === 'Cancelled'
     },
-    { id: 'delete', label: 'ลบใบสั่งซื้อ', icon: <Trash size={14} />, variant: 'danger', onClick: (row) => handleDelete(row.id) }
+    { id: 'delete', label: 'ลบใบสั่งซื้อ', icon: <Trash size={14} />, variant: 'danger', onClick: (row) => handleDelete(row.id), hidden: () => !hasPermission('delete.purchase_orders') }
   ];
 
   const renderDetailDrawer = useCallback((po: PurchaseOrder) => (

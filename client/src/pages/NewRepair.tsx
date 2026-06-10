@@ -2,9 +2,11 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { repairApi } from '../api';
 import { useNotification } from '../components/Layout';
+import { useAuth } from '../contexts/AuthContext';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input, TextArea, Select } from '../components/ui/Input';
+import StationSelector from '../components/ui/StationSelector';
 import { 
   Upload, 
   X, 
@@ -14,11 +16,13 @@ import {
 const NewRepair: React.FC = () => {
   const navigate = useNavigate();
   const { notify, refreshUnreadCounts, playNotificationSound } = useNotification();
+  const { user } = useAuth();
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
-    reporter: '',
     project_name: '',
     location: '',
+    station_id: undefined as number | undefined,
+    station_area_id: undefined as number | undefined,
     device_name: '',
     problem: '',
     priority: 'ปกติ',
@@ -45,21 +49,16 @@ const NewRepair: React.FC = () => {
     e.preventDefault();
     
     // Validation
-    const trimmedReporter = formData.reporter.trim();
     const trimmedProjectName = formData.project_name.trim();
     const trimmedLocation = formData.location.trim();
     const trimmedDeviceName = formData.device_name.trim();
     const trimmedProblem = formData.problem.trim();
 
-    if (!trimmedReporter || !trimmedProjectName || !trimmedDeviceName || !trimmedProblem) {
+    if (!trimmedProjectName || !formData.station_id || !trimmedDeviceName || !trimmedProblem) {
       notify('กรุณากรอกข้อมูลให้ครบถ้วนในช่องที่จำเป็น', 'error');
       return;
     }
 
-    if (trimmedReporter.length > 100) {
-      notify('ชื่อผู้เบิกยาวเกินไป (ไม่เกิน 100 ตัวอักษร)', 'error');
-      return;
-    }
     if (trimmedProjectName.length > 100) {
       notify('ชื่อโครงการยาวเกินไป (ไม่เกิน 100 ตัวอักษร)', 'error');
       return;
@@ -87,9 +86,14 @@ const NewRepair: React.FC = () => {
 
     try {
       const data = new FormData();
-      data.append('reporter', trimmedReporter);
       data.append('project_name', trimmedProjectName);
       data.append('location', trimmedLocation);
+      if (formData.station_id) {
+        data.append('station_id', String(formData.station_id));
+      }
+      if (formData.station_area_id) {
+        data.append('station_area_id', String(formData.station_area_id));
+      }
       data.append('device_name', trimmedDeviceName);
       data.append('problem', trimmedProblem);
       data.append('priority', formData.priority);
@@ -123,15 +127,18 @@ const NewRepair: React.FC = () => {
       
       <Card style={{ maxWidth: '800px', margin: '0 auto' }}>
         <form onSubmit={handleSubmit}>
-          <div className="form-grid">
-            <Input 
-              label="ชื่อผู้เบิก / หน่วยงาน"
-              required 
-              maxLength={100}
-              placeholder="ระบุชื่อผู้รับ..."
-              value={formData.reporter}
-              onChange={(e) => setFormData({...formData, reporter: e.target.value})}
-            />
+          <div className="form-group" style={{ marginBottom: '1rem' }}>
+            <label style={{ fontSize: '0.85rem', fontWeight: 700, marginBottom: '6px', display: 'block' }}>ผู้แจ้ง</label>
+            <div style={{
+              padding: '10px 14px', background: 'var(--bg-app)',
+              border: '1px solid var(--border)', borderRadius: '10px',
+              fontSize: '0.9rem', color: 'var(--text-main)', fontWeight: 600,
+            }}>
+              👤 {user?.full_name || '—'}
+              <span style={{ marginLeft: '8px', fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400 }}>
+                (ดึงจากบัญชีที่เข้าสู่ระบบ)
+              </span>
+            </div>
           </div>
 
           <div className="form-grid">
@@ -155,13 +162,25 @@ const NewRepair: React.FC = () => {
             />
           </div>
 
-          <Input 
-            label="สถานที่ / หน้างาน"
-            maxLength={100}
-            placeholder="ระบุสถานที่..."
-            value={formData.location}
-            onChange={(e) => setFormData({...formData, location: e.target.value})}
-          />
+          <div className="form-group" style={{ marginBottom: '1.5rem' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-main)' }}>
+              สถานที่ตั้งด่าน / จุดควบคุมน้ำหนักทางหลวง <span style={{ color: 'var(--danger)' }}>*</span>
+            </label>
+            <StationSelector
+              selectedStationId={formData.station_id}
+              selectedAreaId={formData.station_area_id}
+              showArea={true}
+              required={true}
+              onChange={(data) => {
+                setFormData({
+                  ...formData,
+                  station_id: data.stationId,
+                  station_area_id: data.areaId,
+                  location: data.stationName + (data.areaName ? ` - ${data.areaName}` : '')
+                });
+              }}
+            />
+          </div>
 
           <Input 
             label="ชื่ออุปกรณ์ / รุ่น"
