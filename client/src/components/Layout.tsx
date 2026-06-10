@@ -1,4 +1,4 @@
-import React, { useState, useEffect, createContext, useContext, useCallback } from 'react';
+import React, { useState, useEffect, createContext, useContext, useCallback, useRef } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { 
   LayoutGrid,
@@ -19,7 +19,10 @@ import {
   Search,
   PanelLeftClose,
   PanelLeft,
-  Menu
+  Menu,
+  Download,
+  MapPin,
+  Settings as SettingsIcon
 } from 'lucide-react';
 import { repairApi, transactionApi, searchApi } from '../api';
 import type { GlobalSearchResults } from '../types';
@@ -97,6 +100,51 @@ const Layout: React.FC = () => {
     setIsMobileMenuOpen(false);
   };
 
+  // PWA Install Prompt
+  const deferredPromptRef = useRef<Event | null>(null);
+  const [canInstall, setCanInstall] = useState(false);
+  const [isStandalone, setIsStandalone] = useState(() => window.matchMedia('(display-mode: standalone)').matches);
+
+  useEffect(() => {
+    // Check if already installed as standalone
+    const mq = window.matchMedia('(display-mode: standalone)');
+    const handler = (e: MediaQueryListEvent) => setIsStandalone(e.matches);
+    mq.addEventListener('change', handler);
+
+    // Listen for the browser's install prompt
+    const onBeforeInstall = (e: Event) => {
+      e.preventDefault();
+      deferredPromptRef.current = e;
+      setCanInstall(true);
+    };
+    window.addEventListener('beforeinstallprompt', onBeforeInstall);
+
+    // When app is installed
+    const onInstalled = () => {
+      setCanInstall(false);
+      deferredPromptRef.current = null;
+    };
+    window.addEventListener('appinstalled', onInstalled);
+
+    return () => {
+      mq.removeEventListener('change', handler);
+      window.removeEventListener('beforeinstallprompt', onBeforeInstall);
+      window.removeEventListener('appinstalled', onInstalled);
+    };
+  }, []);
+
+  const handleInstallClick = async () => {
+    const prompt = deferredPromptRef.current as (Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> }) | null;
+    if (!prompt) return;
+    await prompt.prompt();
+    const { outcome } = await prompt.userChoice;
+    if (outcome === 'accepted') {
+      notify('ติดตั้งแอปสำเร็จ! คุณสามารถเปิดใช้งานจากหน้าจอหลักได้แล้ว', 'success', 'ติดตั้งแอป', 'system');
+    }
+    deferredPromptRef.current = null;
+    setCanInstall(false);
+  };
+
   // Search Command Palette States
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -104,7 +152,7 @@ const Layout: React.FC = () => {
   const [searchLoading, setSearchLoading] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
 
-  const notify = (
+  const notify = useCallback((
     message: string, 
     type: NotificationType = 'success',
     title?: string,
@@ -128,7 +176,7 @@ const Layout: React.FC = () => {
     setTimeout(() => {
       setNotifications(prev => prev.filter(n => n.id !== id));
     }, 6000);
-  };
+  }, []);
 
   const removeNotification = (id: string) => {
     setNotifications(prev => prev.filter(n => n.id !== id));
@@ -138,7 +186,7 @@ const Layout: React.FC = () => {
   const prevUnreadClaimCount = React.useRef(0);
   const prevLatestTransactionId = React.useRef<number | null>(null);
 
-  const playNotificationSound = () => {
+  const playNotificationSound = useCallback(() => {
     try {
       const audioContext = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
       const oscillator = audioContext.createOscillator();
@@ -159,7 +207,7 @@ const Layout: React.FC = () => {
     } catch (err) {
       console.error('Failed to play notification sound:', err);
     }
-  };
+  }, []);
 
   const refreshUnreadCounts = useCallback(async () => {
     try {
@@ -188,7 +236,7 @@ const Layout: React.FC = () => {
     } catch (err) {
       console.error('Failed to fetch unread count:', err);
     }
-  }, []);
+  }, [notify, playNotificationSound]);
 
   useEffect(() => {
     const pollTransactions = async () => {
@@ -231,7 +279,16 @@ const Layout: React.FC = () => {
     pollAll();
     const interval = setInterval(pollAll, 5000);
     return () => clearInterval(interval);
-  }, [refreshUnreadCounts]);
+  }, [refreshUnreadCounts, notify, playNotificationSound]);
+
+  const contextValue = React.useMemo(() => ({ 
+    notify, 
+    refreshUnreadCounts, 
+    playNotificationSound, 
+    unreadRepairCount, 
+    unreadClaimCount, 
+    lowStockCount 
+  }), [notify, refreshUnreadCounts, playNotificationSound, unreadRepairCount, unreadClaimCount, lowStockCount]);
 
   // Flattened results for easy keyboard index mapping
   const flattenedResults = React.useMemo(() => {
@@ -343,7 +400,7 @@ const Layout: React.FC = () => {
   };
 
   return (
-    <NotificationContext.Provider value={{ notify, refreshUnreadCounts, playNotificationSound, unreadRepairCount, unreadClaimCount, lowStockCount }}>
+    <NotificationContext.Provider value={contextValue}>
       <div className="app-container">
         {/* Mobile Header */}
         <header className="mobile-header">
@@ -432,7 +489,7 @@ const Layout: React.FC = () => {
           })}
         </div>
 
-        <aside className={`sidebar ${isSidebarCollapsed ? 'collapsed' : ''} ${isMobileMenuOpen ? 'mobile-open' : ''}`} aria-hidden={isMobileView && !isMobileMenuOpen}>
+        <aside className={`sidebar glass-card ${isSidebarCollapsed ? 'collapsed' : ''} ${isMobileMenuOpen ? 'mobile-open' : ''}`} aria-hidden={isMobileView && !isMobileMenuOpen}>
           <div className="sidebar-header">
             <div className="sidebar-logo">
               <div className="sidebar-logo-icon">
@@ -460,37 +517,13 @@ const Layout: React.FC = () => {
             </button>
           </div>
 
-          <div 
-            onClick={() => setIsSearchOpen(true)}
-            className="sidebar-search-btn"
-            role="button"
-            tabIndex={0}
-            aria-label="ค้นหาด่วน"
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                setIsSearchOpen(true);
-              }
-            }}
-          >
-            <Search size={16} />
-            <span>ค้นหาด่วน...</span>
-            {!isSidebarCollapsed && (
-              <span style={{ 
-                marginLeft: 'auto', 
-                fontSize: '0.7rem', 
-                background: '#cbd5e1', 
-                color: '#475569', 
-                padding: '2px 6px', 
-                borderRadius: '6px',
-                fontWeight: 800
-              }}>Ctrl+K</span>
-            )}
-          </div>
           
           <nav>
             <NavLink to="/" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
               <LayoutGrid size={18} /> <span className="nav-text">ภาพรวมระบบ</span>
+            </NavLink>
+            <NavLink to="/stations" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+              <MapPin size={18} /> <span className="nav-text">ค้นหาตามสถานี</span>
             </NavLink>
             
             <div className="nav-label">งานซ่อมบำรุง</div>
@@ -536,10 +569,46 @@ const Layout: React.FC = () => {
             <NavLink to="/purchase-orders" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}> 
               <ShoppingBag size={18} /> <span className="nav-text">การจัดซื้อพัสดุ (PO)</span>
             </NavLink>
-            <NavLink to="/reports" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}> 
+            <NavLink to="/reports" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
               <PieChart size={18} /> <span className="nav-text">รายงานและสถิติวิเคราะห์</span>
             </NavLink>
+
+            <div className="nav-label">ระบบ</div>
+            <NavLink to="/settings" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+              <SettingsIcon size={18} /> <span className="nav-text">ตั้งค่าระบบ</span>
+            </NavLink>
           </nav>
+
+          {/* PWA Install Button */}
+          {canInstall && !isStandalone && (
+            <div style={{ padding: isSidebarCollapsed ? '12px 8px' : '12px 16px', borderTop: '1px solid var(--border)', marginTop: 'auto' }}>
+              <button
+                onClick={handleInstallClick}
+                style={{
+                  width: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: isSidebarCollapsed ? 'center' : 'flex-start',
+                  gap: '10px',
+                  padding: isSidebarCollapsed ? '10px' : '10px 14px',
+                  background: 'linear-gradient(135deg, var(--primary), #1e3a8a)',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: '10px',
+                  fontSize: '0.8rem',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  transition: 'all 0.3s ease',
+                  fontFamily: 'inherit',
+                  boxShadow: '0 4px 15px rgba(30, 58, 138, 0.3)'
+                }}
+                title="ติดตั้งแอปลงเครื่อง"
+              >
+                <Download size={18} />
+                {!isSidebarCollapsed && <span>ติดตั้งแอป</span>}
+              </button>
+            </div>
+          )}
         </aside>
 
         <main className="main-content">
@@ -561,7 +630,7 @@ const Layout: React.FC = () => {
             }
           }}
         >
-          <div className="search-modal">
+          <div className="search-modal glass-card">
             <div className="search-modal-header">
               <Search className="search-modal-icon" size={20} />
               <input
@@ -612,8 +681,11 @@ const Layout: React.FC = () => {
               
               {!searchLoading && !searchQuery && (
                 <div className="search-modal-placeholder">
-                  <span>ยินดีต้อนรับสู่กล่องค้นหาด่วน</span>
-                  <p>ค้นหาข้ามระบบได้อย่างง่ายดาย เพียงพิมพ์ชื่ออุปกรณ์ เลขที่ใบงาน หรือชื่อผู้แจ้ง</p>
+                  <div className="stat-icon-wrapper" style={{ marginBottom: '1.5rem', transform: 'scale(1.2)' }}>
+                    <Search size={32} />
+                  </div>
+                  <span className="text-balance" style={{ fontSize: '1.25rem', fontWeight: 800 }}>ยินดีต้อนรับสู่กล่องค้นหาด่วน</span>
+                  <p className="text-pretty">ค้นหาข้ามระบบได้อย่างง่ายดาย เพียงพิมพ์ชื่ออุปกรณ์ เลขที่ใบงาน หรือชื่อผู้แจ้ง</p>
                   <div className="search-tips">
                     <span>คีย์ลัด:</span>
                     <kbd>⇅</kbd> เลื่อนขึ้นลง · <kbd>Enter</kbd> เปิดดูรายละเอียด · <kbd>Esc</kbd> ปิด

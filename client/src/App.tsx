@@ -13,6 +13,8 @@ import WithdrawalDetail from './pages/WithdrawalDetail';
 import TransactionList from './pages/TransactionList';
 import PurchaseOrderList from './pages/PurchaseOrderList';
 import Reports from './pages/Reports';
+import StationSearch from './pages/StationSearch';
+import Settings from './pages/Settings';
 import ErrorBoundary from './components/ErrorBoundary';
 
 function App() {
@@ -35,6 +37,8 @@ function App() {
             <Route path="transactions" element={<TransactionList />} />
             <Route path="purchase-orders" element={<PurchaseOrderList />} />
             <Route path="reports" element={<Reports />} />
+            <Route path="stations" element={<StationSearch />} />
+            <Route path="settings" element={<Settings />} />
           </Route>
         </Routes>
       </Router>

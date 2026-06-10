@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Repair, RepairDetail, RepairStatsResponse, InventoryItem, Withdrawal, InventoryStats, DashboardData, GlobalSearchResults, PurchaseOrder, PurchaseOrderItem } from './types';
+import type { Repair, RepairDetail, RepairStatsResponse, InventoryItem, Withdrawal, InventoryStats, DashboardData, GlobalSearchResults, PurchaseOrder, StationDetailResponse, Station, StationArea, VendorContact, Company, CompanyLogo } from './types';
 
 const API_URL = import.meta.env.DEV 
   ? 'http://localhost:5221/api' 
@@ -25,7 +25,7 @@ api.interceptors.response.use(response => {
 });
 
 export const repairApi = {
-  getAll: async (params: { status?: string; location?: string; search?: string; type?: string; priority?: string; sortBy?: string }) => {
+  getAll: async (params: { status?: string; location?: string; station_id?: number | string; search?: string; type?: string; priority?: string; sortBy?: string }) => {
     const response = await api.get<Repair[]>('/repairs', { params });
     return response.data;
   },
@@ -83,6 +83,8 @@ export const repairApi = {
     reporter: string;
     project_name?: string;
     location: string;
+    station_id?: number;
+    station_area_id?: number;
     device_name: string;
     problem: string;
     priority: string;
@@ -114,12 +116,8 @@ export const repairApi = {
 };
 
 export const inventoryApi = {
-  getAll: async (params: { search?: string }) => {
+  getAll: async (params?: { search?: string }) => {
     const response = await api.get<InventoryItem[]>('/inventory', { params });
-    return response.data;
-  },
-  getById: async (id: number | string) => {
-    const response = await api.get<InventoryItem>(`/inventory/${id}`);
     return response.data;
   },
   getInstances: async (id: number | string) => {
@@ -172,6 +170,9 @@ export const withdrawalApi = {
   create: async (data: {
     recipient: string;
     project_name?: string;
+    location?: string;
+    station_id?: number;
+    station_area_id?: number;
     type: string;
     note?: string;
     items: Array<{ inventory_id: number; quantity: number; serial_numbers?: string[] }>;
@@ -186,8 +187,8 @@ export const withdrawalApi = {
 };
 
 export const transactionApi = {
-  getAll: async () => {
-    const response = await api.get('/transactions');
+  getAll: async (params?: { inventory_id?: number | string }) => {
+    const response = await api.get('/transactions', { params });
     return response.data;
   },
   getLatest: async () => {
@@ -201,28 +202,6 @@ export const transactionApi = {
       product_name: string;
       user_name?: string;
     } | null>('/transactions/latest');
-    return response.data;
-  },
-  addStock: async (data: {
-    inventory_id: number;
-    quantity: number;
-    user_name: string;
-    note?: string;
-    serial_numbers?: string[];
-  }) => {
-    const response = await api.post('/transactions/add-stock', data);
-    return response.data;
-  },
-  borrow: async (data: {
-    inventory_id: number;
-    instance_id?: number;
-    quantity: number;
-    user_name: string;
-    project_name?: string;
-    location?: string;
-    note?: string;
-  }) => {
-    const response = await api.post('/transactions/borrow', data);
     return response.data;
   },
   return: async (data: FormData | Record<string, unknown>) => {
@@ -253,12 +232,27 @@ export const purchaseOrderApi = {
     const response = await api.get<PurchaseOrder>(`/purchase-orders/${id}`);
     return response.data;
   },
-  create: async (data: { po_no?: string; note?: string; ordered_by?: string; project_name?: string; items: PurchaseOrderItem[] }) => {
-    const response = await api.post('/purchase-orders', data);
+  getVendors: async () => {
+    const response = await api.get<VendorContact[]>('/purchase-orders/vendors');
     return response.data;
   },
-  update: async (id: number | string, data: { status?: string; note?: string; ordered_by?: string; project_name?: string; items?: PurchaseOrderItem[] }) => {
-    const response = await api.patch(`/purchase-orders/${id}`, data);
+  create: async (data: {
+    company_name?: string;
+    ordered_by?: string;
+    project_name?: string;
+    note?: string;
+    status?: 'Draft' | 'Pending';
+    created_by?: string;
+    vendor_address?: string;
+    vendor_phone?: string;
+    vendor_contact_person?: string;
+    vendor_tax_id?: string;
+    buyer_department?: string;
+    buyer_phone?: string;
+    buyer_email?: string;
+    items: { inventory_id: number; quantity: number; unit_price?: number }[];
+  }) => {
+    const response = await api.post<{ id: number; po_no: string; message: string }>('/purchase-orders', data);
     return response.data;
   },
   delete: async (id: number | string) => {
@@ -273,5 +267,86 @@ export const purchaseOrderApi = {
     const response = await api.post('/purchase-orders/auto-generate');
     return response.data;
   }
+};
+
+export const stationApi = {
+  getUniqueList: async (params?: { status?: number }) => {
+    const response = await api.get<Station[]>('/stations', { params });
+    return response.data;
+  },
+  getDetails: async (params: { location?: string; station_id?: number | string }) => {
+    const response = await api.get<StationDetailResponse>('/stations/details', { params });
+    return response.data;
+  },
+  getAreas: async (stationId: number | string) => {
+    const response = await api.get<StationArea[]>(`/stations/${stationId}/areas`);
+    return response.data;
+  },
+  createArea: async (stationId: number | string, name: string) => {
+    const response = await api.post<StationArea>(`/stations/${stationId}/areas`, { name });
+    return response.data;
+  },
+  create: async (data: Omit<Station, 'id' | 'status' | 'code'>) => {
+    const response = await api.post<Station>('/stations', data);
+    return response.data;
+  },
+  delete: async (stationId: number | string) => {
+    const response = await api.delete<{ message: string }>(`/stations/${stationId}`);
+    return response.data;
+  },
+  update: async (stationId: number | string, data: Omit<Station, 'id' | 'status' | 'code'>) => {
+    const response = await api.patch<Station>(`/stations/${stationId}`, data);
+    return response.data;
+  }
+};
+
+export const settingsApi = {
+  // Companies
+  getCompanies: async () => {
+    const response = await api.get<Company[]>('/settings/companies');
+    return response.data;
+  },
+  getCompanyById: async (id: number) => {
+    const response = await api.get<Company>(`/settings/companies/${id}`);
+    return response.data;
+  },
+  createCompany: async (data: Partial<Company>) => {
+    const response = await api.post<{ id: number; message: string }>('/settings/companies', data);
+    return response.data;
+  },
+  updateCompany: async (id: number, data: Partial<Company>) => {
+    const response = await api.put<{ message: string }>(`/settings/companies/${id}`, data);
+    return response.data;
+  },
+  deleteCompany: async (id: number) => {
+    const response = await api.delete<{ message: string }>(`/settings/companies/${id}`);
+    return response.data;
+  },
+  setDefaultCompany: async (id: number) => {
+    const response = await api.patch<{ message: string }>(`/settings/companies/${id}/default`);
+    return response.data;
+  },
+
+  // Logos
+  getLogos: async (companyId?: number) => {
+    const response = await api.get<CompanyLogo[]>('/settings/logos', {
+      params: companyId ? { company_id: companyId } : undefined,
+    });
+    return response.data;
+  },
+  uploadLogo: async (formData: FormData) => {
+    const response = await api.post<CompanyLogo>('/settings/logos', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  },
+  setDefaultLogo: async (id: number) => {
+    const response = await api.patch<{ message: string }>(`/settings/logos/${id}/default`);
+    return response.data;
+  },
+  deleteLogo: async (id: number) => {
+    const response = await api.delete<{ message: string }>(`/settings/logos/${id}`);
+    return response.data;
+  },
 };
 
