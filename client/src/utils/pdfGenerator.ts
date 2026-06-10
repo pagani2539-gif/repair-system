@@ -100,7 +100,7 @@ export const printElement = (elementId: string, title: string) => {
       box-shadow: none !important;
     }
 
-    #pdf-withdrawal-template, #pdf-return-template {
+    #pdf-withdrawal-template, #pdf-return-template, #pdf-po-template {
       position: relative !important;
       left: 0 !important;
       top: 0 !important;
@@ -125,16 +125,17 @@ export const printElement = (elementId: string, title: string) => {
     }
 
     /* Override page dimensions for multi-page templates to fit A4 layout and avoid trailing blank pages */
-    .print-page {
+    .print-page, .pdf-page {
       position: relative !important;
       width: 100% !important;
       min-height: 297mm !important;
       height: auto !important;
-      padding: 12mm !important;
       margin: 0 !important;
       box-shadow: none !important;
+      page-break-after: always;
+      break-after: page;
     }
-    .print-page:last-child {
+    .print-page:last-child, .pdf-page:last-child {
       page-break-after: avoid !important;
       break-after: avoid !important;
     }
