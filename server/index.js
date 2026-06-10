@@ -37,6 +37,8 @@ const withdrawalRoutes = require('./routes/withdrawals');
 const transactionRoutes = require('./routes/transactions');
 const poRoutes = require('./routes/purchaseOrders');
 const searchRoutes = require('./routes/search');
+const stationRoutes = require('./routes/stations');
+const settingsRoutes = require('./routes/settings');
 const errorHandler = require('./middlewares/errorHandler');
 
 app.use('/api/repairs', repairRoutes);
@@ -45,6 +47,13 @@ app.use('/api/withdrawals', withdrawalRoutes);
 app.use('/api/transactions', transactionRoutes);
 app.use('/api/purchase-orders', poRoutes);
 app.use('/api/search', searchRoutes);
+app.use('/api/stations', stationRoutes);
+app.use('/api/settings', settingsRoutes);
+
+// Health check endpoint
+app.get('/api', (req, res) => {
+  res.json({ message: 'Repair System API is running' });
+});
 
 // Mount central error handler
 app.use(errorHandler);
@@ -66,6 +75,10 @@ if (fs.existsSync(distPath)) {
   });
 }
 
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+  });
+}
+
+module.exports = app;

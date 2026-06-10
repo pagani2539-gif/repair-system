@@ -2,10 +2,14 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
-// Ensure upload directory exists
+// Ensure upload directories exist
 const uploadDir = path.join(__dirname, '../uploads');
+const logosDir = path.join(uploadDir, 'logos');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
+}
+if (!fs.existsSync(logosDir)) {
+  fs.mkdirSync(logosDir, { recursive: true });
 }
 
 const storage = multer.diskStorage({
@@ -15,6 +19,15 @@ const storage = multer.diskStorage({
   filename: (req, file, cb) => {
     const prefix = file.fieldname === 'image' ? 'inv-' : '';
     cb(null, prefix + Date.now() + path.extname(file.originalname));
+  }
+});
+
+const logoStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, logosDir);
+  },
+  filename: (req, file, cb) => {
+    cb(null, 'logo-' + Date.now() + path.extname(file.originalname));
   }
 });
 
@@ -33,8 +46,15 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
 });
 
+const uploadLogo = multer({
+  storage: logoStorage,
+  fileFilter: fileFilter,
+  limits: { fileSize: 5 * 1024 * 1024 }
+});
+
 module.exports = {
   uploadRepairImages: upload.array('images', 4),
   uploadInventoryImage: upload.single('image'),
-  uploadReturnImage: upload.single('image')
+  uploadReturnImage: upload.single('image'),
+  uploadCompanyLogo: uploadLogo.single('logo')
 };
