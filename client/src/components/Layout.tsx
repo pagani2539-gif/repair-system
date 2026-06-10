@@ -22,10 +22,14 @@ import {
   Menu,
   Download,
   MapPin,
-  Settings as SettingsIcon
+  Settings as SettingsIcon,
+  LogOut,
+  UserCog,
+  Users
 } from 'lucide-react';
 import { repairApi, transactionApi, searchApi } from '../api';
 import type { GlobalSearchResults } from '../types';
+import { useAuth } from '../contexts/AuthContext';
 import ErrorBoundary from './ErrorBoundary';
 
 
@@ -69,6 +73,7 @@ export const useNotification = () => {
 
 const Layout: React.FC = () => {
   const navigate = useNavigate();
+  const { user, logout } = useAuth();
   const [unreadRepairCount, setUnreadRepairCount] = useState(0);
   const [unreadClaimCount, setUnreadClaimCount] = useState(0);
   const [lowStockCount, setLowStockCount] = useState(0);
@@ -573,11 +578,124 @@ const Layout: React.FC = () => {
               <PieChart size={18} /> <span className="nav-text">รายงานและสถิติวิเคราะห์</span>
             </NavLink>
 
-            <div className="nav-label">ระบบ</div>
-            <NavLink to="/settings" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-              <SettingsIcon size={18} /> <span className="nav-text">ตั้งค่าระบบ</span>
-            </NavLink>
+            {user?.is_full && (
+              <>
+                <div className="nav-label">ระบบ</div>
+                <NavLink to="/settings" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+                  <SettingsIcon size={18} /> <span className="nav-text">ตั้งค่าระบบ</span>
+                </NavLink>
+                <NavLink to="/users" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+                  <Users size={18} /> <span className="nav-text">จัดการผู้ใช้</span>
+                </NavLink>
+              </>
+            )}
           </nav>
+
+          {/* User profile + logout */}
+          {user && (
+            <div style={{
+              padding: isSidebarCollapsed ? '12px 8px' : '12px 16px',
+              borderTop: '1px solid var(--border)',
+              marginTop: 'auto',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '8px',
+            }}>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                padding: isSidebarCollapsed ? '6px' : '8px 10px',
+                background: 'var(--bg-app)',
+                borderRadius: '10px',
+                justifyContent: isSidebarCollapsed ? 'center' : 'flex-start',
+              }}>
+                <div style={{
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '50%',
+                  background: user.is_full ? 'linear-gradient(135deg, var(--primary), #1e3a8a)' : 'var(--bg-card)',
+                  border: user.is_full ? 'none' : '1px solid var(--border)',
+                  color: user.is_full ? '#fff' : 'var(--text-main)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontWeight: 800,
+                  fontSize: '0.85rem',
+                  flexShrink: 0,
+                }}>
+                  {(user.full_name || user.username).charAt(0).toUpperCase()}
+                </div>
+                {!isSidebarCollapsed && (
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{
+                      fontSize: '0.85rem',
+                      fontWeight: 700,
+                      color: 'var(--text-main)',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}>
+                      {user.full_name}
+                    </div>
+                    <div style={{
+                      fontSize: '0.7rem',
+                      color: user.is_full ? 'var(--primary)' : 'var(--text-muted)',
+                      fontWeight: 600,
+                    }}>
+                      {user.is_full ? 'ผู้ดูแลระบบ' : 'ผู้ใช้งาน'} · @{user.username}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', gap: '4px' }}>
+                <button
+                  onClick={() => navigate('/change-password')}
+                  title="เปลี่ยนรหัสผ่าน"
+                  style={{
+                    flex: 1,
+                    padding: '8px',
+                    background: 'transparent',
+                    border: '1px solid var(--border)',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    color: 'var(--text-muted)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '4px',
+                    fontSize: '0.75rem',
+                  }}
+                >
+                  <UserCog size={14} />
+                  {!isSidebarCollapsed && <span>เปลี่ยนรหัส</span>}
+                </button>
+                <button
+                  onClick={logout}
+                  title="ออกจากระบบ"
+                  style={{
+                    flex: 1,
+                    padding: '8px',
+                    background: 'transparent',
+                    border: '1px solid var(--danger)',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    color: 'var(--danger)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '4px',
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                  }}
+                >
+                  <LogOut size={14} />
+                  {!isSidebarCollapsed && <span>ออก</span>}
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* PWA Install Button */}
           {canInstall && !isStandalone && (

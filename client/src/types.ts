@@ -313,6 +313,37 @@ export interface Company {
   updated_at?: string;
 }
 
+export interface Permissions {
+  delete?: {
+    repairs?: boolean;
+    claims?: boolean;
+    withdrawals?: boolean;
+    inventory?: boolean;
+    purchase_orders?: boolean;
+    transactions?: boolean;
+    stations?: boolean;
+  };
+  manage?: {
+    settings?: boolean;
+    stations?: boolean;
+    companies?: boolean;
+    users?: boolean;
+  };
+}
+
+export interface User {
+  id: number;
+  username: string;
+  full_name: string;
+  is_full: boolean;
+  permissions: Permissions;
+  force_password_change: boolean;
+  is_active: boolean;
+  last_login?: string | null;
+  created_by?: number | null;
+  created_at?: string;
+}
+
 export interface CompanyLogo {
   id: number;
   label: string;

@@ -1,5 +1,13 @@
 import axios from 'axios';
-import type { Repair, RepairDetail, RepairStatsResponse, InventoryItem, Withdrawal, InventoryStats, DashboardData, GlobalSearchResults, PurchaseOrder, StationDetailResponse, Station, StationArea, VendorContact, Company, CompanyLogo } from './types';
+import type { Repair, RepairDetail, RepairStatsResponse, InventoryItem, Withdrawal, InventoryStats, DashboardData, GlobalSearchResults, PurchaseOrder, StationDetailResponse, Station, StationArea, VendorContact, Company, CompanyLogo, User } from './types';
+
+const TOKEN_KEY = 'maintenance_auth_token';
+
+export const tokenStorage = {
+  get: () => localStorage.getItem(TOKEN_KEY),
+  set: (token: string) => localStorage.setItem(TOKEN_KEY, token),
+  clear: () => localStorage.removeItem(TOKEN_KEY),
+};
 
 const API_URL = import.meta.env.DEV 
   ? 'http://localhost:5221/api' 
@@ -13,16 +21,36 @@ const api = axios.create({
   baseURL: API_URL,
 });
 
-// VERY AGGRESSIVE DEBUGGING
-api.interceptors.response.use(response => {
-  if (response.config.url?.includes('/repairs/stats')) {
-    console.log('--- STATS API RAW DATA ---');
-    console.log(JSON.stringify(response.data, null, 2));
-    console.log('pending type:', typeof response.data.pending);
-    console.log('completed type:', typeof response.data.completed);
+// Attach JWT to every request when available
+api.interceptors.request.use((config) => {
+  const token = tokenStorage.get();
+  if (token) {
+    config.headers = config.headers || {};
+    config.headers.Authorization = `Bearer ${token}`;
   }
-  return response;
+  return config;
 });
+
+// On 401, clear token + redirect to /login (skip if already on auth pages)
+api.interceptors.response.use(
+  (response) => {
+    if (response.config.url?.includes('/repairs/stats')) {
+      console.log('--- STATS API RAW DATA ---');
+      console.log(JSON.stringify(response.data, null, 2));
+    }
+    return response;
+  },
+  (error) => {
+    if (error.response?.status === 401) {
+      tokenStorage.clear();
+      const path = window.location.pathname;
+      if (path !== '/login' && path !== '/change-password') {
+        window.location.href = '/login';
+      }
+    }
+    return Promise.reject(error);
+  }
+);
 
 export const repairApi = {
   getAll: async (params: { status?: string; location?: string; station_id?: number | string; search?: string; type?: string; priority?: string; sortBy?: string }) => {
@@ -346,6 +374,43 @@ export const settingsApi = {
   },
   deleteLogo: async (id: number) => {
     const response = await api.delete<{ message: string }>(`/settings/logos/${id}`);
+    return response.data;
+  },
+};
+
+export const authApi = {
+  login: async (username: string, password: string) => {
+    const response = await api.post<{ token: string; user: User }>('/auth/login', { username, password });
+    return response.data;
+  },
+  me: async () => {
+    const response = await api.get<{ user: User }>('/auth/me');
+    return response.data;
+  },
+  changePassword: async (current_password: string, new_password: string) => {
+    const response = await api.post<{ message: string; token: string }>('/auth/change-password', {
+      current_password,
+      new_password,
+    });
+    return response.data;
+  },
+};
+
+export const userApi = {
+  list: async () => {
+    const response = await api.get<User[]>('/users');
+    return response.data;
+  },
+  create: async (data: { username: string; password: string; full_name: string; is_full?: boolean; permissions?: object }) => {
+    const response = await api.post<{ id: number; message: string }>('/users', data);
+    return response.data;
+  },
+  update: async (id: number, data: Partial<{ full_name: string; password: string; is_full: boolean; permissions: object; is_active: boolean }>) => {
+    const response = await api.put<{ message: string }>(`/users/${id}`, data);
+    return response.data;
+  },
+  remove: async (id: number) => {
+    const response = await api.delete<{ message: string }>(`/users/${id}`);
     return response.data;
   },
 };
