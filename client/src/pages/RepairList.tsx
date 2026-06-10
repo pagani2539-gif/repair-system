@@ -92,9 +92,11 @@ const RepairList: React.FC = () => {
     }).sort((a, b) => {
       if (urlState.sortBy === 'priority') {
         const pMap: Record<string, number> = { 'วิกฤต': 4, 'ด่วนมาก': 3, 'ด่วน': 2, 'ปกติ': 1 };
-        return (pMap[b.priority] || 0) - (pMap[a.priority] || 0);
+        const p = (pMap[b.priority] || 0) - (pMap[a.priority] || 0);
+        if (p !== 0) return p;
       }
-      return parseDate(b.received_at || b.created_at).getTime() - parseDate(a.received_at || a.created_at).getTime();
+      const t = parseDate(b.received_at || b.created_at).getTime() - parseDate(a.received_at || a.created_at).getTime();
+      return t !== 0 ? t : b.id - a.id;
     });
   }, [repairs, urlState]);
 

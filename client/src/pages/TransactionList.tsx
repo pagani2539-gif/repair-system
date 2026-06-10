@@ -98,7 +98,10 @@ const TransactionList: React.FC = () => {
       if (urlState.filters.type && urlState.filters.type !== 'All' && t.transaction_type !== urlState.filters.type) return false;
       if (urlState.filters.withdrawal_type && urlState.filters.withdrawal_type !== 'All' && t.withdrawal_type !== urlState.filters.withdrawal_type) return false;
       return true;
-    }).sort((a: InventoryTransaction, b: InventoryTransaction) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    }).sort((a: InventoryTransaction, b: InventoryTransaction) => {
+      const t = new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      return t !== 0 ? t : b.id - a.id;
+    });
   }, [transactions, urlState]);
 
   // Dynamic withdrawal subtype options (auto-discovered from data)

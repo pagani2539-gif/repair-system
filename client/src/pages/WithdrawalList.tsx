@@ -408,7 +408,10 @@ const WithdrawalList: React.FC = () => {
       if (urlState.filters.type && w.type !== urlState.filters.type) return false;
       
       return true;
-    }).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    }).sort((a, b) => {
+      const t = new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      return t !== 0 ? t : b.id - a.id;
+    });
   }, [withdrawals, urlState.search, urlState.filters]);
 
   const indexOfLastItem = urlState.page * urlState.pageSize;

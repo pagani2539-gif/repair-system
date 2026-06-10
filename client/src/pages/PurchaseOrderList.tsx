@@ -114,7 +114,10 @@ const PurchaseOrderList: React.FC = () => {
       }
       if (urlState.filters.status && urlState.filters.status !== 'All' && p.status !== urlState.filters.status) return false;
       return true;
-    }).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    }).sort((a, b) => {
+      const t = new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      return t !== 0 ? t : b.id - a.id;
+    });
   }, [pos, urlState]);
 
   const indexOfLastItem = urlState.page * urlState.pageSize;

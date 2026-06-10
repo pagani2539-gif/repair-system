@@ -6,12 +6,12 @@ exports.getAllItems = (req, res) => {
   const params = [];
 
   if (search) {
-    query += ' AND (name LIKE ? OR model LIKE ? OR description LIKE ?)';
+    query += ' AND (name LIKE ? OR model LIKE ? OR description LIKE ? OR storage_location LIKE ?)';
     const searchParam = `%${search}%`;
-    params.push(searchParam, searchParam, searchParam);
+    params.push(searchParam, searchParam, searchParam, searchParam);
   }
 
-  query += ' ORDER BY created_at DESC';
+  query += ' ORDER BY created_at DESC, id DESC';
 
   db.all(query, params, (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -29,16 +29,16 @@ exports.getItemById = (req, res) => {
 };
 
 exports.createItem = (req, res) => {
-  const { name, model, description, quantity, min_stock, serial_numbers, requires_sn } = req.body;
+  const { name, model, description, quantity, min_stock, serial_numbers, requires_sn, storage_location } = req.body;
   const image_path = req.file ? req.file.filename : null;
   const parsedSns = serial_numbers ? JSON.parse(serial_numbers) : [];
   const qty = parseInt(quantity) || 0;
   const reqSn = requires_sn === undefined ? 1 : parseInt(requires_sn);
 
   db.run(`
-    INSERT INTO inventory (name, model, description, quantity, min_stock, image_path, requires_sn)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `, [name, model, description, qty, min_stock || 10, image_path, reqSn], function(err) {
+    INSERT INTO inventory (name, model, description, quantity, min_stock, image_path, requires_sn, storage_location)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `, [name, model, description, qty, min_stock || 10, image_path, reqSn, storage_location || null], function(err) {
     if (err) return res.status(500).json({ error: err.message });
     
     const inventoryId = this.lastID;
@@ -81,9 +81,9 @@ exports.createItem = (req, res) => {
 
 exports.updateItem = (req, res) => {
   const { id } = req.params;
-  const { name, model, description, quantity, min_stock, requires_sn } = req.body;
-  let query = 'UPDATE inventory SET name = ?, model = ?, description = ?, quantity = ?, min_stock = ?, requires_sn = ?, updated_at = CURRENT_TIMESTAMP';
-  const params = [name, model, description, quantity, min_stock, requires_sn === undefined ? 1 : parseInt(requires_sn)];
+  const { name, model, description, quantity, min_stock, requires_sn, storage_location } = req.body;
+  let query = 'UPDATE inventory SET name = ?, model = ?, description = ?, quantity = ?, min_stock = ?, requires_sn = ?, storage_location = ?, updated_at = CURRENT_TIMESTAMP';
+  const params = [name, model, description, quantity, min_stock, requires_sn === undefined ? 1 : parseInt(requires_sn), storage_location || null];
 
   if (req.file) {
     query += ', image_path = ?';
@@ -118,8 +118,8 @@ exports.getStats = (req, res) => {
   const query = `
     SELECT 
       COUNT(*) as total_items,
-      SUM(CASE WHEN quantity < 10 THEN 1 ELSE 0 END) as critical,
-      SUM(CASE WHEN quantity >= 10 AND quantity < 20 THEN 1 ELSE 0 END) as warning,
+      SUM(CASE WHEN quantity = 0 THEN 1 ELSE 0 END) as critical,
+      SUM(CASE WHEN quantity > 0 AND quantity < 20 THEN 1 ELSE 0 END) as warning,
       SUM(CASE WHEN quantity >= 40 THEN 1 ELSE 0 END) as optimal
     FROM inventory
   `;

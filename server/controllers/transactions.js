@@ -61,7 +61,7 @@ exports.getAllTransactions = (req, res) => {
   if (conditions.length > 0) {
     query += ` WHERE ` + conditions.join(' AND ');
   }
-  query += ` ORDER BY created_at DESC`;
+  query += ` ORDER BY created_at DESC, id DESC`;
 
   db.all(query, params, (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });

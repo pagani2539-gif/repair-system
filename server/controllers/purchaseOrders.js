@@ -18,12 +18,12 @@ exports.getAllPOs = (req, res) => {
   }
 
   if (search) {
-    query += ' AND (po.po_no LIKE ? OR po.note LIKE ?)';
+    query += ' AND (po.po_no LIKE ? OR po.note LIKE ? OR po.company_name LIKE ?)';
     const searchParam = `%${search}%`;
-    params.push(searchParam, searchParam);
+    params.push(searchParam, searchParam, searchParam);
   }
 
-  query += ' ORDER BY po.created_at DESC';
+  query += ' ORDER BY po.created_at DESC, po.id DESC';
 
   db.all(query, params, (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -58,11 +58,20 @@ exports.getPOById = (req, res) => {
 };
 
 exports.createPO = (req, res) => {
-  const { po_no, note, items, ordered_by, project_name } = req.body; // items is array of { inventory_id, quantity, unit_price }
+  const {
+    po_no, note, items, ordered_by, project_name, company_name, status, created_by,
+    vendor_address, vendor_phone, vendor_contact_person, vendor_tax_id,
+    buyer_department, buyer_phone, buyer_email
+  } = req.body; // items is array of { inventory_id, quantity, unit_price }
 
   if (!items || items.length === 0) {
     return res.status(400).json({ message: 'กรุณาเลือกรายการอุปกรณ์อย่างน้อย 1 รายการ' });
   }
+
+  // Validate status — รองรับเฉพาะค่าใน enum (Draft / Pending / Approved / Cancelled). Default = Draft (backward compat)
+  const validStatuses = ['Draft', 'Pending', 'Approved', 'Cancelled'];
+  const poStatus = validStatuses.includes(status) ? status : 'Draft';
+  const creator = (created_by && String(created_by).trim()) || 'User';
 
   db.serialize(() => {
     db.run('BEGIN TRANSACTION');
@@ -72,9 +81,17 @@ exports.createPO = (req, res) => {
     const poNo = po_no || `PO-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
 
     db.run(`
-      INSERT INTO purchase_orders (po_no, status, created_by, note, ordered_by, project_name)
-      VALUES (?, 'Draft', 'User', ?, ?, ?)
-    `, [poNo, note || null, ordered_by || null, project_name || null], function(err) {
+      INSERT INTO purchase_orders (
+        po_no, status, created_by, note, ordered_by, project_name, company_name,
+        vendor_address, vendor_phone, vendor_contact_person, vendor_tax_id,
+        buyer_department, buyer_phone, buyer_email
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      poNo, poStatus, creator, note || null, ordered_by || null, project_name || null, company_name || null,
+      vendor_address || null, vendor_phone || null, vendor_contact_person || null, vendor_tax_id || null,
+      buyer_department || null, buyer_phone || null, buyer_email || null
+    ], function(err) {
       if (err) {
         db.run('ROLLBACK');
         return res.status(500).json({ error: err.message });
@@ -110,7 +127,11 @@ exports.createPO = (req, res) => {
 
 exports.updatePO = (req, res) => {
   const { id } = req.params;
-  const { status, note, items, ordered_by, project_name } = req.body;
+  const {
+    status, note, items, ordered_by, project_name, company_name,
+    vendor_address, vendor_phone, vendor_contact_person, vendor_tax_id,
+    buyer_department, buyer_phone, buyer_email
+  } = req.body;
 
   db.serialize(() => {
     db.run('BEGIN TRANSACTION');
@@ -126,11 +147,19 @@ exports.updatePO = (req, res) => {
         return res.status(400).json({ message: 'ไม่สามารถแก้ไขใบสั่งซื้อที่รับของแล้วได้' });
       }
 
-      let updateQuery = 'UPDATE purchase_orders SET note = ?, ordered_by = ?, project_name = ?, updated_at = CURRENT_TIMESTAMP';
+      let updateQuery = 'UPDATE purchase_orders SET note = ?, ordered_by = ?, project_name = ?, company_name = ?, vendor_address = ?, vendor_phone = ?, vendor_contact_person = ?, vendor_tax_id = ?, buyer_department = ?, buyer_phone = ?, buyer_email = ?, updated_at = CURRENT_TIMESTAMP';
       const params = [
         note !== undefined ? note : po.note,
         ordered_by !== undefined ? ordered_by : po.ordered_by,
-        project_name !== undefined ? project_name : po.project_name
+        project_name !== undefined ? project_name : po.project_name,
+        company_name !== undefined ? company_name : po.company_name,
+        vendor_address !== undefined ? vendor_address : po.vendor_address,
+        vendor_phone !== undefined ? vendor_phone : po.vendor_phone,
+        vendor_contact_person !== undefined ? vendor_contact_person : po.vendor_contact_person,
+        vendor_tax_id !== undefined ? vendor_tax_id : po.vendor_tax_id,
+        buyer_department !== undefined ? buyer_department : po.buyer_department,
+        buyer_phone !== undefined ? buyer_phone : po.buyer_phone,
+        buyer_email !== undefined ? buyer_email : po.buyer_email
       ];
 
       if (status) {
@@ -386,5 +415,22 @@ exports.triggerAutoPO = (req, res) => {
   checkAndGenerateAutoPOs((err) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ message: 'ระบบสแกนสต็อกและอัปเดตใบสั่งซื้ออัตโนมัติเรียบร้อย' });
+  });
+};
+
+// คืนรายชื่อผู้ขายไม่ซ้ำ พร้อมข้อมูลล่าสุดของแต่ละราย — ใช้สำหรับ autocomplete ในฟอร์มสร้าง PO
+exports.getVendors = (req, res) => {
+  const query = `
+    SELECT company_name, vendor_address, vendor_phone, vendor_contact_person, vendor_tax_id
+    FROM purchase_orders po
+    WHERE company_name IS NOT NULL AND TRIM(company_name) <> ''
+      AND po.created_at = (
+        SELECT MAX(created_at) FROM purchase_orders WHERE company_name = po.company_name
+      )
+    ORDER BY company_name COLLATE NOCASE
+  `;
+  db.all(query, [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
   });
 };

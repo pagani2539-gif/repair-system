@@ -68,13 +68,13 @@ exports.getDashboardStats = async (req, res) => {
         WHERE ${timeCondition}
       `, params),
       // 2. Recent Jobs
-      queryAll("SELECT * FROM repairs ORDER BY created_at DESC LIMIT 10"),
+      queryAll("SELECT * FROM repairs ORDER BY created_at DESC, id DESC LIMIT 10"),
       // 3. Recent Logs
       queryAll(`
         SELECT l.*, r.ticket_no, r.device_name 
         FROM repair_logs l
         JOIN repairs r ON l.repair_id = r.id
-        ORDER BY l.created_at DESC LIMIT 10
+        ORDER BY l.created_at DESC, l.id DESC LIMIT 10
       `),
       // 4. Technicians Workload
       queryAll(`
@@ -136,10 +136,10 @@ exports.getDashboardStats = async (req, res) => {
         SELECT t.*, i.name as product_name
         FROM inventory_transactions t
         JOIN inventory i ON t.inventory_id = i.id
-        ORDER BY t.created_at DESC LIMIT 10
+        ORDER BY t.created_at DESC, t.id DESC LIMIT 10
       `),
       // 12. Recent Withdrawals
-      queryAll("SELECT * FROM withdrawals ORDER BY created_at DESC LIMIT 10"),
+      queryAll("SELECT * FROM withdrawals ORDER BY created_at DESC, id DESC LIMIT 10"),
       // 13. Withdrawal Breakdown by type/reason
       queryAll(`
         SELECT type as name, COUNT(*) as count
@@ -183,7 +183,7 @@ exports.getDashboardStats = async (req, res) => {
         FROM purchase_orders po
         LEFT JOIN purchase_order_items poi ON po.id = poi.po_id
         GROUP BY po.id
-        ORDER BY po.created_at DESC
+        ORDER BY po.created_at DESC, po.id DESC
         LIMIT 5
       `),
       // 18. Top Recipients (ผู้เบิกบ่อยที่สุด)
@@ -351,11 +351,11 @@ exports.getAllRepairs = (req, res) => {
   }
 
   if (sortBy === 'oldest') {
-    query += ' ORDER BY created_at ASC';
+    query += ' ORDER BY created_at ASC, id ASC';
   } else if (sortBy === 'priority') {
-    query += ' ORDER BY CASE priority WHEN \'วิกฤต\' THEN 1 WHEN \'ด่วนมาก\' THEN 2 WHEN \'ด่วน\' THEN 3 ELSE 4 END ASC, created_at DESC';
+    query += ' ORDER BY CASE priority WHEN \'วิกฤต\' THEN 1 WHEN \'ด่วนมาก\' THEN 2 WHEN \'ด่วน\' THEN 3 ELSE 4 END ASC, created_at DESC, id DESC';
   } else {
-    query += ' ORDER BY created_at DESC'; // default newest
+    query += ' ORDER BY created_at DESC, id DESC'; // default newest
   }
 
   db.all(query, params, (err, rows) => {
@@ -394,7 +394,7 @@ exports.getRepairById = (req, res) => {
     if (err) return res.status(500).json({ error: err.message });
     if (!repair) return res.status(404).json({ message: 'ไม่พบข้อมูล' });
 
-    db.all('SELECT * FROM repair_logs WHERE repair_id = ? ORDER BY created_at DESC', [id], (err, logs) => {
+    db.all('SELECT * FROM repair_logs WHERE repair_id = ? ORDER BY created_at DESC, id DESC', [id], (err, logs) => {
       if (err) return res.status(500).json({ error: err.message });
       db.all('SELECT * FROM repair_images WHERE repair_id = ?', [id], (err, images) => {
         if (err) return res.status(500).json({ error: err.message });

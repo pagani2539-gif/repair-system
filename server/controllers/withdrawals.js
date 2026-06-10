@@ -22,7 +22,7 @@ exports.getAllWithdrawals = (req, res) => {
             (LENGTH(wi.serial_numbers) - LENGTH(REPLACE(wi.serial_numbers, ',', '')) + 1) < wi.quantity)
       ) as items_missing_sn
     FROM withdrawals_view w
-    ORDER BY w.created_at DESC
+    ORDER BY w.created_at DESC, w.id DESC
   `;
 
   db.all(query, [], (err, rows) => {
