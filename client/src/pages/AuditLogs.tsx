@@ -1,0 +1,282 @@
+import React, { useEffect, useState, useCallback } from 'react';
+import { Card } from '../components/ui/Card';
+import { Button } from '../components/ui/Button';
+import { Input } from '../components/ui/Input';
+import { useNotification } from '../components/Layout';
+import { userApi } from '../api';
+import type { AuditLog } from '../types';
+import {
+  Activity,
+  Search,
+  Loader2,
+  Calendar,
+  User,
+  AlertCircle,
+  ArrowRight,
+  ChevronLeft,
+  ChevronRight
+} from 'lucide-react';
+
+const ITEMS_PER_PAGE = 25;
+
+const AuditLogs: React.FC = () => {
+  const { notify } = useNotification();
+  const [logs, setLogs] = useState<AuditLog[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  const fetchLogs = useCallback(async () => {
+    setLoading(true);
+    try {
+      const offset = (page - 1) * ITEMS_PER_PAGE;
+      const res = await userApi.getAuditLogs({
+        limit: ITEMS_PER_PAGE,
+        offset,
+        search: search.trim() || undefined
+      });
+      setLogs(res.logs);
+      setTotal(res.total);
+    } catch {
+      notify('ไม่สามารถโหลดข้อมูลประวัติการใช้งานระบบได้', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [page, search, notify]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      fetchLogs();
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [fetchLogs]);
+
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSearch(e.target.value);
+    setPage(1); // Reset to page 1 on new search
+  };
+
+  const totalPages = Math.ceil(total / ITEMS_PER_PAGE) || 1;
+
+  const renderDiff = (oldStr?: string | null, newStr?: string | null) => {
+    if (!oldStr && !newStr) return <span style={{ color: 'var(--text-muted)' }}>ไม่มีรายละเอียดข้อมูลเพิ่มเติม</span>;
+    try {
+      const oldObj = oldStr ? JSON.parse(oldStr) as Record<string, unknown> : {};
+      const newObj = newStr ? JSON.parse(newStr) as Record<string, unknown> : {};
+      const keys = Array.from(new Set([...Object.keys(oldObj), ...Object.keys(newObj)]));
+      
+      const changes: Array<{ key: string; oldVal: unknown; newVal: unknown }> = [];
+      keys.forEach(k => {
+        // Skip metadata / password hashes / system fields to keep diff clean
+        if (['updated_at', 'created_at', 'password_hash', 'password_changed_at', 'last_login', 'id'].includes(k)) return;
+        if (JSON.stringify(oldObj[k]) !== JSON.stringify(newObj[k])) {
+          changes.push({ key: k, oldVal: oldObj[k], newVal: newObj[k] });
+        }
+      });
+      
+      if (changes.length === 0) {
+        return <span style={{ color: 'var(--text-muted)' }}>บันทึกสถานะเรียบร้อย (ไม่มีการแก้ไขฟิลด์ข้อมูลหลัก)</span>;
+      }
+      
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.78rem' }}>
+          {changes.map(c => {
+            const formatValue = (v: unknown) => {
+              if (v === undefined || v === null) return 'null';
+              if (typeof v === 'object') return JSON.stringify(v);
+              return String(v);
+            };
+
+            return (
+              <div key={c.key} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px' }}>
+                <span style={{ fontWeight: 700, color: 'var(--text-muted)' }}>• {c.key}:</span>
+                <span style={{ textDecoration: 'line-through', color: '#b91c1c', background: '#fee2e2', padding: '1px 6px', borderRadius: '4px', fontSize: '0.72rem' }}>
+                  {formatValue(c.oldVal)}
+                </span>
+                <ArrowRight size={10} style={{ color: 'var(--text-muted)' }} />
+                <span style={{ color: '#047857', background: '#d1fae5', padding: '1px 6px', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 600 }}>
+                  {formatValue(c.newVal)}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      );
+    } catch {
+      return (
+        <pre style={{ fontSize: '0.75rem', margin: 0, whiteSpace: 'pre-wrap', color: 'var(--text-muted)' }}>
+          {newStr || oldStr}
+        </pre>
+      );
+    }
+  };
+
+  const getEntityBadgeColor = (type: string) => {
+    switch (type.toLowerCase()) {
+      case 'repair': return { bg: '#eff6ff', fg: '#1d4ed8' };
+      case 'claim': return { bg: '#fff7ed', fg: '#c2410c' };
+      case 'inventory': return { bg: '#fdf2f8', fg: '#be185d' };
+      case 'withdrawal': return { bg: '#ecfdf5', fg: '#047857' };
+      case 'station': return { bg: '#f5f5f4', fg: '#44403c' };
+      default: return { bg: '#f4f4f5', fg: '#52525b' };
+    }
+  };
+
+  return (
+    <div style={{ padding: '2rem 2.5rem', maxWidth: '1400px', margin: '0 auto' }}>
+      <div className="page-header" style={{ marginBottom: '2rem' }}>
+        <div className="page-title">
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <Activity size={28} color="var(--primary)" />
+            ประวัติการใช้งานระบบ (Audit Logs)
+          </h2>
+          <p>ตรวจสอบและติดตามกิจกรรมการแก้ไขข้อมูลทั้งหมดของเจ้าหน้าที่ เพื่อความปลอดภัยและโปร่งใสสูงสุด</p>
+        </div>
+      </div>
+
+      {/* Search Bar Toolbar */}
+      <Card style={{ padding: '1.25rem', marginBottom: '1.5rem' }}>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          <Search size={18} style={{ color: 'var(--text-muted)', marginLeft: '4px' }} />
+          <Input
+            value={search}
+            onChange={handleSearchChange}
+            placeholder="ค้นหาตามชื่อผู้ใช้งาน ประเภทโมเดล หรือหัวข้อการกระทำ..."
+            style={{ flex: 1, border: 'none', background: 'transparent', boxShadow: 'none' }}
+          />
+        </div>
+      </Card>
+
+      {/* Main Logs Table */}
+      <Card style={{ padding: 0, overflow: 'hidden' }}>
+        {loading ? (
+          <div style={{ padding: '6rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+            <Loader2 size={32} className="spinner" /> กำลังโหลดประวัติการใช้งาน...
+          </div>
+        ) : logs.length === 0 ? (
+          <div style={{ padding: '6rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+            <AlertCircle size={40} style={{ opacity: 0.3, marginBottom: '8px' }} />
+            <div>ไม่พบประวัติการใช้งานในระบบ</div>
+          </div>
+        ) : (
+          <>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', textAlign: 'left' }}>
+                <thead>
+                  <tr style={{ background: 'var(--bg-app)', borderBottom: '1px solid var(--border)' }}>
+                    <th style={th}>วันเวลาที่บันทึก</th>
+                    <th style={th}>ผู้ดำเนินการ</th>
+                    <th style={th}>หัวข้อการกระทำ</th>
+                    <th style={th}>โมดูลระบบ</th>
+                    <th style={th}>รหัสรายการ</th>
+                    <th style={{ ...th, width: '40%' }}>รายละเอียดการเปลี่ยนแปลง (Diff)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {logs.map((log) => {
+                    const badge = getEntityBadgeColor(log.entity_type);
+                    return (
+                      <tr key={log.id} style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-card)' }}>
+                        <td style={td}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-muted)' }}>
+                            <Calendar size={13} />
+                            {new Date(log.created_at).toLocaleString('th-TH')}
+                          </div>
+                        </td>
+                        <td style={td}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, color: 'var(--text-main)' }}>
+                            <User size={13} style={{ color: 'var(--primary)' }} />
+                            {log.user_name || 'System/Cron'}
+                          </div>
+                        </td>
+                        <td style={td}>
+                          <span style={{ fontWeight: 600, color: 'var(--text-main)' }}>{log.action}</span>
+                        </td>
+                        <td style={td}>
+                          <span style={{
+                            display: 'inline-block',
+                            padding: '3px 8px',
+                            borderRadius: '6px',
+                            fontSize: '0.72rem',
+                            fontWeight: 700,
+                            background: badge.bg,
+                            color: badge.fg,
+                            textTransform: 'capitalize'
+                          }}>
+                            {log.entity_type}
+                          </span>
+                        </td>
+                        <td style={td}>
+                          <span style={{ fontFamily: 'monospace', color: 'var(--text-muted)', background: 'var(--bg-app)', padding: '2px 6px', borderRadius: '4px', fontSize: '0.78rem' }}>
+                            #{log.entity_id}
+                          </span>
+                        </td>
+                        <td style={{ ...td, padding: '12px 16px' }}>
+                          {renderDiff(log.old_data, log.new_data)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination Controls */}
+            {totalPages > 1 && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '1rem 1.5rem',
+                borderTop: '1px solid var(--border)',
+                background: 'var(--bg-card)'
+              }}>
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                  แสดงผล {(page - 1) * ITEMS_PER_PAGE + 1} - {Math.min(page * ITEMS_PER_PAGE, total)} จากทั้งหมด {total} รายการ
+                </span>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Button
+                    variant="outline"
+                    icon={<ChevronLeft size={16} />}
+                    onClick={() => setPage(prev => Math.max(prev - 1, 1))}
+                    disabled={page === 1}
+                    style={{ padding: '8px' }}
+                  />
+                  <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-main)', padding: '0 8px' }}>
+                    หน้า {page} / {totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    icon={<ChevronRight size={16} />}
+                    onClick={() => setPage(prev => Math.min(prev + 1, totalPages))}
+                    disabled={page === totalPages}
+                    style={{ padding: '8px' }}
+                  />
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </Card>
+    </div>
+  );
+};
+
+const th: React.CSSProperties = {
+  padding: '12px 16px',
+  fontSize: '0.75rem',
+  fontWeight: 700,
+  color: 'var(--text-muted)',
+  textTransform: 'uppercase',
+  letterSpacing: '0.05em'
+};
+
+const td: React.CSSProperties = {
+  padding: '14px 16px',
+  fontSize: '0.82rem',
+  verticalAlign: 'middle'
+};
+
+export default AuditLogs;

@@ -7,6 +7,7 @@ import { useApi } from '../hooks/useApi';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Skeleton } from '../components/ui/Skeleton';
+import Select from '../components/ui/Select';
 import { formatDateTimeThai } from '../utils/formatDate';
 import { 
   ArrowLeft, 
@@ -27,14 +28,16 @@ import {
   X
 } from 'lucide-react';
 import PrintWithdrawalTemplate from '../components/PrintWithdrawalTemplate';
-import PrintDialog from '../components/PrintDialog';
+import { printElement } from '../utils/pdfGenerator';
 import PermissionGate from '../components/PermissionGate';
 import { ProvideSnModal } from '../components/ProvideSnModal';
+import type { InventoryTransaction } from '../types';
+import { compressImage } from '../utils/imageCompressor';
 
 const WithdrawalDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { notify } = useNotification();
+  const { notify, confirm } = useNotification();
   const { user } = useAuth();
 
   const [snModal, setSnModal] = useState<{
@@ -53,16 +56,16 @@ const WithdrawalDetail: React.FC = () => {
 
   const [returnModal, setReturnModal] = useState<{
     isOpen: boolean;
-    transaction: any | null;
+    transaction: InventoryTransaction | null;
   }>({
     isOpen: false,
     transaction: null
   });
 
   const [returning, setReturning] = useState(false);
+  const [returnCondition, setReturnCondition] = useState<string>('Good');
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [returnImageFile, setReturnImageFile] = useState<File | null>(null);
-  const [printDialogOpen, setPrintDialogOpen] = useState(false);
 
   const { data: withdrawal, loading, request: fetchWithdrawal } = useApi(
     async (idVal: string | number) => await withdrawalApi.getById(idVal)
@@ -79,13 +82,13 @@ const WithdrawalDetail: React.FC = () => {
     }
   }, [id, fetchWithdrawal, fetchTransactions]);
 
-  const handleReturn = async (e: React.FormEvent) => {
+  const handleReturn = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!returnModal.transaction) return;
     
-    const target = e.target as any;
-    const condition = target.condition.value;
-    const note = target.note.value.trim();
+    const formDataObj = new FormData(e.currentTarget);
+    const condition = formDataObj.get('condition') as string;
+    const note = (formDataObj.get('note') as string || '').trim();
     const imageFile = returnImageFile;
 
     setReturning(true);
@@ -105,29 +108,46 @@ const WithdrawalDetail: React.FC = () => {
 
       await transactionApi.return(formData);
       notify('🎉 บันทึกการคืนอุปกรณ์เรียบร้อยแล้ว');
-      setReturnModal({ isOpen: false, transaction: null });
-      setImagePreview(null);
-      setReturnImageFile(null);
+      closeReturnModal();
       if (id) {
         fetchWithdrawal(id);
         fetchTransactions(id);
       }
-    } catch (err: any) {
-      notify(err.message || 'เกิดข้อผิดพลาดในการบันทึกการคืน', 'error');
+    } catch (err) {
+      const error = err as Error;
+      notify(error.message || 'เกิดข้อผิดพลาดในการบันทึกการคืน', 'error');
     } finally {
       setReturning(false);
     }
   };
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const closeReturnModal = () => {
+    setReturnModal({ isOpen: false, transaction: null });
+    setImagePreview(null);
+    setReturnImageFile(null);
+    setReturnCondition('Good');
+  };
+
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      setReturnImageFile(file);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setImagePreview(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+      try {
+        const compressed = await compressImage(file);
+        setReturnImageFile(compressed);
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setImagePreview(reader.result as string);
+        };
+        reader.readAsDataURL(compressed);
+      } catch (err) {
+        console.error('Image compression failed:', err);
+        setReturnImageFile(file);
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setImagePreview(reader.result as string);
+        };
+        reader.readAsDataURL(file);
+      }
     } else {
       setReturnImageFile(null);
       setImagePreview(null);
@@ -150,7 +170,13 @@ const WithdrawalDetail: React.FC = () => {
   };
 
   const handleDelete = async () => {
-    if (!id || !window.confirm('คุณต้องการลบประวัติการเบิกนี้ใช่หรือไม่? ระบบจะทำการคืนสต็อกอุปกรณ์ทั้งหมดในรายการนี้ให้โดยอัตโนมัติ')) return;
+    if (!id) return;
+    const isConfirmed = await confirm({
+      title: 'ยืนยันการลบประวัติการเบิก',
+      message: 'คุณต้องการลบประวัติการเบิกนี้ใช่หรือไม่? ระบบจะทำการคืนสต็อกอุปกรณ์ทั้งหมดในรายการนี้ให้โดยอัตโนมัติ',
+      variant: 'danger'
+    });
+    if (!isConfirmed) return;
     try {
       await withdrawalApi.delete(id);
       notify('ลบประวัติและคืนสต็อกเรียบร้อยแล้ว');
@@ -161,8 +187,7 @@ const WithdrawalDetail: React.FC = () => {
   };
 
   const handlePrint = () => {
-    if (!withdrawal) return;
-    setPrintDialogOpen(true);
+    printElement("pdf-withdrawal-template", `ใบเบิก - WD-${String(withdrawal?.id).padStart(6, '0')}`);
   };
 
   if (loading) return (
@@ -198,15 +223,9 @@ const WithdrawalDetail: React.FC = () => {
 
   return (
     <div className="withdrawal-detail-page" style={{ padding: '0 0 4rem 0', minHeight: '100vh' }}>
-      <PrintDialog
-        open={printDialogOpen}
-        onClose={() => setPrintDialogOpen(false)}
-        templateId="pdf-withdrawal-template"
-        docTitle={`ใบเบิกอุปกรณ์ - WD-${withdrawal.id.toString().padStart(6, '0')}`}
-        renderTemplate={(companyId, logoId) => (
-          <PrintWithdrawalTemplate withdrawal={withdrawal} companyId={companyId} logoId={logoId} />
-        )}
-      />
+      <div style={{ position: 'absolute', left: '-99999px', top: 0, pointerEvents: 'none' }}>
+        <PrintWithdrawalTemplate withdrawal={withdrawal} />
+      </div>
 
       {/* Sticky Glass Header */}
       <div className="glass-card" style={{ 
@@ -227,7 +246,7 @@ const WithdrawalDetail: React.FC = () => {
             </button>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--success)', fontWeight: 700, fontSize: '0.75rem', textTransform: 'uppercase' }}>
-                <Package size={14} /> Asset Withdrawal Record
+                <Package size={14} /> บันทึกการเบิกพัสดุ
               </div>
               <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800 }}>WD-{withdrawal.id.toString().padStart(6, '0')}</h2>
             </div>
@@ -250,28 +269,28 @@ const WithdrawalDetail: React.FC = () => {
         <div className="glass-card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2.5rem', padding: '1.5rem 2rem', borderRadius: '20px' }}>
           <div style={{ display: 'flex', gap: '3rem' }}>
             <div>
-              <label style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Transaction Type</label>
+              <label style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>ประเภทการทำรายการ</label>
               <span className={`badge ${getBadgeClass(withdrawal.type)}`} style={{ fontSize: '0.85rem', padding: '6px 16px', fontWeight: 800 }}>
                 {withdrawal.type}
               </span>
             </div>
             <div>
-              <label style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Withdrawal Date</label>
+              <label style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>วันที่เบิกจ่าย</label>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, fontSize: '0.95rem' }}><Calendar size={16} color="var(--primary)"/> {formatDateTimeThai(withdrawal.created_at)}</div>
             </div>
             <div className="hide-on-tablet">
-              <label style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Project Name</label>
+              <label style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>ชื่อโครงการ</label>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, fontSize: '0.95rem' }}><FileText size={16} color="var(--primary)"/> {withdrawal.project_name || '-'}</div>
             </div>
             <div className="hide-on-tablet">
-              <label style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Job Location</label>
+              <label style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>สถานที่ใช้งาน</label>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, fontSize: '0.95rem' }}>
                 <MapPin size={16} color="var(--danger)"/> {withdrawal.location || '-'}
               </div>
             </div>
           </div>
           <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--success)', marginBottom: '4px' }}>STATUS</div>
+            <div style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--success)', marginBottom: '4px' }}>สถานะ</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 800, color: 'var(--success)', fontSize: '1.1rem' }}>
               <CheckCircle2 size={18} /> จ่ายอุปกรณ์แล้ว
             </div>
@@ -282,16 +301,16 @@ const WithdrawalDetail: React.FC = () => {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
             <div className="card glass-card" style={{ borderRadius: '24px', padding: '2.5rem' }}>
               <h3 style={{ margin: '0 0 2rem 0', fontSize: '1.5rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <Package size={28} color="var(--primary)" /> รายการอุปกรณ์ที่เบิก (Items)
+                <Package size={28} color="var(--primary)" /> รายการอุปกรณ์ที่เบิก
               </h3>
               
               <div className="data-table-container" style={{ width: '100%', overflowX: 'auto', borderRadius: '16px', border: '1px solid var(--border-hover)' }}>
                 <table className="data-table data-table--fit" style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: 'var(--bg-app)' }}>
-                      <th style={{ textAlign: 'left', padding: '1rem', fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Item</th>
-                      <th style={{ textAlign: 'left', padding: '1rem', fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Serial Numbers</th>
-                      <th style={{ textAlign: 'center', padding: '1rem', fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Qty</th>
+                      <th style={{ textAlign: 'left', padding: '1rem', fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase' }}>รายการ</th>
+                      <th style={{ textAlign: 'left', padding: '1rem', fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase' }}>หมายเลขเครื่อง (S/N)</th>
+                      <th style={{ textAlign: 'center', padding: '1rem', fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase' }}>จำนวน</th>
                       <th style={{ textAlign: 'right', padding: '1rem' }}></th>
                     </tr>
                   </thead>
@@ -321,7 +340,7 @@ const WithdrawalDetail: React.FC = () => {
                                 )}
                               </div>
                             ) : (
-                              <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem', fontWeight: 600 }}>Standard Non-SN Item</span>
+                              <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem', fontWeight: 600 }}>อุปกรณ์ทั่วไป (ไม่มี S/N)</span>
                             )}
                           </td>
                           <td style={{ padding: '1.25rem 1rem', textAlign: 'center' }}>
@@ -355,17 +374,17 @@ const WithdrawalDetail: React.FC = () => {
             {/* Related Transactions Section */}
             <div className="card glass-card" style={{ borderRadius: '24px', padding: '2.5rem' }}>
               <h3 style={{ margin: '0 0 2rem 0', fontSize: '1.5rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <Clock size={28} color="var(--primary)" /> รายการธุรกรรมที่เกี่ยวข้อง (Transactions)
+                <Clock size={28} color="var(--primary)" /> รายการธุรกรรมที่เกี่ยวข้อง
               </h3>
               
               <div className="data-table-container" style={{ width: '100%', overflowX: 'auto', borderRadius: '16px', border: '1px solid var(--border-hover)' }}>
                 <table className="data-table data-table--fit" style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: 'var(--bg-app)' }}>
-                      <th style={{ textAlign: 'left', padding: '1rem', fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Date / ID</th>
-                      <th style={{ textAlign: 'left', padding: '1rem', fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Equipment</th>
-                      <th style={{ textAlign: 'center', padding: '1rem', fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Qty</th>
-                      <th style={{ textAlign: 'center', padding: '1rem', fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Status</th>
+                      <th style={{ textAlign: 'left', padding: '1rem', fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase' }}>วันที่ / รหัสอ้างอิง</th>
+                      <th style={{ textAlign: 'left', padding: '1rem', fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase' }}>อุปกรณ์</th>
+                      <th style={{ textAlign: 'center', padding: '1rem', fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase' }}>จำนวน</th>
+                      <th style={{ textAlign: 'center', padding: '1rem', fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase' }}>สถานะ</th>
                       <th style={{ textAlign: 'right', padding: '1rem' }}></th>
                     </tr>
                   </thead>
@@ -375,7 +394,7 @@ const WithdrawalDetail: React.FC = () => {
                     ) : transactions.length === 0 ? (
                       <tr><td colSpan={5} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>ไม่พบข้อมูลธุรกรรมที่เกี่ยวข้อง</td></tr>
                     ) : (
-                      transactions.map((tx: any, idx: number) => (
+                      transactions.map((tx: InventoryTransaction, idx: number) => (
                         <tr key={idx} style={{ borderTop: '1px solid var(--border)' }}>
                           <td style={{ padding: '1rem' }}>
                             <div style={{ fontSize: '0.85rem', fontWeight: 700 }}>{formatDateTimeThai(tx.created_at)}</div>
@@ -425,21 +444,21 @@ const WithdrawalDetail: React.FC = () => {
                   <User size={24} color="var(--primary)" />
                 </div>
                 <div>
-                  <div style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Recipient</div>
+                  <div style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase' }}>ผู้รับพัสดุ</div>
                   <div style={{ fontWeight: 800, fontSize: '1.25rem' }}>{withdrawal.recipient}</div>
                 </div>
               </div>
               <div style={{ padding: '1.25rem', background: 'var(--bg-app)', borderRadius: '16px', border: '1px solid var(--border)' }}>
                 <div style={{ marginBottom: '12px' }}>
-                  <label style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Project</label>
+                  <label style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>โครงการ</label>
                   <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>{withdrawal.project_name || '-'}</div>
                 </div>
                 <div>
-                  <label style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Location Details</label>
+                  <label style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>รายละเอียดสถานที่</label>
                   <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>{withdrawal.location || '-'}</div>
                   {withdrawal.station_area_name && (
                     <div style={{ fontSize: '0.85rem', color: 'var(--primary)', fontWeight: 700, marginTop: '4px' }}>
-                      Area: {withdrawal.station_area_name}
+                      จุดติดตั้ง (Area): {withdrawal.station_area_name}
                     </div>
                   )}
                 </div>
@@ -477,7 +496,7 @@ const WithdrawalDetail: React.FC = () => {
           <div className="modal-content" style={{ maxWidth: '550px' }}>
             <div className="modal-header">
               <h3><ArrowUpCircle size={22} color="var(--primary)" /> คืนอุปกรณ์เข้าคลัง</h3>
-              <button className="close-btn" onClick={() => { setReturnModal({ isOpen: false, transaction: null }); setImagePreview(null); setReturnImageFile(null); }}><X size={20} /></button>
+              <button className="close-btn" onClick={closeReturnModal}><X size={20} /></button>
             </div>
 
             <form onSubmit={handleReturn}>
@@ -508,12 +527,17 @@ const WithdrawalDetail: React.FC = () => {
                 <div className="form-grid">
                   <div className="form-group">
                     <label>สภาพอุปกรณ์</label>
-                    <select name="condition">
-                      <option value="Good">ใช้งานได้ปกติ (Good)</option>
-                      <option value="Minor Damage">ชำรุดเล็กน้อย (Minor Damage)</option>
-                      <option value="Damaged">ชำรุด (Damaged)</option>
-                      <option value="Broken">เสีย/ใช้งานไม่ได้ (Broken)</option>
-                    </select>
+                    <Select
+                      value={returnCondition}
+                      options={[
+                        { label: 'ใช้งานได้ปกติ', value: 'Good' },
+                        { label: 'ชำรุดเล็กน้อย', value: 'Minor Damage' },
+                        { label: 'ชำรุด', value: 'Damaged' },
+                        { label: 'เสีย/ใช้งานไม่ได้', value: 'Broken' }
+                      ]}
+                      onChange={(val) => setReturnCondition(String(val))}
+                    />
+                    <input type="hidden" name="condition" value={returnCondition} />
                   </div>
                 </div>
 
@@ -550,7 +574,7 @@ const WithdrawalDetail: React.FC = () => {
               </div>
 
               <div className="modal-actions" style={{ marginTop: '2rem' }}>
-                <Button type="button" variant="outline" onClick={() => { setReturnModal({ isOpen: false, transaction: null }); setImagePreview(null); setReturnImageFile(null); }} disabled={returning}>ยกเลิก</Button>
+                <Button type="button" variant="outline" onClick={closeReturnModal} disabled={returning}>ยกเลิก</Button>
                 <Button type="submit" variant="primary" loading={returning} icon={<Check size={18} />}>
                   ยืนยันการคืนอุปกรณ์
                 </Button>

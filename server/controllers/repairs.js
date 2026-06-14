@@ -1,6 +1,7 @@
 const db = require('../database/init');
 const { validateStationExists, validateStationAreaBelongsToStation, getStationSnapshotName } = require('../utils/stationValidation');
 const { logAudit } = require('../utils/auditLogger');
+const { sendLineNotify } = require('../utils/lineNotify');
 
 // SQLite Query Helpers for Async/Await
 const queryAll = (sql, params = []) => new Promise((resolve, reject) => {
@@ -55,7 +56,11 @@ exports.getDashboardStats = async (req, res) => {
       recentPurchaseOrders,
       topRecipients,
       pendingReturns,
-      pendingReturnsCount
+      pendingReturnsCount,
+      supervisors,
+      unassignedStationsCount,
+      claimsKpis,
+      inventoryConditions
     ] = await Promise.all([
       // 1. KPIs
       queryGet(`
@@ -98,11 +103,16 @@ exports.getDashboardStats = async (req, res) => {
         GROUP BY wi.inventory_id
         ORDER BY count DESC LIMIT 5
       `, [startDate ? `${startDate} 00:00:00` : '1970-01-01', endDate ? `${endDate} 23:59:59` : '9999-12-31']),
-      // 6. Least Used Items (Items with lowest or zero movement in withdrawals)
+      // 6. Dead Stock (no inventory movement in the last 90 days, or never moved)
       queryAll(`
-        SELECT name, 0 as count
-        FROM inventory
-        WHERE id NOT IN (SELECT DISTINCT inventory_id FROM withdrawal_items)
+        SELECT
+          i.name,
+          CAST(julianday('now') - julianday(MAX(t.created_at)) AS INTEGER) as days_idle
+        FROM inventory i
+        LEFT JOIN inventory_transactions t ON t.inventory_id = i.id
+        GROUP BY i.id
+        HAVING MAX(t.created_at) IS NULL OR MAX(t.created_at) < datetime('now', '-90 days')
+        ORDER BY (days_idle IS NULL) DESC, days_idle DESC
         LIMIT 5
       `),
       // 7. Critical Stock Count
@@ -117,7 +127,7 @@ exports.getDashboardStats = async (req, res) => {
       `, params),
       // 9. Overdue (older than 3 days and not completed)
       queryAll(`
-        SELECT ticket_no, device_name, reporter, created_at,
+        SELECT id, ticket_no, device_name, reporter, created_at,
         CAST(julianday('now') - julianday(created_at) AS INTEGER) as days_over
         FROM repairs
         WHERE status != 'เสร็จสิ้น' AND created_at < datetime('now', '-3 days')
@@ -165,7 +175,7 @@ exports.getDashboardStats = async (req, res) => {
       queryGet(`
         SELECT 
           COUNT(*) as total_po,
-          SUM(CASE WHEN status IN ('Draft', 'Pending', 'Ordered') THEN 1 ELSE 0 END) as pending_po,
+          SUM(CASE WHEN status IN ('Draft', 'Pending', 'Approved', 'Ordered') THEN 1 ELSE 0 END) as pending_po,
           SUM(CASE WHEN status = 'Received' THEN 1 ELSE 0 END) as received_po
         FROM purchase_orders
         WHERE ${timeCondition}
@@ -233,6 +243,44 @@ exports.getDashboardStats = async (req, res) => {
             t.transaction_type = 'BORROW'
             OR (t.transaction_type = 'WITHDRAW' AND w.type IN ('ทดสอบ', 'สำรองใช้งาน'))
           )
+      `),
+      // 21. Station Supervisors Workload (สถิติผู้ดูแลด่าน)
+      queryAll(`
+        SELECT 
+          s.responsible_person as name,
+          COUNT(DISTINCT s.id) as station_count,
+          GROUP_CONCAT(DISTINCT s.name) as stations_list,
+          COUNT(r.id) as total_repairs,
+          SUM(CASE WHEN r.status != 'เสร็จสิ้น' THEN 1 ELSE 0 END) as active_repairs
+        FROM stations s
+        LEFT JOIN repairs r ON s.id = r.station_id AND ${timeCondition === "1=1" ? "1=1" : timeCondition.replace(/created_at/g, 'r.created_at')}
+        WHERE s.responsible_person IS NOT NULL AND TRIM(s.responsible_person) != ''
+        GROUP BY s.responsible_person
+        ORDER BY active_repairs DESC, station_count DESC
+      `, params),
+      // 22. Unassigned Stations Count (ด่านที่ไม่มีผู้ดูแล)
+      queryGet(`
+        SELECT COUNT(*) as count 
+        FROM stations 
+        WHERE responsible_person IS NULL OR TRIM(responsible_person) = ''
+      `),
+      // 23. Claims KPIs (สถิติการส่งเคลมแยก)
+      queryGet(`
+        SELECT 
+          COUNT(*) as total,
+          SUM(CASE WHEN TRIM(status) = 'รอดำเนินการ' THEN 1 ELSE 0 END) as pending,
+          SUM(CASE WHEN TRIM(status) = 'กำลังซ่อม' THEN 1 ELSE 0 END) as in_progress,
+          SUM(CASE WHEN TRIM(status) = 'เสร็จสิ้น' THEN 1 ELSE 0 END) as completed
+        FROM repairs
+        WHERE type = 'claim' AND ${timeCondition === "1=1" ? "1=1" : timeCondition}
+      `, params),
+      // 24. Inventory Conditions Breakdown (สภาพพัสดุในคลัง)
+      queryAll(`
+        SELECT 
+          COALESCE(condition, 'New') as condition, 
+          COUNT(*) as count 
+        FROM inventory_instances 
+        GROUP BY condition
       `)
     ]);
 
@@ -275,7 +323,16 @@ exports.getDashboardStats = async (req, res) => {
         received_po: purchaseOrderKpis.received_po || 0,
         total_spent: purchaseOrderSpent.total_spent || 0,
         recentPurchaseOrders
-      }
+      },
+      supervisors,
+      unassignedStationsCount: unassignedStationsCount.count || 0,
+      claimsKpis: {
+        total: claimsKpis?.total || 0,
+        pending: claimsKpis?.pending || 0,
+        in_progress: claimsKpis?.in_progress || 0,
+        completed: claimsKpis?.completed || 0
+      },
+      inventoryConditions
     });
   } catch (err) {
     console.error('Dashboard Stats Error:', err);
@@ -296,17 +353,35 @@ exports.getUnreadCount = (req, res) => {
         return res.status(500).json({ error: err2.message });
       }
       
-      const repairUnread = (rows && rows.find(r => r.type === 'repair')?.count) || 0;
-      const claimUnread = (rows && rows.find(r => r.type === 'claim')?.count) || 0;
-      const lowStock = (invRow && invRow.count) || 0;
-      
-      console.log("Unread count from DB: repair =", repairUnread, ", claim =", claimUnread, ", lowStock =", lowStock);
-      res.json({ 
-        repair: repairUnread, 
-        claim: claimUnread, 
-        lowStock: lowStock,
-        total: repairUnread + claimUnread,
-        count: repairUnread + claimUnread
+      db.get(`
+        SELECT COUNT(*) as count
+        FROM inventory_transactions t
+        LEFT JOIN withdrawals w ON t.withdrawal_id = w.id
+        WHERE (t.status IS NULL OR t.status != 'RETURNED')
+          AND (
+            t.transaction_type = 'BORROW'
+            OR (t.transaction_type = 'WITHDRAW' AND w.type IN ('ทดสอบ', 'สำรองใช้งาน', 'ยืมใช้งาน', 'ยืม'))
+          )
+      `, (err3, pendingRow) => {
+        if (err3) {
+          console.error("Database error in getUnreadCount (pending returns):", err3);
+          return res.status(500).json({ error: err3.message });
+        }
+
+        const repairUnread = (rows && rows.find(r => r.type === 'repair')?.count) || 0;
+        const claimUnread = (rows && rows.find(r => r.type === 'claim')?.count) || 0;
+        const lowStock = (invRow && invRow.count) || 0;
+        const pendingReturns = (pendingRow && pendingRow.count) || 0;
+        
+        console.log("Unread count from DB: repair =", repairUnread, ", claim =", claimUnread, ", lowStock =", lowStock, ", pendingReturns =", pendingReturns);
+        res.json({ 
+          repair: repairUnread, 
+          claim: claimUnread, 
+          lowStock: lowStock,
+          pendingReturns: pendingReturns,
+          total: repairUnread + claimUnread,
+          count: repairUnread + claimUnread
+        });
       });
     });
   });
@@ -414,7 +489,10 @@ exports.createRepair = async (req, res) => {
   try {
     await validateStationExists(station_id);
     await validateStationAreaBelongsToStation(station_id, station_area_id);
-    const officialLocation = (station_id ? await getStationSnapshotName(station_id) : null) || location;
+    let officialLocation = (station_id ? await getStationSnapshotName(station_id) : null) || location;
+    if (station_id && location && typeof location === 'string' && officialLocation && location.startsWith(officialLocation)) {
+      officialLocation = location;
+    }
     
     const ticket_no = generateTicketNo();
 
@@ -439,6 +517,10 @@ exports.createRepair = async (req, res) => {
         stmt.finalize();
       }
 
+      // Send LINE Notify Alert
+      const lineMsg = `\n🔧 *แจ้งซ่อมใหม่*\nเลขใบสั่งงาน: ${ticket_no}\nอุปกรณ์: ${device_name}\nอาการเสีย: ${problem}\nระดับความสำคัญ: ${priority || 'ปกติ'}\nสถานที่: ${officialLocation || 'ไม่ได้ระบุ'}\nผู้แจ้ง: ${reporter}`;
+      sendLineNotify('repair', lineMsg);
+
       res.status(201).json({ id: repairId, ticket_no });
     });
   } catch (err) {
@@ -454,7 +536,10 @@ exports.createClaim = async (req, res) => {
   try {
     await validateStationExists(station_id);
     await validateStationAreaBelongsToStation(station_id, station_area_id);
-    const officialLocation = (station_id ? await getStationSnapshotName(station_id) : null) || location;
+    let officialLocation = (station_id ? await getStationSnapshotName(station_id) : null) || location;
+    if (station_id && location && typeof location === 'string' && officialLocation && location.startsWith(officialLocation)) {
+      officialLocation = location;
+    }
     
     const ticket_no = generateTicketNo();
 
@@ -478,6 +563,10 @@ exports.createClaim = async (req, res) => {
         });
         stmt.finalize();
       }
+
+      // Send LINE Notify Alert
+      const lineMsg = `\n🛡️ *แจ้งเคลมใหม่*\nเลขใบสั่งงาน: ${ticket_no}\nอุปกรณ์: ${device_name}\nอาการเสีย/ปัญหา: ${problem}\nระดับความสำคัญ: ${priority || 'ปกติ'}\nสถานที่: ${officialLocation || 'ไม่ได้ระบุ'}\nผู้แจ้ง: ${reporter}`;
+      sendLineNotify('repair', lineMsg);
 
       res.status(201).json({ id: repairId, ticket_no });
     });
@@ -531,6 +620,11 @@ exports.updateStatus = (req, res) => {
         }
       });
 
+      // Send LINE Notify Alert
+      const typeLabel = oldRepair.type === 'claim' ? 'งานเคลม' : 'งานซ่อม';
+      const lineMsg = `\n🔧 *อัปเดตสถานะ${typeLabel}*\nเลขใบสั่งงาน: ${oldRepair.ticket_no}\nอุปกรณ์: ${oldRepair.device_name}\nสถานะใหม่: ${status}\nผู้รับผิดชอบ: ${actor}\nหมายเหตุ: ${repair_note || note || 'ไม่มี'}`;
+      sendLineNotify('repair', lineMsg);
+
       res.json({ message: 'อัปเดตสถานะเรียบร้อย' });
     });
   });
@@ -544,7 +638,10 @@ exports.updateRepair = async (req, res) => {
   try {
     await validateStationExists(station_id);
     await validateStationAreaBelongsToStation(station_id, station_area_id);
-    const officialLocation = (station_id ? await getStationSnapshotName(station_id) : null) || location;
+    let officialLocation = (station_id ? await getStationSnapshotName(station_id) : null) || location;
+    if (station_id && location && typeof location === 'string' && officialLocation && location.startsWith(officialLocation)) {
+      officialLocation = location;
+    }
 
     const oldRepair = await queryGet('SELECT * FROM repairs WHERE id = ?', [id]);
     if (!oldRepair) return res.status(404).json({ error: 'ไม่พบใบงานที่ต้องการแก้ไข' });

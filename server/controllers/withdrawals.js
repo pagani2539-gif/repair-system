@@ -2,10 +2,50 @@ const db = require('../database/init');
 const { logTransaction } = require('./transactions');
 const { validateStationExists, validateStationAreaBelongsToStation, getStationSnapshotName } = require('../utils/stationValidation');
 const { logAudit } = require('../utils/auditLogger');
+const { sendLineNotify } = require('../utils/lineNotify');
 
 const queryGet = (sql, params = []) => new Promise((resolve, reject) => {
   db.get(sql, params, (err, row) => err ? reject(err) : resolve(row));
 });
+
+/**
+ * Send a LINE notification summarising a completed withdrawal.
+ * Fires once per withdrawal (not per item) after the transaction is committed.
+ */
+const notifyWithdrawal = (withdrawalId) => {
+  const sql = `
+    SELECT w.recipient, w.type, w.project_name, w.location, w.note,
+      (SELECT GROUP_CONCAT(i.name || ' x' || wi.quantity ||
+         (CASE WHEN wi.serial_numbers IS NOT NULL THEN ' [S/N: ' || wi.serial_numbers || ']' ELSE '' END), '|||')
+       FROM withdrawal_items wi
+       JOIN inventory i ON wi.inventory_id = i.id
+       WHERE wi.withdrawal_id = w.id) as items_summary
+    FROM withdrawals w
+    WHERE w.id = ?
+  `;
+  db.get(sql, [withdrawalId], (err, row) => {
+    if (err) {
+      console.error('Failed to build withdrawal LINE notification:', err.message);
+      return;
+    }
+    if (!row) return;
+
+    const itemsList = (row.items_summary || '')
+      .split('|||')
+      .filter(Boolean)
+      .map(line => `• ${line}`)
+      .join('\n');
+    const place = row.project_name || row.location;
+
+    let msg = `\n📦 *มีการเบิกอุปกรณ์*\nเลขที่: #${withdrawalId}\nผู้เบิก: ${row.recipient || '-'}`;
+    if (row.type) msg += `\nประเภท: ${row.type}`;
+    if (place) msg += `\nสถานที่: ${place}`;
+    if (itemsList) msg += `\nรายการ:\n${itemsList}`;
+    if (row.note) msg += `\nหมายเหตุ: ${row.note}`;
+
+    sendLineNotify('stock', msg);
+  });
+};
 
 exports.getAllWithdrawals = (req, res) => {
   const query = `
@@ -33,7 +73,7 @@ exports.getAllWithdrawals = (req, res) => {
 
 exports.createWithdrawal = async (req, res) => {
   console.log('Received withdrawal request body:', req.body);
-  const { type, note, items, project_name, location, station_id, station_area_id } = req.body;
+  const { type, note, items, project_name, location, station_id, station_area_id, return_due_date } = req.body;
   const recipient = req.user.full_name;
 
   if (!items || items.length === 0) {
@@ -43,15 +83,18 @@ exports.createWithdrawal = async (req, res) => {
   try {
     await validateStationExists(station_id);
     await validateStationAreaBelongsToStation(station_id, station_area_id);
-    const officialLocation = (station_id ? await getStationSnapshotName(station_id) : null) || location;
+    let officialLocation = (station_id ? await getStationSnapshotName(station_id) : null) || location;
+    if (station_id && location && typeof location === 'string' && officialLocation && location.startsWith(officialLocation)) {
+      officialLocation = location;
+    }
 
     db.serialize(() => {
       db.run('BEGIN TRANSACTION');
 
       db.run(`
-        INSERT INTO withdrawals (recipient, type, note, project_name, location, station_id, station_area_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `, [recipient, type, note, project_name || null, officialLocation, station_id || null, station_area_id || null], function(err) {
+        INSERT INTO withdrawals (recipient, type, note, project_name, location, station_id, station_area_id, return_due_date)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `, [recipient, type, note, project_name || null, officialLocation, station_id || null, station_area_id || null, return_due_date || null], function(err) {
       if (err) {
         console.error('Database INSERT error:', err);
         db.run('ROLLBACK');
@@ -99,6 +142,14 @@ exports.createWithdrawal = async (req, res) => {
                   return res.status(500).json({ error: err.message });
                 }
 
+                // Check if stock is now below min_stock
+                db.get('SELECT name, quantity, min_stock FROM inventory WHERE id = ?', [item.inventory_id], (checkErr, invCheck) => {
+                  if (!checkErr && invCheck && invCheck.quantity < invCheck.min_stock) {
+                    const stockAlertMsg = `\n⚠️ *อุปกรณ์ต่ำกว่าเกณฑ์ขั้นต่ำ!*\nพัสดุ: ${invCheck.name}\nคงเหลือ: ${invCheck.quantity} ชิ้น (เกณฑ์ขั้นต่ำ: ${invCheck.min_stock} ชิ้น)`;
+                    sendLineNotify('stock', stockAlertMsg);
+                  }
+                });
+
                 const providedSns = (item.serial_numbers || []).filter(sn => sn.trim() !== '');
 
                 if (providedSns.length > 0) {
@@ -120,7 +171,7 @@ exports.createWithdrawal = async (req, res) => {
                           transaction_type: 'WITHDRAW',
                           quantity_withdrawn: 1,
                           project_name: project_name,
-                          location: location,
+                          location: officialLocation,
                           station_id: station_id,
                           user_name: recipient,
                           note: note,
@@ -137,7 +188,7 @@ exports.createWithdrawal = async (req, res) => {
                               transaction_type: 'WITHDRAW',
                               quantity_withdrawn: remainingQty,
                               project_name: project_name,
-                              location: location,
+                              location: officialLocation,
                               station_id: station_id,
                               user_name: recipient,
                               note: note ? `${note} (Remaining qty without S/N)` : '(Remaining qty without S/N)',
@@ -153,7 +204,7 @@ exports.createWithdrawal = async (req, res) => {
                       if (row) {
                         const instanceId = row.id;
                         db.run(`UPDATE inventory_instances SET status = 'Withdrawn', current_location = ?, station_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-                          [location || project_name || 'Withdrawn', station_id || null, instanceId], (err) => {
+                          [officialLocation || project_name || 'Withdrawn', station_id || null, instanceId], (err) => {
                             if (err) {
                               errorOccurred = true;
                               db.run('ROLLBACK');
@@ -163,7 +214,7 @@ exports.createWithdrawal = async (req, res) => {
                           });
                       } else {
                         db.run(`INSERT INTO inventory_instances (inventory_id, serial_number, status, current_location, station_id) VALUES (?, ?, 'Withdrawn', ?, ?)`,
-                          [item.inventory_id, sn, location || project_name || 'Withdrawn', station_id || null], function(err) {
+                          [item.inventory_id, sn, officialLocation || project_name || 'Withdrawn', station_id || null], function(err) {
                             if (err) {
                               errorOccurred = true;
                               db.run('ROLLBACK');
@@ -181,7 +232,7 @@ exports.createWithdrawal = async (req, res) => {
                     transaction_type: 'WITHDRAW',
                     quantity_withdrawn: item.quantity,
                     project_name: project_name,
-                    location: location,
+                    location: officialLocation,
                     station_id: station_id,
                     user_name: recipient,
                     note: note,
@@ -194,6 +245,8 @@ exports.createWithdrawal = async (req, res) => {
                 function checkCompletion() {
                   if (completedCount === items.length && !errorOccurred) {
                     db.run('COMMIT');
+                    // Notify LINE that a withdrawal was made (once per withdrawal)
+                    notifyWithdrawal(withdrawalId);
                     // Check and auto generate POs for low stock items in background
                     const { checkAndGenerateAutoPOs } = require('../utils/autoPo');
                     checkAndGenerateAutoPOs((autoPoErr) => {

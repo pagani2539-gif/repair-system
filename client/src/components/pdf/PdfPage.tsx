@@ -19,8 +19,12 @@ export const PdfPage: React.FC<Props> = ({ id, children, isPreview = false }) =>
       style={{
         // A4 dimensions at 96 DPI: 794 × 1123 px (210 × 297 mm)
         width: '210mm',
-        minHeight: '297mm',
+        height: '297mm',
+        maxHeight: '297mm',
+        overflow: 'hidden',
         boxSizing: 'border-box',
+        display: 'flex',
+        flexDirection: 'column',
         padding: `${pdfTheme.space.pagePadding}px`,
         background: pdfTheme.colors.bgPage,
         color: pdfTheme.colors.text,

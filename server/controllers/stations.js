@@ -147,17 +147,6 @@ exports.getStationDetails = async (req, res) => {
   }
 };
 
-exports.getStationAreas = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const rows = await queryAll('SELECT * FROM station_areas WHERE station_id = ? AND status = 1 ORDER BY name ASC', [id]);
-    res.json(rows);
-  } catch (err) {
-    console.error('Get Station Areas Error:', err);
-    res.status(500).json({ error: err.message });
-  }
-};
-
 exports.createStation = async (req, res) => {
   const { name, station_type, highway_no, direction, region, province, responsible_person } = req.body;
   if (!name || !station_type || !highway_no || !direction || !region || !province || !responsible_person) {
@@ -190,82 +179,20 @@ exports.createStation = async (req, res) => {
       
       const newId = this.lastID;
       
-      // Seed default areas automatically for the new station depending on type
-      let defaultAreas = [];
-      const isWeighStation = station_type === 'WEIGH_STATION' || 
-                             station_type.includes('WIM') || 
-                             station_type.includes('ชั่งน้ำหนัก');
-      if (isWeighStation) {
-        defaultAreas = [
-          'ช่องทางชั่งน้ำหนักหลัก',
-          'ห้องควบคุมระบบคอมพิวเตอร์',
-          'ลูปตรวจจับโลหะ ช่องทางที่ 1',
-          'กล้อง ANPR (ทางเข้า)'
-        ];
-      } else {
-        defaultAreas = [
-          'ห้องควบคุม/ตู้ปฏิบัติงาน',
-          'จุดตรวจค้น/ตรวจวัด',
-          'กล้องวงจรปิด/กล้อง ANPR',
-          'ลานจอดรถ/พื้นที่ไหล่ทาง'
-        ];
-      }
-      
-      const insertArea = db.prepare(`
-        INSERT OR IGNORE INTO station_areas (station_id, name)
-        VALUES (?, ?)
-      `);
-      
-      defaultAreas.forEach((areaName) => {
-        insertArea.run(newId, areaName);
-      });
-      
-      insertArea.finalize((areaErr) => {
-        if (areaErr) {
-          console.error('Failed to seed default areas:', areaErr);
-        }
+      // Return the created station
+      db.get('SELECT * FROM stations WHERE id = ?', [newId], (getErr, row) => {
+        if (getErr) return res.status(500).json({ error: getErr.message });
         
-        // Return the created station
-        db.get('SELECT * FROM stations WHERE id = ?', [newId], (getErr, row) => {
-          if (getErr) return res.status(500).json({ error: getErr.message });
-          
-          // Log audit
-          logAudit('station', newId, 'create', null, row, 'System/Admin').catch(e => console.error(e));
-          
-          res.status(201).json(row);
-        });
+        // Log audit
+        logAudit('station', newId, 'create', null, row, 'System/Admin').catch(e => console.error(e));
+        
+        res.status(201).json(row);
       });
     });
   } catch (err) {
     console.error('Create Station Error:', err);
     res.status(500).json({ error: err.message });
   }
-};
-
-exports.createStationArea = (req, res) => {
-  const { id } = req.params; // station_id
-  const { name } = req.body;
-  if (!name || name.trim() === '') {
-    return res.status(400).json({ error: 'กรุณากรอกชื่อพื้นที่ย่อย' });
-  }
-
-  db.run(`
-    INSERT INTO station_areas (station_id, name)
-    VALUES (?, ?)
-  `, [id, name.trim()], function(err) {
-    if (err) {
-      if (err.message.includes('UNIQUE constraint failed')) {
-        return res.status(400).json({ error: 'พื้นที่ย่อยนี้มีอยู่แล้วในสถานีนี้' });
-      }
-      return res.status(500).json({ error: err.message });
-    }
-    
-    const newAreaId = this.lastID;
-    db.get('SELECT * FROM station_areas WHERE id = ?', [newAreaId], (getErr, row) => {
-      if (getErr) return res.status(500).json({ error: getErr.message });
-      res.status(201).json(row);
-    });
-  });
 };
 
 exports.deleteStation = (req, res) => {

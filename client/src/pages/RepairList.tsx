@@ -11,8 +11,11 @@ import type { Repair } from '../types';
 import type { TableColumn, TableAction } from '../types/table.types';
 import {
   Plus,
-  ChevronRight,
-  Trash,
+  Trash2,
+  ScanEye,
+  Handshake,
+  CircleCheckBig,
+  CirclePause,
   AlertTriangle,
   UserCheck,
   Inbox,
@@ -24,7 +27,8 @@ import {
   FileText,
   Package,
   MessageSquare,
-  AlertCircle
+  AlertCircle,
+  Download
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import StationCell from '../components/shared/StationCell';
@@ -32,18 +36,18 @@ import BaseDataTable from '../components/tables/BaseDataTable';
 import TableToolbar from '../components/tables/TableToolbar';
 import TablePagination from '../components/tables/TablePagination';
 import { useTableUrlState } from '../hooks/useTableUrlState';
+import { exportToCsv } from '../utils/csvExporter';
 
 const RepairList: React.FC = () => {
-  const { notify } = useNotification();
+  const { notify, confirm } = useNotification();
   const { hasPermission } = useAuth();
   const { urlState, setTableState } = useTableUrlState(20);
   
-  const [locations, setLocations] = useState<{label: string, value: string}[]>([]);
   const [showModal, setShowModal] = useState<{ id: number, type: 'receive' | 'complete' | 'hold' } | null>(null);
   const [modalData, setModalData] = useState({ technician: '', note: '' });
 
   const { data: repairs = [], loading, error, request: fetchRepairs } = useApi(
-    async (params: any) => await repairApi.getAll({ ...params, type: 'repair' })
+    async (params?: Record<string, unknown>) => await repairApi.getAll({ ...params, type: 'repair' })
   );
 
   const { data: stats, request: fetchStats } = useApi(repairApi.getStats);
@@ -63,14 +67,11 @@ const RepairList: React.FC = () => {
     fetchData();
   }, [fetchData]);
 
-  useEffect(() => {
-    const list = repairs || [];
-    if (list.length > 0 && locations.length === 0) {
-      const locSet = new Set<string>();
-      list.forEach(r => { if (r.location) locSet.add(r.location); });
-      setLocations(Array.from(locSet).sort().map(l => ({ label: l, value: l })));
-    }
-  }, [repairs, locations.length]);
+  const locations = useMemo(() => {
+    const locSet = new Set<string>();
+    (repairs || []).forEach(r => { if (r.location) locSet.add(r.location); });
+    return Array.from(locSet).sort().map(l => ({ label: l, value: l }));
+  }, [repairs]);
 
   const filteredData = useMemo(() => {
     const list = repairs || [];
@@ -104,6 +105,26 @@ const RepairList: React.FC = () => {
   const indexOfFirstItem = indexOfLastItem - urlState.pageSize;
   const paginatedData = filteredData.slice(indexOfFirstItem, indexOfLastItem);
 
+  const handleExportExcel = () => {
+    const headers = [
+      'เลขที่ใบงาน', 'อุปกรณ์', 'อาการชำรุด', 'ผู้แจ้ง', 'สถานที่', 'ช่างผู้รับผิดชอบ', 'ความสำคัญ', 'สถานะ', 'วันที่รับเข้า', 'วันที่แจ้ง'
+    ];
+    const rows = filteredData.map(r => [
+      r.ticket_no,
+      r.device_name,
+      r.problem,
+      r.reporter,
+      r.location,
+      r.technician || '-',
+      r.priority,
+      r.status,
+      r.received_at ? new Date(r.received_at).toLocaleDateString('th-TH') : '-',
+      r.created_at ? new Date(r.created_at).toLocaleDateString('th-TH') : '-'
+    ]);
+    exportToCsv(`repairs_export_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`, headers, rows);
+    notify('ส่งออกข้อมูล Excel เรียบร้อยแล้ว');
+  };
+
   const handleWorkflow = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!showModal) return;
@@ -126,7 +147,12 @@ const RepairList: React.FC = () => {
   };
 
   const handleDelete = async (id: number) => {
-    if (confirm('คุณต้องการลบรายการนี้จริงหรือไม่?')) {
+    const isConfirmed = await confirm({
+      title: 'ยืนยันการลบรายการแจ้งซ่อม',
+      message: 'คุณต้องการลบรายการนี้จริงหรือไม่? การดำเนินการนี้ไม่สามารถย้อนกลับได้',
+      variant: 'danger'
+    });
+    if (isConfirmed) {
       try {
         await repairApi.delete(id);
         notify('ลบรายการสำเร็จ');
@@ -203,20 +229,12 @@ const RepairList: React.FC = () => {
       )
     },
     {
-      id: 'location', header: 'สถานที่', accessor: 'location', priority: 2, width: 'auto',
+      id: 'location', header: 'สถานที่', accessor: 'location', priority: 1, width: 'auto',
       render: (_, row) => {
         const hasLocation = row.station_name || row.location;
         if (!hasLocation) return <span className="cell-empty">— ไม่ระบุสถานี —</span>;
-        return <StationCell stationName={row.station_name} areaName={row.station_area_name} province={row.station_province} fallbackLocation={row.location} compact={true} />;
+        return <StationCell stationName={row.station_name} areaName={row.station_area_name} province={row.station_province} fallbackLocation={row.location} locationSnapshot={row.location_snapshot} compact={true} />;
       }
-    },
-    {
-      id: 'priority', header: 'ความสำคัญ', accessor: 'priority', priority: 1, width: '110px', align: 'center',
-      render: (val) => (
-        <span className={`badge badge-priority-${val === 'วิกฤต' ? 'critical' : val === 'ด่วนมาก' ? 'urgent' : val === 'ด่วน' ? 'high' : 'normal'}`} style={{ minWidth: '80px', justifyContent: 'center' }}>
-          {val}
-        </span>
-      )
     },
     {
       id: 'status', header: 'สถานะ', accessor: 'status', priority: 1, width: '120px', align: 'center',
@@ -235,7 +253,7 @@ const RepairList: React.FC = () => {
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1px' }}>
             <span style={{ fontSize: '1.05rem', fontWeight: 800, color, lineHeight: 1 }}>{days}</span>
             <span style={{ fontSize: '0.65rem', fontWeight: 700, color: 'var(--text-muted)' }}>วัน</span>
-            {isOverdue && <span style={{ fontSize: '0.58rem', fontWeight: 800, color: 'var(--danger)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>เกิน SLA</span>}
+            {isOverdue && <span style={{ fontSize: '0.58rem', fontWeight: 800, color: 'var(--danger)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>เกินเวลาข้อตกลง (SLA)</span>}
           </div>
         );
       }
@@ -258,33 +276,36 @@ const RepairList: React.FC = () => {
     {
       id: 'receive',
       label: 'รับงานซ่อม',
-      icon: <UserCheck size={14} />,
+      icon: <Handshake size={14} />,
       onClick: (row) => setShowModal({ id: row.id, type: 'receive' }),
       hidden: (row) => row.status !== 'รอดำเนินการ' && row.status !== 'รออะไหล่',
-      variant: 'primary'
+      variant: 'primary',
+      inline: true
     },
     {
       id: 'complete',
       label: 'ปิดงาน',
-      icon: <CheckCircle2 size={14} />,
+      icon: <CircleCheckBig size={14} />,
       onClick: (row) => setShowModal({ id: row.id, type: 'complete' }),
       hidden: (row) => row.status !== 'กำลังซ่อม',
-      variant: 'primary'
+      variant: 'primary',
+      inline: true
     },
     {
       id: 'hold',
       label: 'รออะไหล่',
-      icon: <PauseCircle size={14} />,
+      icon: <CirclePause size={14} />,
       onClick: (row) => setShowModal({ id: row.id, type: 'hold' }),
       hidden: (row) => row.status !== 'กำลังซ่อม',
       variant: 'outline'
     },
     {
-      id: 'view', label: 'รายละเอียด', icon: <ChevronRight size={14} />,
-      onClick: (row) => window.location.href = `/repairs/${row.id}`
+      id: 'view', label: 'รายละเอียด', icon: <ScanEye size={14} />,
+      onClick: (row) => window.location.href = `/repairs/${row.id}`,
+      inline: true
     },
     {
-      id: 'delete', label: 'ลบรายการ', icon: <Trash size={14} />, variant: 'danger',
+      id: 'delete', label: 'ลบรายการ', icon: <Trash2 size={14} />, variant: 'danger',
       onClick: (row) => handleDelete(row.id),
       hidden: () => !hasPermission('delete.repairs')
     }
@@ -319,7 +340,7 @@ const RepairList: React.FC = () => {
           <MapPin size={18} /> สถานที่แจ้งซ่อม
         </h4>
         <Card style={{ padding: '1rem', backgroundColor: 'var(--bg-app)' }}>
-          <StationCell stationName={row.station_name} province={row.station_province} fallbackLocation={row.location} compact={false} />
+          <StationCell stationName={row.station_name} province={row.station_province} fallbackLocation={row.location} locationSnapshot={row.location_snapshot} compact={false} />
         </Card>
       </section>
 
@@ -370,6 +391,7 @@ const RepairList: React.FC = () => {
             <p>จัดการและติดตามความคืบหน้าของงานซ่อมทั้งหมดในระบบ</p>
           </div>
           <div style={{ display: 'flex', gap: '12px' }}>
+            <Button variant="outline" icon={<Download size={20} />} onClick={handleExportExcel}>ส่งออก Excel</Button>
             <Link to="/claim"><Button variant="outline" icon={<Plus size={20} />}>แจ้งเคลมใหม่</Button></Link>
             <Link to="/new"><Button variant="primary" icon={<Plus size={20} />}>แจ้งซ่อมใหม่</Button></Link>
           </div>

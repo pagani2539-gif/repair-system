@@ -8,20 +8,22 @@ import { Card } from '../components/ui/Card';
 import { formatDateTimeThai } from '../utils/formatDate';
 import {
   User,
-  Trash,
+  Trash2,
   Plus,
   Boxes,
   Printer,
   MapPin,
   FileText,
-  Eye,
+  ExternalLink,
   MessageSquare,
   Package,
   Tag,
   AlertTriangle,
-  X
+  X,
+  Download
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { exportToCsv } from '../utils/csvExporter';
 import PrintWithdrawalTemplate from '../components/PrintWithdrawalTemplate';
 import { printElement } from '../utils/pdfGenerator';
 import { ProvideSnModal } from '../components/ProvideSnModal';
@@ -34,7 +36,7 @@ import TablePagination from '../components/tables/TablePagination';
 import { useTableUrlState } from '../hooks/useTableUrlState';
 
 const WithdrawalList: React.FC = () => {
-  const { notify } = useNotification();
+  const { notify, confirm } = useNotification();
   const { hasPermission } = useAuth();
   const { urlState, setTableState } = useTableUrlState(20);
   
@@ -131,7 +133,7 @@ const WithdrawalList: React.FC = () => {
     return Array.from(types).map(t => ({ label: t, value: t }));
   }, [withdrawals]);
 
-  const handlePrint = async (wId: number) => {
+  const handlePrint = useCallback(async (wId: number) => {
     setIsPrintLoading(wId);
     try {
       const detail = await withdrawalApi.getById(wId);
@@ -142,7 +144,7 @@ const WithdrawalList: React.FC = () => {
     } finally {
       setIsPrintLoading(null);
     }
-  };
+  }, [notify]);
 
   useEffect(() => {
     if (printingWithdrawal) {
@@ -155,7 +157,12 @@ const WithdrawalList: React.FC = () => {
   }, [printingWithdrawal]);
 
   const handleDelete = async (id: number) => {
-    if (!window.confirm('คุณต้องการลบประวัติการเบิกนี้ใช่หรือไม่? ระบบจะทำการคืนสต็อกอุปกรณ์ทั้งหมดในรายการนี้ให้โดยอัตโนมัติ')) return;
+    const isConfirmed = await confirm({
+      title: 'ยืนยันการลบประวัติการเบิก',
+      message: 'คุณต้องการลบประวัติการเบิกนี้ใช่หรือไม่? ระบบจะทำการคืนสต็อกอุปกรณ์ทั้งหมดในรายการนี้ให้โดยอัตโนมัติ',
+      variant: 'danger'
+    });
+    if (!isConfirmed) return;
     try {
       await withdrawalApi.delete(id);
       notify('ลบประวัติและคืนสต็อกเรียบร้อยแล้ว');
@@ -294,6 +301,7 @@ const WithdrawalList: React.FC = () => {
             areaName={row.station_area_name}
             province={row.station_province}
             fallbackLocation={row.location}
+            locationSnapshot={row.location_snapshot}
             compact={true}
           />
         );
@@ -367,20 +375,22 @@ const WithdrawalList: React.FC = () => {
     {
       id: 'view_page',
       label: 'ดูหน้าหลัก',
-      icon: <Eye size={14} />,
-      onClick: (row) => window.location.href = `/withdrawal/${row.id}`
+      icon: <ExternalLink size={14} />,
+      onClick: (row) => window.location.href = `/withdrawal/${row.id}`,
+      inline: true
     },
     {
       id: 'print',
       label: 'พิมพ์ใบเบิก (PDF)',
       icon: <Printer size={14} />,
       onClick: (row) => handlePrint(row.id),
-      disabled: (row) => isPrintLoading === row.id
+      disabled: (row) => isPrintLoading === row.id,
+      inline: true
     },
     {
       id: 'delete',
       label: 'ลบรายการ',
-      icon: <Trash size={14} />,
+      icon: <Trash2 size={14} />,
       variant: 'danger',
       onClick: (row) => handleDelete(row.id),
       hidden: () => !hasPermission('delete.withdrawals')
@@ -388,7 +398,16 @@ const WithdrawalList: React.FC = () => {
   ];
 
   const filtersConfig: TableFilter[] = [
-    { id: 'type', label: 'ประเภท', type: 'select', options: uniqueTypes }
+    { id: 'type', label: 'ประเภท', type: 'select', options: uniqueTypes },
+    {
+      id: 'sn_status',
+      label: 'สถานะ S/N',
+      type: 'select',
+      options: [
+        { label: 'ยังไม่ครบ (ขาด S/N)', value: 'missing' },
+        { label: 'ระบุครบถ้วน', value: 'complete' }
+      ]
+    }
   ];
 
   const filteredData = useMemo(() => {
@@ -407,6 +426,12 @@ const WithdrawalList: React.FC = () => {
 
       if (urlState.filters.type && w.type !== urlState.filters.type) return false;
       
+      if (urlState.filters.sn_status) {
+        const missingCount = w.items_missing_sn || 0;
+        if (urlState.filters.sn_status === 'missing' && missingCount === 0) return false;
+        if (urlState.filters.sn_status === 'complete' && missingCount > 0) return false;
+      }
+
       return true;
     }).sort((a, b) => {
       const t = new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
@@ -417,6 +442,24 @@ const WithdrawalList: React.FC = () => {
   const indexOfLastItem = urlState.page * urlState.pageSize;
   const indexOfFirstItem = indexOfLastItem - urlState.pageSize;
   const paginatedData = filteredData.slice(indexOfFirstItem, indexOfLastItem);
+
+  const handleExportExcel = () => {
+    const headers = [
+      'เลขที่ใบเบิก', 'ประเภทการเบิก', 'โครงการ/งาน', 'สถานที่', 'ผู้เบิก/หน่วยงาน', 'รายการอุปกรณ์', 'หมายเหตุ', 'วันที่เบิก'
+    ];
+    const rows = filteredData.map(w => [
+      `WD-${String(w.id).padStart(5, '0')}`,
+      w.type,
+      w.project_name || '-',
+      w.location || '-',
+      w.recipient,
+      w.items_summary || '-',
+      w.note || '-',
+      w.created_at ? new Date(w.created_at).toLocaleDateString('th-TH') : '-'
+    ]);
+    exportToCsv(`withdrawals_export_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`, headers, rows);
+    notify('ส่งออกข้อมูล Excel เรียบร้อยแล้ว');
+  };
 
   const renderDetailDrawer = useCallback((row: Withdrawal) => {
     const itemCount = row.items_summary ? row.items_summary.split(',').length : 0;
@@ -451,6 +494,7 @@ const WithdrawalList: React.FC = () => {
               areaName={row.station_area_name}
               province={row.station_province}
               fallbackLocation={row.location}
+              locationSnapshot={row.location_snapshot}
               compact={false}
             />
           </Card>
@@ -480,7 +524,7 @@ const WithdrawalList: React.FC = () => {
           </div>
           {row.items_missing_sn !== undefined && row.items_missing_sn > 0 && (
             <div style={{ marginTop: '1rem', padding: '0.75rem', backgroundColor: 'var(--danger-light)', borderRadius: '8px', color: 'var(--danger)', fontSize: '0.85rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Tag size={16} /> มีอุปกรณ์ที่ยังไม่ระบุ Serial Number ({row.items_missing_sn} เครื่อง)
+              <Tag size={16} /> มีอุปกรณ์ที่ยังไม่ระบุหมายเลขเครื่อง (S/N) ({row.items_missing_sn} เครื่อง)
             </div>
           )}
         </section>
@@ -500,7 +544,7 @@ const WithdrawalList: React.FC = () => {
         </div>
       </div>
     );
-  }, [isPrintLoading]);
+  }, [handlePrint]);
 
   return (
     <div className="withdrawal-list-page" style={{ padding: '0 0 4rem 0', backgroundColor: 'var(--bg-app)', minHeight: '100vh' }}>
@@ -510,11 +554,14 @@ const WithdrawalList: React.FC = () => {
             <h2>ประวัติการเบิกอุปกรณ์</h2>
             <p>ตรวจสอบรายการเบิกอุปกรณ์ย้อนหลังทั้งหมดในระบบคลังพัสดุ</p>
           </div>
-          <Link to="/withdrawal">
-            <Button variant="primary" icon={<Plus size={20} />}>
-              ทำการเบิกใหม่
-            </Button>
-          </Link>
+          <div style={{ display: 'flex', gap: '12px' }}>
+            <Button variant="outline" icon={<Download size={20} />} onClick={handleExportExcel}>ส่งออก Excel</Button>
+            <Link to="/withdrawal">
+              <Button variant="primary" icon={<Plus size={20} />}>
+                ทำการเบิกใหม่
+              </Button>
+            </Link>
+          </div>
         </div>
 
         <div className="boot-animate stagger-1">

@@ -207,3 +207,41 @@ exports.remove = (req, res) => {
     }
   });
 };
+
+exports.getAuditLogs = (req, res) => {
+  const limit = parseInt(req.query.limit, 10) || 50;
+  const offset = parseInt(req.query.offset, 10) || 0;
+  const search = req.query.search;
+  
+  let sql = 'SELECT * FROM audit_logs';
+  const params = [];
+  
+  if (search) {
+    sql += ' WHERE entity_type LIKE ? OR action LIKE ? OR user_name LIKE ?';
+    const s = `%${search}%`;
+    params.push(s, s, s);
+  }
+  
+  sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+  params.push(limit, offset);
+  
+  db.all(sql, params, (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    let countSql = 'SELECT COUNT(*) as count FROM audit_logs';
+    const countParams = [];
+    if (search) {
+      countSql += ' WHERE entity_type LIKE ? OR action LIKE ? OR user_name LIKE ?';
+      const s = `%${search}%`;
+      countParams.push(s, s, s);
+    }
+    
+    db.get(countSql, countParams, (err2, countRow) => {
+      if (err2) return res.status(500).json({ error: err2.message });
+      res.json({
+        logs: rows || [],
+        total: countRow ? countRow.count : 0
+      });
+    });
+  });
+};

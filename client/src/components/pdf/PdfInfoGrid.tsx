@@ -1,35 +1,42 @@
 import React from 'react';
-import { pdfTheme } from './pdfTheme';
+import { pdfTheme, type DocType } from './pdfTheme';
 
 export interface InfoField {
   label: string;
   value: React.ReactNode;
-  span?: 1 | 2; // 2 = full-width row
+  span?: number; // Supports spanning across arbitrary columns
 }
 
 interface Props {
   title?: string;
   fields: InfoField[];
   columns?: number; // default 2
+  docType?: DocType;
 }
 
-/**
- * Information grid for headline doc info (recipient, project, location, etc.)
- * Rendered as a clean key-value grid with subtle backgrounds.
- */
-export const PdfInfoGrid: React.FC<Props> = ({ title, fields, columns = 2 }) => {
+export const PdfInfoGrid: React.FC<Props> = ({ title, fields, columns = 2, docType }) => {
+  const accentColor = docType ? pdfTheme.accents[docType] : null;
+
   return (
-    <section style={{ marginBottom: pdfTheme.space.sectionGap, fontFamily: pdfTheme.fonts.body }}>
+    <section style={{
+      marginBottom: `${pdfTheme.space.sectionGap}px`,
+      fontFamily: pdfTheme.fonts.body,
+      background: pdfTheme.colors.bgPage,
+      border: pdfTheme.border.light,
+      borderLeft: accentColor ? `4px solid ${accentColor}` : pdfTheme.border.light,
+      borderRadius: pdfTheme.radius.md,
+      padding: '10px 14px',
+      boxShadow: '0 2px 6px rgba(15, 23, 42, 0.02)',
+    }}>
       {title && (
         <h2 style={{
-          fontSize: pdfTheme.size.h2,
+          fontSize: `${pdfTheme.size.h2}px`,
           fontWeight: 800,
-          color: pdfTheme.colors.text,
+          color: pdfTheme.colors.primary,
           textTransform: 'uppercase',
-          letterSpacing: '0.06em',
-          margin: '0 0 10px 0',
-          paddingBottom: '4px',
-          borderBottom: pdfTheme.border.base,
+          letterSpacing: '0.04em',
+          margin: '0 0 8px 0',
+          paddingBottom: '2px',
         }}>
           {title}
         </h2>
@@ -38,43 +45,37 @@ export const PdfInfoGrid: React.FC<Props> = ({ title, fields, columns = 2 }) => 
       <div style={{
         display: 'grid',
         gridTemplateColumns: `repeat(${columns}, 1fr)`,
-        gap: '0',
-        border: pdfTheme.border.light,
-        borderRadius: pdfTheme.radius.md,
-        overflow: 'hidden',
+        columnGap: '16px',
+        rowGap: '6px',
       }}>
         {fields.map((field, idx) => (
           <div
             key={idx}
             style={{
-              gridColumn: field.span === 2 ? `span ${columns}` : 'span 1',
-              borderBottom: idx < fields.length - 1 ? pdfTheme.border.light : 'none',
-              borderRight: (idx % columns) < columns - 1 && field.span !== 2 ? pdfTheme.border.light : 'none',
-              padding: '10px 14px',
-              background: idx % 2 === 0 ? pdfTheme.colors.bgSubtle : pdfTheme.colors.bgPage,
-              fontSize: pdfTheme.size.body,
+              gridColumn: field.span ? `span ${field.span}` : 'span 1',
               display: 'flex',
               flexDirection: 'column',
-              gap: '2px',
+              padding: '2px 0',
             }}
           >
-            <div style={{
-              fontSize: pdfTheme.size.micro,
+            <span style={{
+              fontSize: `${pdfTheme.size.micro}px`,
               color: pdfTheme.colors.textMuted,
               textTransform: 'uppercase',
-              letterSpacing: '0.04em',
+              letterSpacing: '0.02em',
               fontWeight: 600,
             }}>
               {field.label}
-            </div>
-            <div style={{
-              fontSize: pdfTheme.size.body,
+            </span>
+            <span style={{
+              fontSize: `${pdfTheme.size.body}px`,
               fontWeight: 600,
               color: pdfTheme.colors.text,
-              lineHeight: 1.4,
+              marginTop: '1px',
+              lineHeight: 1.3,
             }}>
               {field.value || <span style={{ color: pdfTheme.colors.textLight }}>—</span>}
-            </div>
+            </span>
           </div>
         ))}
       </div>

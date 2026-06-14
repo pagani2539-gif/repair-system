@@ -11,6 +11,7 @@ import NewWithdrawal from './pages/NewWithdrawal';
 import WithdrawalList from './pages/WithdrawalList';
 import WithdrawalDetail from './pages/WithdrawalDetail';
 import TransactionList from './pages/TransactionList';
+import PendingReturns from './pages/PendingReturns';
 import PurchaseOrderList from './pages/PurchaseOrderList';
 import Reports from './pages/Reports';
 import StationSearch from './pages/StationSearch';
@@ -18,6 +19,7 @@ import Settings from './pages/Settings';
 import UserManagement from './pages/UserManagement';
 import Login from './pages/Login';
 import ChangePassword from './pages/ChangePassword';
+import AuditLogs from './pages/AuditLogs';
 import ErrorBoundary from './components/ErrorBoundary';
 import ProtectedRoute from './components/ProtectedRoute';
 import { AuthProvider } from './contexts/AuthContext';
@@ -60,6 +62,7 @@ function App() {
               <Route path="withdrawal-history" element={<WithdrawalList />} />
               <Route path="withdrawal/:id" element={<WithdrawalDetail />} />
               <Route path="transactions" element={<TransactionList />} />
+              <Route path="pending-returns" element={<PendingReturns />} />
               <Route path="purchase-orders" element={<PurchaseOrderList />} />
               <Route path="reports" element={<Reports />} />
               <Route path="stations" element={<StationSearch />} />
@@ -69,6 +72,14 @@ function App() {
                 element={
                   <ProtectedRoute requireFull>
                     <UserManagement />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="users/audit-logs"
+                element={
+                  <ProtectedRoute requireFull>
+                    <AuditLogs />
                   </ProtectedRoute>
                 }
               />

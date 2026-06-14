@@ -29,16 +29,18 @@ exports.getItemById = (req, res) => {
 };
 
 exports.createItem = (req, res) => {
-  const { name, model, description, quantity, min_stock, serial_numbers, requires_sn, storage_location } = req.body;
+  const { name, model, description, quantity, min_stock, serial_numbers, requires_sn, storage_location, unit_price, warranty_months } = req.body;
   const image_path = req.file ? req.file.filename : null;
   const parsedSns = serial_numbers ? JSON.parse(serial_numbers) : [];
   const qty = parseInt(quantity) || 0;
   const reqSn = requires_sn === undefined ? 1 : parseInt(requires_sn);
+  const price = parseFloat(unit_price) || 0;
+  const warranty = parseInt(warranty_months) || 36;
 
   db.run(`
-    INSERT INTO inventory (name, model, description, quantity, min_stock, image_path, requires_sn, storage_location)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `, [name, model, description, qty, min_stock || 10, image_path, reqSn, storage_location || null], function(err) {
+    INSERT INTO inventory (name, model, description, quantity, min_stock, image_path, requires_sn, storage_location, unit_price, warranty_months)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `, [name, model, description, qty, min_stock || 10, image_path, reqSn, storage_location || null, price, warranty], function(err) {
     if (err) return res.status(500).json({ error: err.message });
     
     const inventoryId = this.lastID;
@@ -81,9 +83,12 @@ exports.createItem = (req, res) => {
 
 exports.updateItem = (req, res) => {
   const { id } = req.params;
-  const { name, model, description, quantity, min_stock, requires_sn, storage_location } = req.body;
-  let query = 'UPDATE inventory SET name = ?, model = ?, description = ?, quantity = ?, min_stock = ?, requires_sn = ?, storage_location = ?, updated_at = CURRENT_TIMESTAMP';
-  const params = [name, model, description, quantity, min_stock, requires_sn === undefined ? 1 : parseInt(requires_sn), storage_location || null];
+  const { name, model, description, quantity, min_stock, requires_sn, storage_location, unit_price, warranty_months } = req.body;
+  const price = parseFloat(unit_price) || 0;
+  const warranty = parseInt(warranty_months) || 36;
+  
+  let query = 'UPDATE inventory SET name = ?, model = ?, description = ?, quantity = ?, min_stock = ?, requires_sn = ?, storage_location = ?, unit_price = ?, warranty_months = ?, updated_at = CURRENT_TIMESTAMP';
+  const params = [name, model, description, quantity, min_stock, requires_sn === undefined ? 1 : parseInt(requires_sn), storage_location || null, price, warranty];
 
   if (req.file) {
     query += ', image_path = ?';
@@ -137,6 +142,27 @@ exports.getInstancesInStock = (req, res) => {
     (err, rows) => {
       if (err) return res.status(500).json({ error: err.message });
       res.json(rows);
+    }
+  );
+};
+
+const VALID_CONDITIONS = ['New', 'Good', 'Fair', 'Broken'];
+
+exports.updateInstanceCondition = (req, res) => {
+  const { instanceId } = req.params;
+  const { condition } = req.body;
+
+  if (!condition || !VALID_CONDITIONS.includes(condition)) {
+    return res.status(400).json({ message: `สภาพไม่ถูกต้อง (ต้องเป็น ${VALID_CONDITIONS.join(', ')})` });
+  }
+
+  db.run(
+    "UPDATE inventory_instances SET condition = ? WHERE id = ?",
+    [condition, instanceId],
+    function (err) {
+      if (err) return res.status(500).json({ error: err.message });
+      if (this.changes === 0) return res.status(404).json({ message: 'ไม่พบชิ้นงาน (instance) นี้' });
+      res.json({ message: 'อัปเดตสภาพชิ้นงานเรียบร้อยแล้ว', condition });
     }
   );
 };
@@ -196,6 +222,64 @@ exports.addInventorySerialNumbers = (req, res) => {
         });
       });
     });
+  });
+};
+
+exports.getLifecycleReport = (req, res) => {
+  const query = `
+    SELECT 
+      ii.id as instance_id,
+      ii.serial_number,
+      ii.status,
+      ii.current_location,
+      ii.station_id,
+      ii.created_at as installed_at,
+      i.id as inventory_id,
+      i.name as device_name,
+      i.model,
+      i.unit_price,
+      i.warranty_months,
+      st.name as station_name,
+      st.code as station_code,
+      COALESCE((
+        SELECT SUM(wi.quantity * i.unit_price)
+        FROM withdrawal_items wi
+        JOIN withdrawals w ON wi.withdrawal_id = w.id
+        WHERE wi.inventory_id = i.id 
+          AND w.station_id = ii.station_id
+      ), 0) as total_repair_cost
+    FROM inventory_instances ii
+    JOIN inventory i ON ii.inventory_id = i.id
+    LEFT JOIN stations st ON ii.station_id = st.id
+    WHERE ii.status = 'Withdrawn' AND ii.station_id IS NOT NULL
+    ORDER BY ii.created_at DESC
+  `;
+
+  db.all(query, [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    const reports = rows.map(row => {
+      const installedDate = new Date(row.installed_at);
+      const currentDate = new Date();
+      const ageMonths = Math.max(0, (currentDate.getFullYear() - installedDate.getFullYear()) * 12 + (currentDate.getMonth() - installedDate.getMonth()));
+      const warranty = row.warranty_months || 36;
+      const unitPrice = row.unit_price || 0;
+      const totalCost = row.total_repair_cost || 0;
+
+      const isExpiredWarranty = ageMonths > warranty;
+      const costExceedsThreshold = unitPrice > 0 ? (totalCost / unitPrice) > 0.7 : false;
+      const recommendedReplacement = isExpiredWarranty || costExceedsThreshold;
+
+      return {
+        ...row,
+        age_months: ageMonths,
+        is_expired_warranty: isExpiredWarranty,
+        cost_exceeds_threshold: costExceedsThreshold,
+        recommended_replacement: recommendedReplacement
+      };
+    });
+
+    res.json(reports);
   });
 };
 

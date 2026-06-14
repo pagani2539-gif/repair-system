@@ -75,7 +75,7 @@ const Login: React.FC = () => {
           </div>
           <h1 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 800 }}>ระบบบำรุงรักษา</h1>
           <p style={{ margin: '4px 0 0', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-            Maintenance Management System
+            ระบบบริหารจัดการงานซ่อมบำรุง
           </p>
         </div>
 

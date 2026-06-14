@@ -5,6 +5,7 @@ import { useNotification } from '../components/Layout';
 import { useAuth } from '../contexts/AuthContext';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
+import Select from '../components/ui/Select';
 import { formatDateTimeThai } from '../utils/formatDate';
 import {
   ArrowUpCircle,
@@ -18,14 +19,16 @@ import {
   ArrowDownToLine,
   Timer,
   Info,
-  Eye,
-  Trash,
+  Trash2,
+  ScanEye,
+  Undo2,
   MessageSquare,
   Upload,
   X,
   CheckCircle2,
   Camera,
-  Printer
+  Printer,
+  Download
 } from 'lucide-react';
 import type { InventoryTransaction } from '../types';
 import type { TableColumn, TableAction } from '../types/table.types';
@@ -35,10 +38,11 @@ import TableToolbar from '../components/tables/TableToolbar';
 import TablePagination from '../components/tables/TablePagination';
 import { useTableUrlState } from '../hooks/useTableUrlState';
 import PrintReturnTemplate from '../components/PrintReturnTemplate';
-import PrintDialog from '../components/PrintDialog';
+import { printElement } from '../utils/pdfGenerator';
+import { compressImage } from '../utils/imageCompressor';
 
 const TransactionList: React.FC = () => {
-  const { notify } = useNotification();
+  const { notify, confirm } = useNotification();
   const { hasPermission, user: currentUser } = useAuth();
   const { urlState, setTableState } = useTableUrlState(20);
   const [returnModal, setReturnModal] = useState<{ isOpen: boolean; transaction: InventoryTransaction | null }>({
@@ -46,6 +50,7 @@ const TransactionList: React.FC = () => {
     transaction: null
   });
   const [returning, setReturning] = useState(false);
+  const [returnCondition, setReturnCondition] = useState<string>('Good');
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [printReturnTx, setPrintReturnTx] = useState<InventoryTransaction | null>(null);
 
@@ -67,13 +72,19 @@ const TransactionList: React.FC = () => {
   }, [fetchTransactions]);
 
   const handleDelete = async (id: number | string) => {
-    if (!window.confirm('คุณต้องการลบรายการธุรกรรมนี้ใช่หรือไม่?')) return;
+    const isConfirmed = await confirm({
+      title: 'ยืนยันการลบรายการธุรกรรม',
+      message: 'คุณต้องการลบรายการธุรกรรมนี้ใช่หรือไม่? การดำเนินการนี้ไม่สามารถย้อนกลับได้',
+      variant: 'danger'
+    });
+    if (!isConfirmed) return;
     try {
       await transactionApi.delete(id);
       notify('ลบรายการเรียบร้อยแล้ว');
       fetchTransactions();
-    } catch (err: any) {
-      notify(err.message || 'ไม่สามารถลบรายการได้', 'error');
+    } catch (err) {
+      const error = err as Error;
+      notify(error.message || 'ไม่สามารถลบรายการได้', 'error');
     }
   };
 
@@ -150,7 +161,7 @@ const TransactionList: React.FC = () => {
       )
     },
     {
-      id: 'serial_number', header: 'S/N', accessor: 'serial_number', priority: 1, width: '160px',
+      id: 'serial_number', header: 'S/N (หมายเลขเครื่อง)', accessor: 'serial_number', priority: 1, width: '160px',
       render: (val) => (
         val ? (
           <span style={{
@@ -215,6 +226,7 @@ const TransactionList: React.FC = () => {
               areaName={row.station_area_name}
               province={row.station_province}
               fallbackLocation={row.location}
+              locationSnapshot={row.location_snapshot}
               compact={true}
             />
             {project && (
@@ -287,16 +299,29 @@ const TransactionList: React.FC = () => {
 
   const handlePrintReturn = (row: InventoryTransaction) => {
     setPrintReturnTx(row);
+    setTimeout(() => {
+      printElement("pdf-return-template", `ใบคืนอุปกรณ์ - RT-${String(row.id).padStart(6, '0')}`);
+      setPrintReturnTx(null);
+    }, 150);
   };
 
   const actions: TableAction<InventoryTransaction>[] = [
-    { id: 'view', label: 'รายละเอียด', icon: <Eye size={14} />, onClick: () => {} },
+    { id: 'view', label: 'รายละเอียด', icon: <ScanEye size={14} />, onClick: () => {}, inline: true },
     {
       id: 'return',
       label: 'คืนอุปกรณ์',
-      icon: <ArrowUpCircle size={14} />,
+      icon: <Undo2 size={14} />,
+      variant: 'primary',
       onClick: (row) => setReturnModal({ isOpen: true, transaction: row }),
-      hidden: (row) => row.status === 'RETURNED' || (row.transaction_type !== 'BORROW' && row.transaction_type !== 'WITHDRAW')
+      hidden: (row) => {
+        if (row.status === 'RETURNED') return true;
+        if (row.transaction_type === 'BORROW') return false;
+        if (row.transaction_type === 'WITHDRAW') {
+          return row.withdrawal_type !== 'สำรองใช้งาน' && row.withdrawal_type !== 'ทดสอบ';
+        }
+        return true;
+      },
+      inline: true
     },
     {
       id: 'print-return',
@@ -305,16 +330,16 @@ const TransactionList: React.FC = () => {
       onClick: handlePrintReturn,
       hidden: (row) => row.transaction_type !== 'RETURN'
     },
-    { id: 'delete', label: 'ลบรายการ', icon: <Trash size={14} />, variant: 'danger', onClick: (row) => handleDelete(row.id), hidden: () => !hasPermission('delete.transactions') }
+    { id: 'delete', label: 'ลบรายการ', icon: <Trash2 size={14} />, variant: 'danger', onClick: (row) => handleDelete(row.id), hidden: () => !hasPermission('delete.transactions') }
   ];
 
-  const handleReturn = async (e: React.FormEvent) => {
+  const handleReturn = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!returnModal.transaction) return;
 
-    const target = e.target as any;
-    const condition = target.condition.value;
-    const note = target.note.value.trim();
+    const formDataObj = new FormData(e.currentTarget);
+    const condition = formDataObj.get('condition') as string;
+    const note = (formDataObj.get('note') as string || '').trim();
 
     setReturning(true);
     try {
@@ -333,27 +358,67 @@ const TransactionList: React.FC = () => {
 
       await transactionApi.return(formData);
       notify('🎉 บันทึกการคืนอุปกรณ์เรียบร้อยแล้ว');
-      setReturnModal({ isOpen: false, transaction: null });
+      closeReturnModal();
       fetchTransactions();
-    } catch (err: any) {
-      notify(err.message || 'เกิดข้อผิดพลาดในการบันทึกการคืน', 'error');
+    } catch (err) {
+      const error = err as Error;
+      notify(error.message || 'เกิดข้อผิดพลาดในการบันทึกการคืน', 'error');
     } finally {
       setReturning(false);
     }
   };
 
+  const handleExportExcel = () => {
+    const headers = [
+      'วันเวลาทำรายการ', 'ประเภทธุรกรรม', 'ประเภทการเบิก', 'อุปกรณ์', 'รุ่น/Model', 'S/N', 'จำนวน', 'ผู้ทำรายการ', 'สถานที่/โครงการ', 'สถานะ/หมายเหตุ'
+    ];
+    const rows = filteredData.map(tx => {
+      let typeText = tx.transaction_type;
+      if (tx.transaction_type === 'ADD_STOCK') typeText = 'นำเข้าสต็อก';
+      else if (tx.transaction_type === 'WITHDRAW') typeText = 'เบิกออก';
+      else if (tx.transaction_type === 'BORROW') typeText = 'ยืมใช้งาน';
+      else if (tx.transaction_type === 'RETURN') typeText = 'ส่งคืน';
+
+      return [
+        tx.created_at ? new Date(tx.created_at).toLocaleString('th-TH') : '-',
+        typeText,
+        tx.withdrawal_type || '-',
+        tx.product_name,
+        tx.model || '-',
+        tx.serial_number || '-',
+        tx.quantity_added || tx.quantity_withdrawn || tx.quantity_borrowed || tx.quantity_returned || 0,
+        tx.user_name || '-',
+        tx.location || tx.project_name || '-',
+        tx.status === 'RETURNED' ? 'คืนแล้ว' : (tx.note || '-')
+      ];
+    });
+    exportToCsv(`ledger_export_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`, headers, rows);
+    notify('ส่งออกข้อมูล Excel เรียบร้อยแล้ว');
+  };
+
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      setImageFile(file);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setImagePreview(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+      try {
+        const compressed = await compressImage(file);
+        setImageFile(compressed);
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setImagePreview(reader.result as string);
+        };
+        reader.readAsDataURL(compressed);
+      } catch (err) {
+        console.error('Image compression failed:', err);
+        setImageFile(file);
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setImagePreview(reader.result as string);
+        };
+        reader.readAsDataURL(file);
+      }
     } else {
       setImageFile(null);
       setImagePreview(null);
@@ -364,6 +429,17 @@ const TransactionList: React.FC = () => {
     setReturnModal({ isOpen: false, transaction: null });
     setImagePreview(null);
     setImageFile(null);
+    setReturnCondition('Good');
+  };
+
+  const formatTxType = (type: string) => {
+    switch (type) {
+      case 'ADD_STOCK': return 'นำเข้าพัสดุ (ADD_STOCK)';
+      case 'WITHDRAW': return 'เบิกจ่ายพัสดุ (WITHDRAW)';
+      case 'BORROW': return 'ยืมพัสดุ (BORROW)';
+      case 'RETURN': return 'คืนพัสดุ (RETURN)';
+      default: return type;
+    }
   };
 
   const renderDetailDrawer = useCallback((tx: InventoryTransaction) => (
@@ -382,12 +458,12 @@ const TransactionList: React.FC = () => {
         <h4 style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '1rem', color: 'var(--primary)' }}><Info size={18} /> ข้อมูลธุรกรรม</h4>
         <Card style={{ padding: '1rem', backgroundColor: 'var(--bg-app)' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', fontSize: '0.9rem' }}>
-            <div><strong>ประเภทรายการ:</strong> {tx.transaction_type} {tx.withdrawal_type ? `(${tx.withdrawal_type})` : ''}</div>
+            <div><strong>ประเภทรายการ:</strong> {formatTxType(tx.transaction_type)} {tx.withdrawal_type ? `(${tx.withdrawal_type})` : ''}</div>
             <div><strong>อุปกรณ์:</strong> {tx.product_name}</div>
             <div><strong>รุ่น:</strong> {tx.product_model || '-'}</div>
-            <div><strong>S/N:</strong> <code style={{ background: '#eee', padding: '2px 4px', borderRadius: '4px' }}>{tx.serial_number || 'ไม่ระบุ'}</code></div>
+            <div><strong>S/N (หมายเลขเครื่อง):</strong> <code style={{ background: '#eee', padding: '2px 4px', borderRadius: '4px' }}>{tx.serial_number || 'ไม่ระบุ'}</code></div>
             <div><strong>จำนวน:</strong> {tx.quantity_added || tx.quantity_withdrawn || tx.quantity_borrowed || tx.quantity_returned} ชิ้น</div>
-            <div><strong>สภาพ:</strong> {tx.condition || '-'}</div>
+            <div><strong>สภาพ:</strong> {conditionStyle(tx.condition)?.label || tx.condition || '-'}</div>
           </div>
         </Card>
       </section>
@@ -395,7 +471,7 @@ const TransactionList: React.FC = () => {
       <section>
         <h4 style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '1rem', color: 'var(--primary)' }}><MapPin size={18} /> สถานที่ / โครงการ</h4>
         <Card style={{ padding: '1rem', backgroundColor: 'var(--bg-app)' }}>
-           <StationCell stationName={tx.station_name} areaName={tx.station_area_name} province={tx.station_province} fallbackLocation={tx.location} compact={false} />
+           <StationCell stationName={tx.station_name} areaName={tx.station_area_name} province={tx.station_province} fallbackLocation={tx.location} locationSnapshot={tx.location_snapshot} compact={false} />
            <div style={{ marginTop: '0.75rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
              <Briefcase size={14} color="var(--text-muted)" />
              <span style={{ fontSize: '0.9rem' }}>{tx.project_name || 'ไม่ระบุโครงการ'}</span>
@@ -423,8 +499,9 @@ const TransactionList: React.FC = () => {
   return (
     <div className="ledger-page" style={{ padding: '0 0 4rem 0', backgroundColor: 'var(--bg-app)', minHeight: '100vh' }}>
       <div style={{ maxWidth: '1400px', margin: '0 auto', padding: '2rem 2.5rem' }}>
-        <div className="page-header" style={{ marginBottom: '2rem' }}>
+        <div className="page-header" style={{ marginBottom: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div className="page-title"><h2>สมุดบัญชีสต็อก (Ledger)</h2><p>ติดตามความเคลื่อนไหวพัสดุและประวัติการเบิก/คืนทั้งหมด</p></div>
+          <Button variant="outline" icon={<Download size={20} />} onClick={handleExportExcel}>ส่งออก Excel</Button>
         </div>
 
       <div className="stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.25rem', marginBottom: '2rem' }}>
@@ -487,8 +564,14 @@ const TransactionList: React.FC = () => {
         getRowAccent={(r) => getAccentColor(r.transaction_type)}
         mobileConfig={{
           title: (r) => r.product_name,
-          subtitle: (r) => `${r.transaction_type} · ${r.user_name}`,
-          statusBadge: (r) => <span className={`badge badge-${r.transaction_type.toLowerCase()}`}>{r.transaction_type}</span>
+          subtitle: (r) => {
+            const label = r.transaction_type === 'ADD_STOCK' ? 'นำเข้าสต็อก' : r.transaction_type === 'WITHDRAW' ? 'เบิกอุปกรณ์' : r.transaction_type === 'BORROW' ? 'ยืมอุปกรณ์' : 'คืนอุปกรณ์';
+            return `${label} · ${r.user_name || 'ระบบ'}`;
+          },
+          statusBadge: (r) => {
+            const label = r.transaction_type === 'ADD_STOCK' ? 'นำเข้า' : r.transaction_type === 'WITHDRAW' ? 'เบิก' : r.transaction_type === 'BORROW' ? 'ยืม' : 'คืน';
+            return <span className={`badge badge-${r.transaction_type.toLowerCase()}`}>{label}</span>;
+          }
         }}
       />
 
@@ -566,12 +649,17 @@ const TransactionList: React.FC = () => {
                 <div className="form-grid">
                   <div className="form-group">
                     <label>สภาพอุปกรณ์</label>
-                    <select name="condition">
-                      <option value="Good">ใช้งานได้ปกติ (Good)</option>
-                      <option value="Minor Damage">ชำรุดเล็กน้อย (Minor Damage)</option>
-                      <option value="Damaged">ชำรุด (Damaged)</option>
-                      <option value="Broken">เสีย/ใช้งานไม่ได้ (Broken)</option>
-                    </select>
+                    <Select
+                      value={returnCondition}
+                      options={[
+                        { label: 'ใช้งานได้ปกติ', value: 'Good' },
+                        { label: 'ชำรุดเล็กน้อย', value: 'Minor Damage' },
+                        { label: 'ชำรุด', value: 'Damaged' },
+                        { label: 'เสีย/ใช้งานไม่ได้', value: 'Broken' }
+                      ]}
+                      onChange={(val) => setReturnCondition(String(val))}
+                    />
+                    <input type="hidden" name="condition" value={returnCondition} />
                   </div>
                 </div>
 
@@ -618,18 +706,10 @@ const TransactionList: React.FC = () => {
         </div>
       )}
 
-      {/* Print dialog for return slip */}
-      {printReturnTx && (
-        <PrintDialog
-          open={!!printReturnTx}
-          onClose={() => setPrintReturnTx(null)}
-          templateId="pdf-return-template"
-          docTitle={`ใบคืนอุปกรณ์ - RT-${String(printReturnTx.id).padStart(6, '0')}`}
-          renderTemplate={(companyId, logoId) => (
-            <PrintReturnTemplate transaction={printReturnTx} companyId={companyId} logoId={logoId} />
-          )}
-        />
-      )}
+      {/* Offscreen print template */}
+      <div style={{ position: 'absolute', left: '-99999px', top: 0, pointerEvents: 'none' }}>
+        {printReturnTx && <PrintReturnTemplate transaction={printReturnTx} />}
+      </div>
     </div>
   );
 };

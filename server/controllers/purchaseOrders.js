@@ -130,7 +130,7 @@ exports.updatePO = (req, res) => {
   const {
     status, note, items, ordered_by, project_name, company_name,
     vendor_address, vendor_phone, vendor_contact_person, vendor_tax_id,
-    buyer_department, buyer_phone, buyer_email
+    buyer_department, buyer_phone, buyer_email, approved_by
   } = req.body;
 
   db.serialize(() => {
@@ -165,6 +165,10 @@ exports.updatePO = (req, res) => {
       if (status) {
         updateQuery += ', status = ?';
         params.push(status);
+        if (status === 'Approved') {
+          updateQuery += ', approved_by = ?, approved_at = CURRENT_TIMESTAMP';
+          params.push(approved_by || req.user?.full_name || 'System');
+        }
       }
 
       updateQuery += ' WHERE id = ?';
@@ -329,6 +333,11 @@ exports.receivePO = (req, res) => {
       if (po.status === 'Received') {
         db.run('ROLLBACK');
         return res.status(400).json({ message: 'ใบสั่งซื้อนี้เคยรับสินค้าเข้าระบบไปแล้ว' });
+      }
+
+      if (po.status !== 'Approved') {
+        db.run('ROLLBACK');
+        return res.status(400).json({ message: 'สามารถตรวจรับสินค้าได้เฉพาะใบสั่งซื้อที่ได้รับการอนุมัติแล้วเท่านั้น' });
       }
 
       db.all('SELECT * FROM purchase_order_items WHERE po_id = ?', [id], (err, poItems) => {

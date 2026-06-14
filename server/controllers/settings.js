@@ -1,6 +1,7 @@
 const db = require('../database/init');
 const fs = require('fs');
 const path = require('path');
+const bcrypt = require('bcryptjs');
 
 // ============================================================
 // Companies (multi)
@@ -264,6 +265,201 @@ exports.deleteLogo = (req, res) => {
       } else {
         res.json({ message: 'ลบโลโก้เรียบร้อย' });
       }
+    });
+  });
+};
+
+// ============================================================
+// System Settings (Key-Value)
+// ============================================================
+
+exports.getSystemSettings = (req, res) => {
+  db.all('SELECT key, value FROM system_settings', [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    const settings = {};
+    (rows || []).forEach(r => {
+      if (r.key.includes('token') && (!req.user || !req.user.is_full)) {
+        settings[r.key] = '••••••••••••••••';
+      } else {
+        settings[r.key] = r.value;
+      }
+    });
+    res.json(settings);
+  });
+};
+
+exports.updateSystemSettings = (req, res) => {
+  const settings = req.body || {};
+  const keys = Object.keys(settings);
+  
+  if (keys.length === 0) {
+    return res.json({ message: 'ไม่มีข้อมูลตั้งค่าที่ถูกอัปเดต' });
+  }
+
+  db.serialize(() => {
+    db.run('BEGIN TRANSACTION');
+    
+    let errorOccurred = false;
+    let completedCount = 0;
+    
+    keys.forEach(key => {
+      db.run(
+        `INSERT INTO system_settings (key, value, updated_at)
+         VALUES (?, ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`,
+        [key, settings[key]],
+        (err) => {
+          if (errorOccurred) return;
+          if (err) {
+            errorOccurred = true;
+            db.run('ROLLBACK');
+            return res.status(500).json({ error: err.message });
+          }
+
+          completedCount++;
+          if (completedCount === keys.length && !errorOccurred) {
+            db.run('COMMIT');
+            res.json({ message: 'บันทึกการตั้งค่าระบบเรียบร้อย' });
+          }
+        }
+      );
+    });
+  });
+};
+
+// ============================================================
+// Database Backup & Restore Manager
+// ============================================================
+const BACKUP_DIR = path.join(__dirname, '..', 'database', 'backups');
+
+exports.getBackups = (req, res) => {
+  if (!fs.existsSync(BACKUP_DIR)) {
+    return res.json([]);
+  }
+  
+  fs.readdir(BACKUP_DIR, (err, files) => {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    const backups = files
+      .filter(f => f.startsWith('backup_') && f.endsWith('.db'))
+      .map(f => {
+        const filePath = path.join(BACKUP_DIR, f);
+        const stats = fs.statSync(filePath);
+        return {
+          filename: f,
+          size: stats.size,
+          created_at: stats.mtime
+        };
+      })
+      .sort((a, b) => b.created_at - a.created_at);
+      
+    res.json(backups);
+  });
+};
+
+exports.createBackup = (req, res) => {
+  const { runBackup } = require('../database/backup');
+  runBackup(db)
+    .then(filePath => {
+      res.status(201).json({ 
+        message: 'สำรองข้อมูลฐานข้อมูลสำเร็จ',
+        filename: path.basename(filePath) 
+      });
+    })
+    .catch(err => {
+      res.status(500).json({ error: err.message });
+    });
+};
+
+exports.deleteBackup = (req, res) => {
+  const { filename } = req.params;
+  if (!filename || filename.includes('..') || !filename.endsWith('.db') || !filename.startsWith('backup_')) {
+    return res.status(400).json({ error: 'ชื่อไฟล์ไม่ถูกต้อง' });
+  }
+  
+  const filePath = path.join(BACKUP_DIR, filename);
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: 'ไม่พบไฟล์สำรองข้อมูล' });
+  }
+  
+  fs.unlink(filePath, (err) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ message: 'ลบไฟล์สำรองข้อมูลเรียบร้อย' });
+  });
+};
+
+exports.downloadBackup = (req, res) => {
+  const { filename } = req.params;
+  if (!filename || filename.includes('..') || !filename.endsWith('.db') || !filename.startsWith('backup_')) {
+    return res.status(400).json({ error: 'ชื่อไฟล์ไม่ถูกต้อง' });
+  }
+  
+  const filePath = path.join(BACKUP_DIR, filename);
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: 'ไม่พบไฟล์สำรองข้อมูล' });
+  }
+  
+  res.download(filePath, filename);
+};
+
+exports.restoreBackup = (req, res) => {
+  const { filename, password, confirm_text } = req.body;
+  
+  if (!filename || filename.includes('..') || !filename.endsWith('.db') || !filename.startsWith('backup_')) {
+    return res.status(400).json({ error: 'ชื่อไฟล์ไม่ถูกต้อง' });
+  }
+  if (!password || !password.trim()) {
+    return res.status(400).json({ error: 'กรุณากรอกรหัสผ่านเพื่อยืนยันสิทธิ์' });
+  }
+  if (confirm_text !== 'RESTORE') {
+    return res.status(400).json({ error: 'กรุณาพิมพ์คำว่า RESTORE เพื่อยืนยัน' });
+  }
+  
+  const backupPath = path.join(BACKUP_DIR, filename);
+  if (!fs.existsSync(backupPath)) {
+    return res.status(404).json({ error: 'ไม่พบไฟล์สำรองข้อมูล' });
+  }
+  
+  db.get('SELECT password_hash FROM users WHERE id = ?', [req.user.id], (err, row) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!row) return res.status(401).json({ error: 'ไม่พบบัญชีผู้ใช้' });
+    
+    bcrypt.compare(password, row.password_hash, (cmpErr, ok) => {
+      if (cmpErr) return res.status(500).json({ error: cmpErr.message });
+      if (!ok) return res.status(401).json({ error: 'รหัสผ่านปัจจุบันไม่ถูกต้อง' });
+      
+      console.log(`Starting Database Restore from: ${backupPath}`);
+      const dbFile = path.join(__dirname, '..', 'database', 'repair_system.db');
+      
+      // Close active database before copying
+      db.close((closeErr) => {
+        if (closeErr) {
+          console.error('Failed to close DB for restore:', closeErr.message);
+          return res.status(500).json({ error: 'ไม่สามารถปิดการเชื่อมต่อฐานข้อมูลได้: ' + closeErr.message });
+        }
+        
+        fs.copyFile(backupPath, dbFile, (copyErr) => {
+          if (copyErr) {
+            // The shared db connection is already closed and cannot be re-injected
+            // into modules that hold a reference — restart so init.js reopens it.
+            // The original db file is untouched when copyFile fails.
+            console.error('Failed to restore db file:', copyErr.message);
+            res.status(500).json({ error: 'ไม่สามารถกู้คืนฐานข้อมูลได้: ' + copyErr.message + ' ระบบกำลังรีสตาร์ทเซิร์ฟเวอร์' });
+            setTimeout(() => {
+              process.exit(1);
+            }, 1000);
+            return;
+          }
+          
+          console.log('Database restored successfully. Restarting server to apply changes...');
+          res.json({ message: 'กู้คืนฐานข้อมูลสำเร็จแล้ว ระบบกำลังรีสตาร์ทเซิร์ฟเวอร์ใน 1 วินาที...' });
+          
+          setTimeout(() => {
+            process.exit(0);
+          }, 1000);
+        });
+      });
     });
   });
 };

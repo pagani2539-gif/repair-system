@@ -1,7 +1,6 @@
 import React, { useState, useEffect, createContext, useContext, useCallback, useRef } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { 
-  LayoutGrid,
   Wrench, 
   PlusCircle, 
   ShieldPlus,
@@ -12,8 +11,6 @@ import {
   X,
   Boxes,
   ArrowUpRight,
-  ClipboardList,
-  Activity,
   ShoppingBag,
   PieChart,
   Search,
@@ -25,12 +22,22 @@ import {
   Settings as SettingsIcon,
   LogOut,
   UserCog,
-  Users
+  Users,
+  LayoutDashboard,
+  Warehouse,
+  History,
+  BookOpen,
+  Fingerprint,
+  Sun,
+  Moon,
+  Timer,
+  AlertTriangle
 } from 'lucide-react';
 import { repairApi, transactionApi, searchApi } from '../api';
 import type { GlobalSearchResults } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 import ErrorBoundary from './ErrorBoundary';
+import { Button } from './ui/Button';
 
 
 // Notification Context
@@ -55,11 +62,19 @@ interface NotificationContextType {
     category?: NotificationCategory,
     link?: string
   ) => void;
+  confirm: (options: {
+    title: string;
+    message: string;
+    variant?: 'primary' | 'danger' | 'warning' | 'success';
+    confirmText?: string;
+    cancelText?: string;
+  }) => Promise<boolean>;
   refreshUnreadCounts: () => Promise<void>;
   playNotificationSound: () => void;
   unreadRepairCount: number;
   unreadClaimCount: number;
   lowStockCount: number;
+  pendingReturnsCount: number;
 }
 
 const NotificationContext = createContext<NotificationContextType | undefined>(undefined);
@@ -74,9 +89,38 @@ export const useNotification = () => {
 const Layout: React.FC = () => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    const saved = localStorage.getItem('theme');
+    if (saved === 'light' || saved === 'dark') return saved;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('theme', theme);
+  }, [theme]);
+
+  // Spotlight Glow coordinate coordinator
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      const cards = document.querySelectorAll('.glass-card');
+      cards.forEach(card => {
+        const rect = card.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        (card as HTMLElement).style.setProperty('--mouse-x', `${x}px`);
+        (card as HTMLElement).style.setProperty('--mouse-y', `${y}px`);
+      });
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    return () => window.removeEventListener('mousemove', handleMouseMove);
+  }, []);
+
   const [unreadRepairCount, setUnreadRepairCount] = useState(0);
   const [unreadClaimCount, setUnreadClaimCount] = useState(0);
   const [lowStockCount, setLowStockCount] = useState(0);
+  const [pendingReturnsCount, setPendingReturnsCount] = useState(0);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
     return localStorage.getItem('sidebarCollapsed') === 'true';
@@ -187,6 +231,44 @@ const Layout: React.FC = () => {
     setNotifications(prev => prev.filter(n => n.id !== id));
   };
 
+  const [confirmState, setConfirmState] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    resolve: ((value: boolean) => void) | null;
+    variant: 'primary' | 'danger' | 'warning' | 'success';
+    confirmText: string;
+    cancelText: string;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    resolve: null,
+    variant: 'warning',
+    confirmText: 'ตกลง',
+    cancelText: 'ยกเลิก'
+  });
+
+  const confirm = useCallback((options: {
+    title: string;
+    message: string;
+    variant?: 'primary' | 'danger' | 'warning' | 'success';
+    confirmText?: string;
+    cancelText?: string;
+  }) => {
+    return new Promise<boolean>((resolve) => {
+      setConfirmState({
+        isOpen: true,
+        title: options.title,
+        message: options.message,
+        resolve,
+        variant: options.variant || 'warning',
+        confirmText: options.confirmText || 'ตกลง',
+        cancelText: options.cancelText || 'ยกเลิก'
+      });
+    });
+  }, []);
+
   const prevUnreadRepairCount = React.useRef(0);
   const prevUnreadClaimCount = React.useRef(0);
   const prevLatestTransactionId = React.useRef<number | null>(null);
@@ -217,27 +299,28 @@ const Layout: React.FC = () => {
   const refreshUnreadCounts = useCallback(async () => {
     try {
       const data = await repairApi.getUnreadCount();
-      const { repair, claim, lowStock } = data;
-
+      const { repair, claim, lowStock, pendingReturns } = data;
+ 
       // If unread repair count increased, notify user
       if (repair > prevUnreadRepairCount.current && prevUnreadRepairCount.current !== 0) {
         console.log('New repair ticket detected, triggering notification...');
         notify(`มีงานแจ้งซ่อมใหม่เข้ามา ${repair - prevUnreadRepairCount.current} รายการ`, 'info', 'งานแจ้งซ่อมใหม่', 'repair', '/repairs');
         playNotificationSound();
       }
-
+ 
       // If unread claim count increased, notify user
       if (claim > prevUnreadClaimCount.current && prevUnreadClaimCount.current !== 0) {
         console.log('New claim ticket detected, triggering notification...');
         notify(`มีงานแจ้งเคลมใหม่เข้ามา ${claim - prevUnreadClaimCount.current} รายการ`, 'info', 'งานแจ้งเคลมใหม่', 'claim', '/repairs');
         playNotificationSound();
       }
-
+ 
       prevUnreadRepairCount.current = repair;
       prevUnreadClaimCount.current = claim;
       setUnreadRepairCount(repair);
       setUnreadClaimCount(claim);
       setLowStockCount(lowStock);
+      setPendingReturnsCount(pendingReturns || 0);
     } catch (err) {
       console.error('Failed to fetch unread count:', err);
     }
@@ -288,12 +371,14 @@ const Layout: React.FC = () => {
 
   const contextValue = React.useMemo(() => ({ 
     notify, 
+    confirm,
     refreshUnreadCounts, 
     playNotificationSound, 
     unreadRepairCount, 
     unreadClaimCount, 
-    lowStockCount 
-  }), [notify, refreshUnreadCounts, playNotificationSound, unreadRepairCount, unreadClaimCount, lowStockCount]);
+    lowStockCount,
+    pendingReturnsCount
+  }), [notify, confirm, refreshUnreadCounts, playNotificationSound, unreadRepairCount, unreadClaimCount, lowStockCount, pendingReturnsCount]);
 
   // Flattened results for easy keyboard index mapping
   const flattenedResults = React.useMemo(() => {
@@ -523,80 +608,177 @@ const Layout: React.FC = () => {
           </div>
 
           
-          <nav>
+          <nav style={{ flexGrow: 1 }}>
             <NavLink to="/" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-              <LayoutGrid size={18} /> <span className="nav-text">ภาพรวมระบบ</span>
+              <LayoutDashboard size={18} /> <span className="nav-text">ภาพรวมระบบ</span>
             </NavLink>
             <NavLink to="/stations" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-              <MapPin size={18} /> <span className="nav-text">ค้นหาตามสถานี</span>
+              <MapPin size={18} /> <span className="nav-text">ค้นหาข้อมูลสถานี</span>
             </NavLink>
             
             <div className="nav-label">งานซ่อมบำรุง</div>
             <NavLink to="/repairs" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-              <Wrench size={18} /> <span className="nav-text">ติดตามงานซ่อม</span>
+              <Wrench size={18} /> <span className="nav-text">ทะเบียนงานซ่อม</span>
               {unreadRepairCount > 0 && (
                 <span className="pulse-dot">{unreadRepairCount}</span>
               )}
             </NavLink>
             <NavLink to="/new" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-              <PlusCircle size={18} /> <span className="nav-text">แจ้งซ่อมใหม่</span>
+              <PlusCircle size={18} /> <span className="nav-text">บันทึกแจ้งซ่อม</span>
             </NavLink>
             
-            <div className="nav-label">งานเคลมสินค้า</div>
+            <div className="nav-label">การเคลมพัสดุ</div>
             <NavLink to="/claim-history" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-              <ShieldCheck size={18} /> <span className="nav-text">ติดตามงานเคลม</span>
+              <ShieldCheck size={18} /> <span className="nav-text">ทะเบียนงานเคลม</span>
               {unreadClaimCount > 0 && (
                 <span className="pulse-dot">{unreadClaimCount}</span>
               )}
             </NavLink>
             <NavLink to="/claim" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-              <ShieldPlus size={18} /> <span className="nav-text">แจ้งเคลมใหม่</span>
+              <ShieldPlus size={18} /> <span className="nav-text">บันทึกแจ้งเคลม</span>
             </NavLink>
             
-            <div className="nav-label">งานคลังและสต็อก</div>
+            <div className="nav-label">การจัดการคลังวัสดุ</div>
             <NavLink to="/inventory" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>  
-              <Boxes size={18} /> <span className="nav-text">คลังพัสดุและสต็อก</span>
+              <Warehouse size={18} /> <span className="nav-text">รายการพัสดุคงคลัง</span>
               {lowStockCount > 0 && (
                 <span className="pulse-dot">{lowStockCount}</span>
               )}
             </NavLink>
             <NavLink to="/withdrawal" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}> 
-              <ArrowUpRight size={18} /> <span className="nav-text">เบิกจ่ายพัสดุ</span>
+              <ArrowUpRight size={18} /> <span className="nav-text">เบิกจ่ายพัสดุอุปกรณ์</span>
             </NavLink>
             <NavLink to="/withdrawal-history" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}> 
-              <ClipboardList size={18} /> <span className="nav-text">ประวัติการเบิกพัสดุ</span>
+              <History size={18} /> <span className="nav-text">ประวัติการเบิกจ่าย</span>
+            </NavLink>
+            <NavLink to="/pending-returns" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}> 
+              <Timer size={18} /> <span className="nav-text">อุปกรณ์ค้างส่งคืน</span>
+              {pendingReturnsCount > 0 && (
+                <span className="pulse-dot">{pendingReturnsCount}</span>
+              )}
             </NavLink>
             <NavLink to="/transactions" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}> 
-              <Activity size={18} /> <span className="nav-text">สมุดบัญชีสต็อก (Ledger)</span>
+              <BookOpen size={18} /> <span className="nav-text">บัญชีคุมยอดพัสดุ</span>
             </NavLink>
             
-            <div className="nav-label">จัดซื้อและรายงาน</div>
+            <div className="nav-label">งานจัดซื้อและรายงาน</div>
             <NavLink to="/purchase-orders" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}> 
-              <ShoppingBag size={18} /> <span className="nav-text">การจัดซื้อพัสดุ (PO)</span>
+              <ShoppingBag size={18} /> <span className="nav-text">ใบสั่งซื้อพัสดุ (PO)</span>
             </NavLink>
             <NavLink to="/reports" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-              <PieChart size={18} /> <span className="nav-text">รายงานและสถิติวิเคราะห์</span>
+              <PieChart size={18} /> <span className="nav-text">รายงานและสถิติ</span>
             </NavLink>
-
+ 
             {user?.is_full && (
               <>
-                <div className="nav-label">ระบบ</div>
+                <div className="nav-label">การบริหารจัดการระบบ</div>
                 <NavLink to="/settings" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
                   <SettingsIcon size={18} /> <span className="nav-text">ตั้งค่าระบบ</span>
                 </NavLink>
                 <NavLink to="/users" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-                  <Users size={18} /> <span className="nav-text">จัดการผู้ใช้</span>
+                  <Users size={18} /> <span className="nav-text">จัดการผู้ใช้และสิทธิ์</span>
+                </NavLink>
+                <NavLink to="/users/audit-logs" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+                  <Fingerprint size={18} /> <span className="nav-text">ประวัติการใช้งาน (Audit)</span>
                 </NavLink>
               </>
             )}
           </nav>
+
+          {/* Theme Switcher */}
+          <div style={{
+            padding: isSidebarCollapsed ? '12px 8px' : '12px 16px',
+            borderTop: '1px solid var(--border)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '8px',
+          }}>
+            {!isSidebarCollapsed ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <span style={{ fontSize: '0.72rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  โหมดระบบ
+                </span>
+                <div style={{
+                  display: 'flex',
+                  background: 'var(--bg-app)',
+                  padding: '4px',
+                  borderRadius: '10px',
+                  border: '1px solid var(--border)'
+                }}>
+                  <button
+                    onClick={() => setTheme('light')}
+                    style={{
+                      flex: 1,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '6px',
+                      padding: '8px',
+                      borderRadius: '8px',
+                      border: 'none',
+                      background: theme === 'light' ? 'var(--bg-card)' : 'transparent',
+                      color: theme === 'light' ? 'var(--text-main)' : 'var(--text-muted)',
+                      fontSize: '0.8rem',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                    }}
+                  >
+                    <Sun size={14} />
+                    สว่าง
+                  </button>
+                  <button
+                    onClick={() => setTheme('dark')}
+                    style={{
+                      flex: 1,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '6px',
+                      padding: '8px',
+                      borderRadius: '8px',
+                      border: 'none',
+                      background: theme === 'dark' ? 'var(--bg-card)' : 'transparent',
+                      color: theme === 'dark' ? 'var(--text-main)' : 'var(--text-muted)',
+                      fontSize: '0.8rem',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                    }}
+                  >
+                    <Moon size={14} />
+                    มืด
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
+                style={{
+                  width: '100%',
+                  padding: '10px',
+                  borderRadius: '10px',
+                  border: '1px solid var(--border)',
+                  background: 'var(--bg-card)',
+                  color: 'var(--text-main)',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  transition: 'all 0.2s',
+                }}
+                title={theme === 'light' ? 'เปลี่ยนเป็นโหมดมืด' : 'เปลี่ยนเป็นโหมดสว่าง'}
+              >
+                {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
+              </button>
+            )}
+          </div>
 
           {/* User profile + logout */}
           {user && (
             <div style={{
               padding: isSidebarCollapsed ? '12px 8px' : '12px 16px',
               borderTop: '1px solid var(--border)',
-              marginTop: 'auto',
               display: 'flex',
               flexDirection: 'column',
               gap: '8px',
@@ -854,6 +1036,68 @@ const Layout: React.FC = () => {
                   })}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmState.isOpen && (
+        <div 
+          className="modal-overlay" 
+          style={{ zIndex: 2000 }} 
+          onClick={() => {
+            if (confirmState.resolve) confirmState.resolve(false);
+            setConfirmState(prev => ({ ...prev, isOpen: false }));
+          }}
+        >
+          <div 
+            className="modal-content" 
+            style={{ maxWidth: '440px', padding: '2rem', gap: '1.25rem', borderRadius: '16px' }} 
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', borderBottom: '1px solid var(--border)', paddingBottom: '1rem' }}>
+              <AlertTriangle 
+                size={24} 
+                color={
+                  confirmState.variant === 'danger' ? 'var(--danger)' : 
+                  confirmState.variant === 'success' ? 'var(--success)' : 
+                  confirmState.variant === 'primary' ? 'var(--primary)' : 
+                  'var(--warning)'
+                } 
+              />
+              <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 800, color: 'var(--text-main)' }}>
+                {confirmState.title}
+              </h3>
+            </div>
+            <p style={{ margin: 0, fontSize: '0.92rem', color: 'var(--text-muted)', lineHeight: '1.6', whiteSpace: 'pre-line' }}>
+              {confirmState.message}
+            </p>
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
+              <Button 
+                variant="outline" 
+                onClick={() => {
+                  if (confirmState.resolve) confirmState.resolve(false);
+                  setConfirmState(prev => ({ ...prev, isOpen: false }));
+                }}
+                style={{ minWidth: '100px' }}
+              >
+                {confirmState.cancelText}
+              </Button>
+              <Button 
+                variant={
+                  confirmState.variant === 'primary' ? 'primary' : 
+                  confirmState.variant === 'danger' ? 'danger' : 
+                  confirmState.variant === 'success' ? 'success' : 
+                  'warning'
+                } 
+                onClick={() => {
+                  if (confirmState.resolve) confirmState.resolve(true);
+                  setConfirmState(prev => ({ ...prev, isOpen: false }));
+                }}
+                style={{ minWidth: '100px' }}
+              >
+                {confirmState.confirmText}
+              </Button>
             </div>
           </div>
         </div>

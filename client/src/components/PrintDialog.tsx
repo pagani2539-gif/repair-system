@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Button } from './ui/Button';
 import { settingsApi, UPLOAD_URL } from '../api';
+import Select from './ui/Select';
 import { printElement } from '../utils/pdfGenerator';
 import { useNotification } from './Layout';
 import type { Company, CompanyLogo } from '../types';
@@ -62,9 +63,11 @@ export const PrintDialog: React.FC<Props> = ({ open, onClose, templateId, docTit
   // Load logos when selected company changes
   useEffect(() => {
     if (!selectedCompanyId) {
-      setLogos([]);
-      setSelectedLogoId(null);
-      return;
+      const timer = setTimeout(() => {
+        setLogos([]);
+        setSelectedLogoId(null);
+      }, 0);
+      return () => clearTimeout(timer);
     }
     let cancelled = false;
 
@@ -198,18 +201,15 @@ export const PrintDialog: React.FC<Props> = ({ open, onClose, templateId, docTit
                     <Building2 size={14} color="var(--primary)" />
                     ออกในนามบริษัท
                   </label>
-                  <select
+                  <Select
                     value={selectedCompanyId ?? ''}
-                    onChange={(e) => setSelectedCompanyId(Number(e.target.value))}
-                    className="form-control"
+                    options={companies.map((c) => ({
+                      label: `${c.name_th}${c.is_default === 1 ? ' (หลัก)' : ''}`,
+                      value: c.id
+                    }))}
+                    onChange={(val) => setSelectedCompanyId(Number(val))}
                     style={{ width: '100%' }}
-                  >
-                    {companies.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name_th}{c.is_default === 1 ? ' (หลัก)' : ''}
-                      </option>
-                    ))}
-                  </select>
+                  />
                   {selectedCompany && (
                     <div style={{
                       marginTop: '6px',

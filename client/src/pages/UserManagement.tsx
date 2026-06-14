@@ -11,7 +11,6 @@ import {
   UserPlus,
   Save,
   Trash2,
-  Star,
   Loader2,
   X,
   Check,
@@ -66,7 +65,7 @@ const emptyForm = (): UserFormState => ({
 });
 
 const UserManagement: React.FC = () => {
-  const { notify } = useNotification();
+  const { notify, confirm } = useNotification();
   const { user: currentUser, refreshUser } = useAuth();
 
   const [users, setUsers] = useState<User[]>([]);
@@ -89,7 +88,10 @@ const UserManagement: React.FC = () => {
   }, [notify]);
 
   useEffect(() => {
-    fetchUsers();
+    const timer = setTimeout(() => {
+      fetchUsers();
+    }, 0);
+    return () => clearTimeout(timer);
   }, [fetchUsers]);
 
   const openCreateModal = () => {
@@ -202,7 +204,12 @@ const UserManagement: React.FC = () => {
       notify('ไม่สามารถลบบัญชีตัวเองได้', 'error');
       return;
     }
-    if (!window.confirm(`ปิดการใช้งานบัญชี "${u.username}" ใช่หรือไม่?\n(ประวัติการใช้งานยังคงอยู่)`)) return;
+    const isConfirmed = await confirm({
+      title: 'ยืนยันการปิดการใช้งานบัญชี',
+      message: `ปิดการใช้งานบัญชี "${u.username}" ใช่หรือไม่?\n(ประวัติการใช้งานยังคงอยู่)`,
+      variant: 'warning'
+    });
+    if (!isConfirmed) return;
     try {
       await userApi.remove(u.id);
       notify('ปิดการใช้งานบัญชีเรียบร้อย');
@@ -381,7 +388,7 @@ const UserManagement: React.FC = () => {
                 />
                 <Shield size={14} color="var(--primary)" />
                 <div>
-                  <div style={{ fontWeight: 700, fontSize: '0.85rem' }}>ผู้ดูแลระบบ (User Full)</div>
+                  <div style={{ fontWeight: 700, fontSize: '0.85rem' }}>ผู้ดูแลระบบ</div>
                   <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>มีสิทธิ์ทุกอย่าง รวมถึงจัดการผู้ใช้และตั้งค่าระบบ</div>
                 </div>
               </label>

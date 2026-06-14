@@ -54,16 +54,21 @@ The system follows a Client-Server model.
 │   ├── types.ts        # TypeScript interfaces
 │   └── api.ts          # API client configuration
 /server
-├── controllers/        # Business logic & DB queries
+├── controllers/        # Business logic & DB queries (repairs, inventory, stations, etc.)
 ├── routes/             # API endpoint definitions
 ├── database/           # DB init and migration logic
 ├── middlewares/        # Error handling & uploads
 └── uploads/            # Static image storage
-```
 
 ## 6. Development Conventions
 - **Language**: The UI is primarily in **Thai**. Maintain consistent terminology.
 - **Type Safety**: Maintain strict TypeScript typing in the frontend. Avoid `any`.
+- **UI/UX Standard**: Adhere to the **"Executive Hub"** design system:
+  - Use **Glassmorphism** (`--glass-bg`, `--glass-blur`) for major layout containers.
+  - Organize dashboards and analytical views using the **Bento Grid** layout.
+- **Station Management**: 
+  - Never allow manual entry of station codes (Code).
+  - Use the automated pattern `STN-{id}-{shortDir}` in the backend.
 - **Naming**:
   - Components: `PascalCase`.
   - Hooks/Utils: `camelCase`.

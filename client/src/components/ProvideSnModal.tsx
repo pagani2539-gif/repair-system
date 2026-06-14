@@ -1,6 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, Suspense } from 'react';
+import { ScanLine } from 'lucide-react';
 import { Button } from './ui/Button';
 import { useNotification } from './Layout';
+import Select from './ui/Select';
+
+// โหลด scanner (กล้อง + บาร์โค้ด + OCR) เฉพาะตอนเปิดใช้ เพื่อไม่ถ่วง bundle หลัก
+const SnScannerModal = React.lazy(() => import('./SnScannerModal'));
+
+interface InstanceInfo {
+  id: number;
+  serial_number: string;
+  condition: string;
+}
 
 interface ProvideSnModalProps {
   isOpen: boolean;
@@ -10,7 +21,18 @@ interface ProvideSnModalProps {
   totalQuantity: number;
   existingSns: string[];
   onSubmit: (newSns: string[]) => Promise<void>;
+  /** ชิ้นงานที่ลงทะเบียนแล้ว (มี id + condition) สำหรับเปลี่ยนสภาพ */
+  instances?: InstanceInfo[];
+  /** เรียกเมื่อผู้ใช้เปลี่ยนสภาพชิ้นงาน */
+  onUpdateCondition?: (instanceId: number, condition: string) => Promise<void>;
 }
+
+const CONDITION_OPTIONS: { value: string; label: string; color: string }[] = [
+  { value: 'New', label: 'ใหม่', color: 'var(--primary)' },
+  { value: 'Good', label: 'ดี', color: 'var(--success)' },
+  { value: 'Fair', label: 'พอใช้', color: 'var(--warning)' },
+  { value: 'Broken', label: 'ชำรุด', color: 'var(--danger)' },
+];
 
 export const ProvideSnModal: React.FC<ProvideSnModalProps> = ({
   isOpen,
@@ -19,14 +41,34 @@ export const ProvideSnModal: React.FC<ProvideSnModalProps> = ({
   title,
   totalQuantity,
   existingSns,
-  onSubmit
+  onSubmit,
+  instances = [],
+  onUpdateCondition
 }) => {
   const { notify } = useNotification();
+  const [updatingId, setUpdatingId] = useState<number | null>(null);
+
+  const handleConditionChange = async (instanceId: number, condition: string) => {
+    if (!onUpdateCondition) return;
+    setUpdatingId(instanceId);
+    try {
+      await onUpdateCondition(instanceId, condition);
+      notify('อัปเดตสภาพชิ้นงานแล้ว');
+    } catch {
+      notify('ไม่สามารถอัปเดตสภาพชิ้นงานได้', 'error');
+    } finally {
+      setUpdatingId(null);
+    }
+  };
   const [loading, setLoading] = useState(false);
   const [newSns, setNewSns] = useState<string[]>([]);
   const [snInputMode, setSnInputMode] = useState<'individual' | 'bulk'>('individual');
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const newSnsRef = useRef<string[]>([]);
 
   const missingCount = totalQuantity - existingSns.length;
+
+  useEffect(() => { newSnsRef.current = newSns; }, [newSns]);
 
   useEffect(() => {
     if (isOpen) {
@@ -37,6 +79,17 @@ export const ProvideSnModal: React.FC<ProvideSnModalProps> = ({
       return () => clearTimeout(timer);
     }
   }, [isOpen, missingCount]);
+
+  // รับค่าจากเครื่องสแกน — คืน true ถ้ายังมีที่ว่างและไม่ซ้ำ
+  const handleScanDetected = (value: string): boolean => {
+    const current = newSnsRef.current.map(s => s.trim()).filter(Boolean);
+    if (current.length >= missingCount) return false;
+    if (current.includes(value) || existingSns.includes(value)) return false;
+    const next = [...current, value];
+    newSnsRef.current = next;
+    setNewSns(next);
+    return true;
+  };
 
   if (!isOpen) return null;
 
@@ -105,7 +158,37 @@ export const ProvideSnModal: React.FC<ProvideSnModalProps> = ({
           </div>
         </div>
 
-        {existingSns.length > 0 && (
+        {instances.length > 0 ? (
+          <div style={{ marginBottom: '1.5rem' }}>
+            <label style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--text-muted)', display: 'block', marginBottom: '8px' }}>
+              ชิ้นงานที่ลงทะเบียนแล้ว ({instances.length}) — แตะเพื่อเปลี่ยนสภาพ:
+            </label>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '180px', overflowY: 'auto', padding: '8px', background: 'var(--bg-app)', borderRadius: '8px' }}>
+              {instances.map((inst) => {
+                const cond = CONDITION_OPTIONS.find(c => c.value === (inst.condition || 'New')) || CONDITION_OPTIONS[0];
+                return (
+                  <div key={inst.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '6px', padding: '6px 10px' }}>
+                    <span style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-main)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{inst.serial_number}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: '50%', background: cond.color }} />
+                      {onUpdateCondition ? (
+                        <Select
+                          value={inst.condition || 'New'}
+                          disabled={updatingId === inst.id}
+                          options={CONDITION_OPTIONS.map(opt => ({ label: opt.label, value: opt.value }))}
+                          onChange={(val) => handleConditionChange(inst.id, String(val))}
+                          style={{ width: '130px' }}
+                        />
+                      ) : (
+                        <span style={{ fontSize: '0.74rem', fontWeight: 700, color: cond.color }}>{cond.label}</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : existingSns.length > 0 && (
           <div style={{ marginBottom: '1.5rem' }}>
             <label style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--text-muted)', display: 'block', marginBottom: '8px' }}>
               S/N ที่ระบุไปแล้ว:
@@ -126,7 +209,22 @@ export const ProvideSnModal: React.FC<ProvideSnModalProps> = ({
               <label style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-main)' }}>
                 เพิ่ม S/N ใหม่ ({newSns.filter(s => s.trim()).length}/{missingCount})
               </label>
-              <div style={{ display: 'flex', background: 'var(--border)', padding: '2px', borderRadius: '6px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button
+                  type="button"
+                  onClick={() => setScannerOpen(true)}
+                  disabled={loading || missingCount <= 0}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: '5px',
+                    padding: '5px 10px', fontSize: '0.72rem', fontWeight: 800, cursor: missingCount <= 0 ? 'not-allowed' : 'pointer',
+                    border: '1px solid var(--primary)', borderRadius: '6px',
+                    background: 'var(--primary-light)', color: 'var(--primary)',
+                    opacity: missingCount <= 0 ? 0.5 : 1
+                  }}
+                >
+                  <ScanLine size={14} /> สแกน S/N
+                </button>
+                <div style={{ display: 'flex', background: 'var(--border)', padding: '2px', borderRadius: '6px' }}>
                 <button 
                   type="button"
                   onClick={() => setSnInputMode('individual')}
@@ -151,6 +249,7 @@ export const ProvideSnModal: React.FC<ProvideSnModalProps> = ({
                 >
                   วางข้อความ
                 </button>
+                </div>
               </div>
             </div>
 
@@ -202,6 +301,17 @@ export const ProvideSnModal: React.FC<ProvideSnModalProps> = ({
           </div>
         </form>
       </div>
+
+      {scannerOpen && (
+        <Suspense fallback={null}>
+          <SnScannerModal
+            isOpen={scannerOpen}
+            onClose={() => setScannerOpen(false)}
+            onDetected={handleScanDetected}
+            knownSns={existingSns}
+          />
+        </Suspense>
+      )}
     </div>
   );
 };

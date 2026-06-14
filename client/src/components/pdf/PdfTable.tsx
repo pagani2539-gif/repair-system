@@ -16,27 +16,27 @@ interface Props<T> {
   rows: T[];
   emptyMessage?: string;
   showRowNumber?: boolean;
+  startIndex?: number;   // running offset so row numbers continue across paginated pages
 }
 
 /**
  * Corporate-style data table for printable documents.
  * Has a thin accent stripe at the header bottom matching the doc type.
  */
-export function PdfTable<T>({ docType, title, columns, rows, emptyMessage = 'ไม่มีรายการ', showRowNumber = true }: Props<T>) {
+export function PdfTable<T>({ docType, title, columns, rows, emptyMessage = 'ไม่มีรายการ', showRowNumber = true, startIndex = 0 }: Props<T>) {
   const accentColor = pdfTheme.accents[docType];
 
   return (
-    <section style={{ marginBottom: pdfTheme.space.sectionGap, fontFamily: pdfTheme.fonts.body }}>
+    <section style={{ marginBottom: `${pdfTheme.space.sectionGap}px`, fontFamily: pdfTheme.fonts.body }}>
       {title && (
         <h2 style={{
-          fontSize: pdfTheme.size.h2,
+          fontSize: `${pdfTheme.size.h2}px`,
           fontWeight: 800,
-          color: pdfTheme.colors.text,
+          color: pdfTheme.colors.primary,
           textTransform: 'uppercase',
-          letterSpacing: '0.06em',
-          margin: '0 0 10px 0',
-          paddingBottom: '4px',
-          borderBottom: pdfTheme.border.base,
+          letterSpacing: '0.04em',
+          margin: '0 0 8px 0',
+          paddingBottom: '2px',
         }}>
           {title}
         </h2>
@@ -45,26 +45,25 @@ export function PdfTable<T>({ docType, title, columns, rows, emptyMessage = 'ไ
       <table style={{
         width: '100%',
         borderCollapse: 'collapse',
-        border: pdfTheme.border.base,
-        fontSize: pdfTheme.size.body,
+        fontSize: `${pdfTheme.size.body}px`,
         color: pdfTheme.colors.text,
       }}>
         <thead>
           <tr style={{
-            background: pdfTheme.colors.bgAccent,
-            borderBottom: `2px solid ${accentColor}`,
+            background: accentColor,
+            color: '#ffffff',
           }}>
             {showRowNumber && (
               <th style={{
                 width: '36px',
-                padding: '8px 6px',
+                padding: '6px 6px',
                 textAlign: 'center',
                 fontWeight: 700,
-                fontSize: pdfTheme.size.small,
-                color: pdfTheme.colors.textMuted,
+                fontSize: `${pdfTheme.size.small}px`,
+                color: '#ffffff',
                 textTransform: 'uppercase',
-                letterSpacing: '0.04em',
-                borderRight: pdfTheme.border.light,
+                letterSpacing: '0.02em',
+                borderTopLeftRadius: pdfTheme.radius.sm,
               }}>
                 ลำดับ
               </th>
@@ -74,14 +73,14 @@ export function PdfTable<T>({ docType, title, columns, rows, emptyMessage = 'ไ
                 key={col.key}
                 style={{
                   width: col.width,
-                  padding: '8px 10px',
+                  padding: '6px 10px',
                   textAlign: col.align || 'left',
                   fontWeight: 700,
-                  fontSize: pdfTheme.size.small,
-                  color: pdfTheme.colors.textMuted,
+                  fontSize: `${pdfTheme.size.small}px`,
+                  color: '#ffffff',
                   textTransform: 'uppercase',
-                  letterSpacing: '0.04em',
-                  borderRight: idx < columns.length - 1 ? pdfTheme.border.light : 'none',
+                  letterSpacing: '0.02em',
+                  borderTopRightRadius: idx === columns.length - 1 && !showRowNumber ? pdfTheme.radius.sm : '0px',
                 }}
               >
                 {col.header}
@@ -95,11 +94,12 @@ export function PdfTable<T>({ docType, title, columns, rows, emptyMessage = 'ไ
               <td
                 colSpan={columns.length + (showRowNumber ? 1 : 0)}
                 style={{
-                  padding: '24px',
+                  padding: '16px',
                   textAlign: 'center',
                   color: pdfTheme.colors.textLight,
                   fontStyle: 'italic',
-                  fontSize: pdfTheme.size.small,
+                  fontSize: `${pdfTheme.size.small}px`,
+                  borderBottom: `1px solid ${pdfTheme.colors.border}`,
                 }}
               >
                 {emptyMessage}
@@ -108,30 +108,28 @@ export function PdfTable<T>({ docType, title, columns, rows, emptyMessage = 'ไ
           ) : (
             rows.map((row, rowIdx) => (
               <tr key={rowIdx} style={{
-                borderTop: rowIdx === 0 ? 'none' : pdfTheme.border.light,
                 background: rowIdx % 2 === 0 ? pdfTheme.colors.bgPage : pdfTheme.colors.bgSubtle,
+                borderBottom: `1px solid ${pdfTheme.colors.bgAccent}`,
               }}>
                 {showRowNumber && (
                   <td style={{
-                    padding: '8px 6px',
+                    padding: '6px 6px',
                     textAlign: 'center',
                     fontWeight: 700,
                     color: pdfTheme.colors.textMuted,
                     fontFamily: pdfTheme.fonts.mono,
-                    borderRight: pdfTheme.border.light,
                   }}>
-                    {rowIdx + 1}
+                    {startIndex + rowIdx + 1}
                   </td>
                 )}
-                {columns.map((col, colIdx) => (
+                {columns.map((col) => (
                   <td
                     key={col.key}
                     style={{
-                      padding: '10px',
+                      padding: '8px 10px',
                       textAlign: col.align || 'left',
                       verticalAlign: 'top',
-                      lineHeight: 1.4,
-                      borderRight: colIdx < columns.length - 1 ? pdfTheme.border.light : 'none',
+                      lineHeight: 1.3,
                     }}
                   >
                     {col.render(row, rowIdx)}

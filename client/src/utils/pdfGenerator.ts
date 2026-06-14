@@ -87,20 +87,7 @@ export const printElement = (elementId: string, title: string) => {
     }
     * { box-sizing: border-box; }
     
-    /* Ensure template doesn't have fixed height or absolute positioning when printing */
-    #pdf-print-template {
-      position: relative !important;
-      left: 0 !important;
-      top: 0 !important;
-      display: block !important;
-      width: 100% !important;
-      height: auto !important;
-      max-height: none !important;
-      padding: 12mm !important;
-      box-shadow: none !important;
-    }
-
-    #pdf-withdrawal-template, #pdf-return-template, #pdf-po-template {
+    #pdf-print-template, #pdf-withdrawal-template, #pdf-return-template, #pdf-po-template {
       position: relative !important;
       left: 0 !important;
       top: 0 !important;
@@ -127,6 +114,8 @@ export const printElement = (elementId: string, title: string) => {
     /* Override page dimensions for multi-page templates to fit A4 layout and avoid trailing blank pages */
     .print-page, .pdf-page {
       position: relative !important;
+      left: 0 !important;
+      top: 0 !important;
       width: 100% !important;
       min-height: 297mm !important;
       height: auto !important;

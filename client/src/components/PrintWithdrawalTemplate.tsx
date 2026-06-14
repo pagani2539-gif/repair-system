@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React from 'react';
+import { UPLOAD_URL } from '../api';
 import { useCompanyData } from '../hooks/useCompanyData';
 import { pdfTheme } from './pdf/pdfTheme';
 import PdfPage from './pdf/PdfPage';
@@ -22,6 +23,7 @@ interface NormalizedItem {
   quantity: number;
   serial_numbers: string[];
   requires_sn: boolean;
+  image: string;
 }
 
 const parseDate = (dateStr: string): Date => {
@@ -61,11 +63,10 @@ const normalizeItems = (withdrawal: any): NormalizedItem[] => {
       quantity: Number(item.quantity) || 0,
       serial_numbers: sns,
       requires_sn: item.requires_sn === 1 || sns.length > 0,
+      image: item.item_image || item.image_path || '',
     };
   });
 };
-
-const ITEMS_PER_PAGE = 12;
 
 const PrintWithdrawalTemplate: React.FC<Props> = ({ withdrawal, isPreview, companyId, logoId }) => {
   const { company, logo } = useCompanyData(companyId ?? null, logoId ?? null);
@@ -77,55 +78,77 @@ const PrintWithdrawalTemplate: React.FC<Props> = ({ withdrawal, isPreview, compa
   const items = normalizeItems(withdrawal);
   const totalQty = items.reduce((sum, i) => sum + i.quantity, 0);
 
-  // Pagination
-  const pages: NormalizedItem[][] = [];
-  for (let i = 0; i < items.length; i += ITEMS_PER_PAGE) {
-    pages.push(items.slice(i, i + ITEMS_PER_PAGE));
+  let derivedAreaName = withdrawal.station_area_name;
+  if (!derivedAreaName && withdrawal.station_name && withdrawal.location_snapshot && withdrawal.location_snapshot.startsWith(withdrawal.station_name)) {
+    const suffix = withdrawal.location_snapshot.slice(withdrawal.station_name.length).trim();
+    if (suffix.startsWith('-')) {
+      derivedAreaName = suffix.slice(1).trim();
+    }
   }
-  if (pages.length === 0) pages.push([]);
 
-  const totalPages = pages.length;
-
-  // Location: prefer station info, fall back to location text
   const locationText = withdrawal.station_name
-    ? `${withdrawal.station_name}${withdrawal.station_area_name ? ' / ' + withdrawal.station_area_name : ''}`
+    ? `${withdrawal.station_name}${derivedAreaName ? ' / ' + derivedAreaName : ''}`
     : (withdrawal.location || withdrawal.location_snapshot || '-');
 
   const columns: PdfTableColumn<NormalizedItem>[] = [
     {
       key: 'name',
-      header: 'รายการอุปกรณ์ / Item',
+      header: 'รายการอุปกรณ์',
       render: (row) => (
-        <>
-          <div style={{ fontWeight: 700 }}>{row.name}</div>
-          {row.model && (
-            <div style={{ fontSize: pdfTheme.size.small, color: pdfTheme.colors.textMuted, marginTop: '2px' }}>
-              รุ่น: {row.model}
-            </div>
-          )}
-        </>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{
+            width: '36px',
+            height: '36px',
+            flexShrink: 0,
+            border: pdfTheme.border.light,
+            borderRadius: pdfTheme.radius.sm,
+            background: pdfTheme.colors.bgSubtle,
+            overflow: 'hidden',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}>
+            {row.image && (
+              <img
+                src={`${UPLOAD_URL}/uploads/${row.image}`}
+                alt=""
+                crossOrigin="anonymous"
+                style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+              />
+            )}
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 700 }}>{row.name}</div>
+            {row.model && (
+              <div style={{ fontSize: pdfTheme.size.small, color: pdfTheme.colors.textMuted, marginTop: '1px' }}>
+                รุ่น: {row.model}
+              </div>
+            )}
+          </div>
+        </div>
       ),
     },
     {
       key: 'sn',
-      header: 'Serial Numbers',
+      header: 'หมายเลขเครื่อง (S/N)',
       render: (row) => {
         if (!row.requires_sn || row.serial_numbers.length === 0) {
           return <span style={{ color: pdfTheme.colors.textLight, fontStyle: 'italic' }}>—</span>;
         }
         return (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px' }}>
             {row.serial_numbers.map((sn, i) => (
               <span
                 key={i}
                 style={{
-                  padding: '1px 6px',
+                  padding: '1px 5px',
                   borderRadius: pdfTheme.radius.sm,
-                  background: pdfTheme.colors.bgAccent,
-                  border: pdfTheme.border.light,
+                  background: '#e0f2fe',
+                  color: '#0369a1',
+                  border: '1px solid #bae6fd',
                   fontFamily: pdfTheme.fonts.mono,
                   fontSize: pdfTheme.size.micro,
-                  fontWeight: 600,
+                  fontWeight: 700,
                 }}
               >
                 {sn}
@@ -141,7 +164,7 @@ const PrintWithdrawalTemplate: React.FC<Props> = ({ withdrawal, isPreview, compa
       width: '80px',
       align: 'center',
       render: (row) => (
-        <span style={{ fontFamily: pdfTheme.fonts.mono, fontWeight: 700, fontSize: pdfTheme.size.h3 }}>
+        <span style={{ fontFamily: pdfTheme.fonts.mono, fontWeight: 700, fontSize: pdfTheme.size.docNumber }}>
           {row.quantity}
         </span>
       ),
@@ -157,67 +180,58 @@ const PrintWithdrawalTemplate: React.FC<Props> = ({ withdrawal, isPreview, compa
         top: isPreview ? 'auto' : 0,
       }}
     >
-      {pages.map((pageItems, pageIdx) => (
-        <PdfPage
-          key={pageIdx}
-          isPreview={isPreview}
-        >
-          <PdfHeader
-            docType="withdrawal"
-            docNumber={docNumber}
-            docDate={docDate}
-            company={company}
-            logo={logo}
-            statusBadge={{ label: 'จ่ายอุปกรณ์แล้ว', tone: 'success' }}
-          />
+      <PdfPage isPreview={isPreview}>
+        <PdfHeader
+          docType="withdrawal"
+          docNumber={docNumber}
+          docDate={docDate}
+          company={company}
+          logo={logo}
+          showCompany={false}
+          statusBadge={{ label: 'จ่ายอุปกรณ์แล้ว', tone: 'success' }}
+        />
 
-          {/* Headline info — only on first page */}
-          {pageIdx === 0 && (
-            <PdfInfoGrid
-              title="ข้อมูลการเบิก"
-              columns={2}
-              fields={[
-                { label: 'ผู้รับ', value: withdrawal.recipient || '-' },
-                { label: 'ประเภทการเบิก', value: withdrawal.type || '-' },
-                { label: 'ชื่อโครงการ / งาน', value: withdrawal.project_name || '-' },
-                { label: 'สถานที่ปลายทาง', value: locationText },
-                { label: 'จำนวนรายการรวม', value: `${items.length} รายการ (${totalQty} ชิ้นรวม)` },
-                { label: 'หมายเหตุ', value: withdrawal.note || '-', span: 2 },
-              ]}
-            />
-          )}
+        <PdfInfoGrid
+          title="ข้อมูลการเบิก"
+          columns={2}
+          docType="withdrawal"
+          fields={[
+            { label: 'ผู้เบิก / ผู้รับ', value: withdrawal.recipient || '-' },
+            { label: 'ประเภทการเบิก', value: withdrawal.type || '-' },
+            { label: 'ชื่อโครงการ / งาน', value: withdrawal.project_name || '-' },
+            { label: 'สถานที่ปลายทาง', value: locationText },
+            { label: 'จำนวนรายการรวม', value: `${items.length} รายการ (${totalQty} ชิ้นรวม)` },
+            { label: 'หมายเหตุ', value: withdrawal.note || '-', span: 2 },
+          ]}
+        />
 
-          <PdfTable
-            docType="withdrawal"
-            title={pageIdx === 0 ? 'รายการอุปกรณ์ที่เบิก' : `รายการอุปกรณ์ที่เบิก (ต่อหน้า ${pageIdx + 1})`}
-            columns={columns}
-            rows={pageItems}
-            emptyMessage="ไม่มีรายการอุปกรณ์"
-          />
+        <PdfTable
+          docType="withdrawal"
+          title="รายการอุปกรณ์ที่เบิก"
+          columns={columns}
+          rows={items}
+          emptyMessage="ไม่มีรายการอุปกรณ์"
+        />
 
-          {/* Signatures — only on last page */}
-          {pageIdx === totalPages - 1 && (
-            <PdfSignatureBlock
-              slots={[
-                { role: 'ผู้เบิก', roleEn: 'Requester', name: withdrawal.recipient || undefined },
-                { role: 'ผู้อนุมัติ', roleEn: 'Approved by' },
-                { role: 'ผู้จ่ายอุปกรณ์', roleEn: 'Issued by' },
-              ]}
-            />
-          )}
+        <div style={{ marginTop: 'auto' }} />
 
-          <div style={{ marginTop: 'auto' }} />
+        <PdfSignatureBlock
+          slots={[
+            { role: 'ผู้เบิก', name: withdrawal.recipient || undefined },
+            { role: 'ผู้อนุมัติ' },
+            { role: 'ผู้จ่ายอุปกรณ์' },
+          ]}
+        />
 
-          <PdfFooter
-            docType="withdrawal"
-            docNumber={docNumber}
-            company={company}
-            pageNumber={pageIdx + 1}
-            totalPages={totalPages}
-            printedAt={printedAt}
-          />
-        </PdfPage>
-      ))}
+        <PdfFooter
+          docType="withdrawal"
+          docNumber={docNumber}
+          company={company}
+          pageNumber={1}
+          totalPages={1}
+          printedAt={printedAt}
+        />
+      </PdfPage>
     </div>
   );
 };

@@ -37,22 +37,22 @@ export const pdfTheme = {
 
   // ─── Font sizes (px) ─────────────────────────────────────
   size: {
-    docTitle: 24,    // "ใบเบิกอุปกรณ์"
-    docSubtitle: 13, // "Withdrawal Slip"
-    h2: 13,          // Section heading
-    h3: 11,          // Sub-heading
-    body: 11,        // Body text
-    small: 10,       // Captions
-    micro: 9,        // Footer / mini labels
-    docNumber: 16,   // "WD-000019"
+    docTitle: 20,    // "ใบเบิกอุปกรณ์"
+    docSubtitle: 11, // "Withdrawal Slip"
+    h2: 11,          // Section heading
+    h3: 10,          // Sub-heading
+    body: 10,        // Body text
+    small: 9,        // Captions
+    micro: 8,        // Footer / mini labels
+    docNumber: 13,   // "WD-000019"
   },
 
   // ─── Spacing (px) ────────────────────────────────────────
   space: {
-    pagePadding: 36, // ~12mm equivalent in 96dpi
-    sectionGap: 24,
-    blockGap: 16,
-    cellGap: 8,
+    pagePadding: 24, // ~8mm equivalent in 96dpi
+    sectionGap: 12,
+    blockGap: 8,
+    cellGap: 5,
   },
 
   // ─── Border weights ──────────────────────────────────────

@@ -1,6 +1,6 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import React from 'react';
 import type { InventoryTransaction } from '../types';
+import { UPLOAD_URL } from '../api';
 import { useCompanyData } from '../hooks/useCompanyData';
 import { pdfTheme } from './pdf/pdfTheme';
 import PdfPage from './pdf/PdfPage';
@@ -35,10 +35,10 @@ const formatDateTimeThai = (date: Date): string => {
 
 const conditionLabel = (condition?: string): string => {
   switch (condition) {
-    case 'Good':         return 'ใช้งานได้ปกติ (Good)';
-    case 'Minor Damage': return 'ชำรุดเล็กน้อย (Minor Damage)';
-    case 'Damaged':      return 'ชำรุด (Damaged)';
-    case 'Broken':       return 'เสีย / ใช้งานไม่ได้ (Broken)';
+    case 'Good':         return 'ใช้งานได้ปกติ';
+    case 'Minor Damage': return 'ชำรุดเล็กน้อย';
+    case 'Damaged':      return 'ชำรุด';
+    case 'Broken':       return 'เสีย / ใช้งานไม่ได้';
     default:             return condition || '-';
   }
 };
@@ -62,9 +62,17 @@ const PrintReturnTemplate: React.FC<Props> = ({ transaction, isPreview, companyI
     ? `WD-${String(transaction.withdrawal_id).padStart(6, '0')}`
     : '-';
 
+  let derivedAreaName = transaction.station_area_name;
+  if (!derivedAreaName && transaction.station_name && transaction.location_snapshot && transaction.location_snapshot.startsWith(transaction.station_name)) {
+    const suffix = transaction.location_snapshot.slice(transaction.station_name.length).trim();
+    if (suffix.startsWith('-')) {
+      derivedAreaName = suffix.slice(1).trim();
+    }
+  }
+
   const locationText = transaction.station_name
-    ? `${transaction.station_name}${transaction.station_area_name ? ' / ' + transaction.station_area_name : ''}`
-    : (transaction.location || '-');
+    ? `${transaction.station_name}${derivedAreaName ? ' / ' + derivedAreaName : ''}`
+    : (transaction.location || transaction.location_snapshot || '-');
 
   return (
     <div
@@ -85,67 +93,116 @@ const PrintReturnTemplate: React.FC<Props> = ({ transaction, isPreview, companyI
           statusBadge={{ label: 'รับคืนเข้าคลังแล้ว', tone: 'success' }}
         />
 
-        <PdfInfoGrid
-          title="ข้อมูลการคืนอุปกรณ์"
-          columns={2}
-          fields={[
-            { label: 'ผู้คืนอุปกรณ์', value: transaction.user_name || '-' },
-            { label: 'อ้างอิงใบเบิกเลขที่', value: (
-              <span style={{ fontFamily: pdfTheme.fonts.mono, fontWeight: 700, color: pdfTheme.accents.withdrawal }}>
-                {sourceWithdrawalNo}
-              </span>
-            ) },
-            { label: 'ชื่อโครงการ / งาน', value: transaction.project_name || '-' },
-            { label: 'สถานที่ที่ใช้งาน', value: locationText },
-            { label: 'หมายเหตุการคืน', value: transaction.note || '-', span: 2 },
-          ]}
-        />
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr 1fr',
+          gap: '12px',
+          margin: 0,
+        }}>
+          {/* ─── Left Column: Return Info ─── */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <PdfInfoGrid
+              title="ข้อมูลการคืนอุปกรณ์"
+              columns={1}
+              docType="return"
+              fields={[
+                { label: 'ผู้คืนอุปกรณ์', value: transaction.user_name || '-' },
+                { label: 'อ้างอิงใบเบิกเลขที่', value: (
+                  <span style={{ fontFamily: pdfTheme.fonts.mono, fontWeight: 700, color: pdfTheme.accents.withdrawal }}>
+                    {sourceWithdrawalNo}
+                  </span>
+                ) },
+                { label: 'ชื่อโครงการ / งาน', value: transaction.project_name || '-' },
+                { label: 'สถานที่ที่ใช้งาน', value: locationText },
+                { label: 'หมายเหตุการคืน', value: transaction.note || '-' },
+              ]}
+            />
+          </div>
 
-        <PdfInfoGrid
-          title="รายการอุปกรณ์ที่คืน"
-          columns={2}
-          fields={[
-            { label: 'ชื่ออุปกรณ์', value: transaction.product_name || '-', span: 2 },
-            { label: 'รุ่น / Model', value: transaction.product_model || '-' },
-            { label: 'จำนวน', value: (
-              <span style={{ fontFamily: pdfTheme.fonts.mono, fontWeight: 700, fontSize: pdfTheme.size.docNumber }}>
-                {quantity} ชิ้น
-              </span>
-            ) },
-            { label: 'Serial Number', value: transaction.serial_number ? (
-              <span style={{ fontFamily: pdfTheme.fonts.mono, fontWeight: 700 }}>{transaction.serial_number}</span>
-            ) : '— ไม่ระบุ —', span: 2 },
-            { label: 'สภาพอุปกรณ์ที่คืน', value: (
-              <span style={{
-                display: 'inline-block',
-                padding: '3px 12px',
-                borderRadius: pdfTheme.radius.sm,
-                background: conditionTone(transaction.condition) === 'success' ? '#d1fae5'
-                  : conditionTone(transaction.condition) === 'warning' ? '#fef3c7'
-                  : conditionTone(transaction.condition) === 'danger' ? '#fee2e2'
-                  : pdfTheme.colors.bgAccent,
-                color: conditionTone(transaction.condition) === 'success' ? '#065f46'
-                  : conditionTone(transaction.condition) === 'warning' ? '#78350f'
-                  : conditionTone(transaction.condition) === 'danger' ? '#7f1d1d'
-                  : pdfTheme.colors.textMuted,
-                fontWeight: 700,
-                fontSize: pdfTheme.size.body,
-              }}>
-                {conditionLabel(transaction.condition)}
-              </span>
-            ), span: 2 },
-          ]}
-        />
+          {/* ─── Right Column: Returned Item Details & Image ─── */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <PdfInfoGrid
+              title="รายการอุปกรณ์ที่คืน"
+              columns={1}
+              docType="return"
+              fields={[
+                { label: 'ชื่ออุปกรณ์ / รุ่น', value: `${transaction.product_name || '-'} (${transaction.product_model || '-'})` },
+                { label: 'จำนวนที่คืน', value: (
+                  <span style={{ fontFamily: pdfTheme.fonts.mono, fontWeight: 700, fontSize: pdfTheme.size.docNumber }}>
+                    {quantity} ชิ้น
+                  </span>
+                ) },
+                { label: 'หมายเลขเครื่อง (S/N)', value: transaction.serial_number ? (
+                  <span style={{ fontFamily: pdfTheme.fonts.mono, fontWeight: 700 }}>{transaction.serial_number}</span>
+                ) : '— ไม่ระบุ —' },
+                { label: 'สภาพอุปกรณ์ที่คืน', value: (
+                  <span style={{
+                    display: 'inline-block',
+                    padding: '2px 8px',
+                    borderRadius: pdfTheme.radius.sm,
+                    background: conditionTone(transaction.condition) === 'success' ? '#d1fae5'
+                      : conditionTone(transaction.condition) === 'warning' ? '#fef3c7'
+                      : conditionTone(transaction.condition) === 'danger' ? '#fee2e2'
+                      : pdfTheme.colors.bgAccent,
+                    color: conditionTone(transaction.condition) === 'success' ? '#065f46'
+                      : conditionTone(transaction.condition) === 'warning' ? '#78350f'
+                      : conditionTone(transaction.condition) === 'danger' ? '#7f1d1d'
+                      : pdfTheme.colors.textMuted,
+                    fontWeight: 700,
+                    fontSize: pdfTheme.size.micro,
+                  }}>
+                    {conditionLabel(transaction.condition)}
+                  </span>
+                ) },
+              ]}
+            />
+
+            {/* Display Return Image if present */}
+            {transaction.return_image && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <div style={{
+                  fontSize: `${pdfTheme.size.micro}px`,
+                  color: pdfTheme.colors.primary,
+                  fontWeight: 800,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.04em',
+                  margin: '4px 0 2px 0',
+                }}>
+                  รูปสภาพอุปกรณ์ตอนคืน
+                </div>
+                <div style={{
+                  height: '90px',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '6px',
+                  background: pdfTheme.colors.bgSubtle,
+                  overflow: 'hidden',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '4px',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.03)',
+                }}>
+                  <img
+                    src={`${UPLOAD_URL}/uploads/${transaction.return_image}`}
+                    alt="หลักฐานสภาพตอนคืน"
+                    crossOrigin="anonymous"
+                    style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div style={{ marginTop: 'auto' }} />
 
         <PdfSignatureBlock
           slots={[
-            { role: 'ผู้คืนอุปกรณ์', roleEn: 'Returned by', name: transaction.user_name || undefined },
-            { role: 'ผู้ตรวจสอบสภาพ', roleEn: 'Inspector' },
-            { role: 'ผู้รับเข้าคลัง', roleEn: 'Received by Stock' },
+            { role: 'ผู้คืนอุปกรณ์', name: transaction.user_name || undefined },
+            { role: 'ผู้ตรวจสอบสภาพ' },
+            { role: 'ผู้รับเข้าคลัง' },
           ]}
         />
-
-        <div style={{ marginTop: 'auto' }} />
 
         <PdfFooter
           docType="return"

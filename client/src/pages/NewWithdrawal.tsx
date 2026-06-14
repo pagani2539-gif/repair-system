@@ -1,6 +1,5 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useEffect, useState, useRef } from 'react';
-import { inventoryApi, withdrawalApi, UPLOAD_URL } from '../api';
+import { inventoryApi, withdrawalApi, stationApi, UPLOAD_URL } from '../api';
 import { useNotification } from '../components/Layout';
 import { useAuth } from '../contexts/AuthContext';
 import { printElement } from '../utils/pdfGenerator';
@@ -9,6 +8,7 @@ import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input, TextArea } from '../components/ui/Input';
 import StationSelector from '../components/ui/StationSelector';
+import DatePicker from '../components/ui/DatePicker';
 import type { InventoryItem } from '../types';
 import {
   Package,
@@ -21,7 +21,7 @@ import {
   Plus,
   Tag
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 
 interface WithdrawalItem {
   inventory_id: number;
@@ -36,25 +36,47 @@ interface WithdrawalItem {
   track_sn?: boolean; // ผู้ใช้กดปุ่มเปิดติดตาม S/N เอง
 }
 
+interface LastWithdrawalData {
+  recipient: string;
+  project_name?: string;
+  location: string;
+  station_id: number;
+  station_area_id?: number;
+  type: string;
+  note?: string;
+  return_due_date?: string;
+  id?: number;
+  created_at: string;
+  items: {
+    inventory_id: number;
+    quantity: number;
+    serial_numbers: string[];
+  }[];
+  items_detail: WithdrawalItem[];
+}
+
 const NewWithdrawal: React.FC = () => {
   const { notify, playNotificationSound } = useNotification();
   const { user } = useAuth();
   const navigate = useNavigate();
+  const locationSearch = useLocation();
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [selectedItems, setSelectedItems] = useState<WithdrawalItem[]>([]);
   const recipient = user?.full_name || '';
   const [projectName, setProjectName] = useState('');
   const [location, setLocation] = useState('');
   const [stationId, setStationId] = useState<number | undefined>(undefined);
-  const [stationAreaId, setStationAreaId] = useState<number | undefined>(undefined);
+  const [subLocation, setSubLocation] = useState('');
   const [type, setType] = useState('ติดตั้งใหม่');
   const [selectedType, setSelectedType] = useState('ติดตั้งใหม่');
   const [customType, setCustomType] = useState('');
   const [note, setNote] = useState('');
+  const [borrowDuration, setBorrowDuration] = useState<'7' | '15' | '30' | 'custom'>('7');
+  const [customDueDate, setCustomDueDate] = useState('');
   
   const [loading, setLoading] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
-  const [lastWithdrawalData, setLastWithdrawalData] = useState<any>(null);
+  const [lastWithdrawalData, setLastWithdrawalData] = useState<LastWithdrawalData | null>(null);
 
   // Custom Dropdown states
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -63,6 +85,26 @@ const NewWithdrawal: React.FC = () => {
 
   const [isTypeDropdownOpen, setIsTypeDropdownOpen] = useState(false);
   const typeDropdownRef = useRef<HTMLDivElement>(null);
+
+  const searchParams = new URLSearchParams(locationSearch.search);
+  const stationIdParam = searchParams.get('station_id');
+
+  useEffect(() => {
+    if (stationIdParam) {
+      const parsedId = parseInt(stationIdParam, 10);
+      if (!isNaN(parsedId)) {
+        stationApi.getUniqueList({ status: 1 }).then(list => {
+          const matched = list.find(st => st.id === parsedId);
+          if (matched) {
+            setStationId(matched.id);
+            setLocation(matched.name);
+          }
+        }).catch(err => {
+          console.error('Failed to prefetch station for prefill in withdrawal:', err);
+        });
+      }
+    }
+  }, [stationIdParam]);
 
   useEffect(() => {
     const fetchInventory = async () => {
@@ -207,8 +249,9 @@ const NewWithdrawal: React.FC = () => {
       return;
     }
 
-    if (trimmedLocation.length > 100) {
-      notify('สถานที่ยาวเกินไป (ไม่เกิน 100 ตัวอักษร)', 'error', 'ระบบคลังพัสดุ', 'inventory');
+    const finalLocation = trimmedLocation + (subLocation.trim() ? ` - ${subLocation.trim()}` : '');
+    if (finalLocation.length > 150) {
+      notify('สถานที่และจุดติดตั้งย่อยรวมกันยาวเกินไป (ไม่เกิน 150 ตัวอักษร)', 'error', 'ระบบคลังพัสดุ', 'inventory');
       return;
     }
 
@@ -234,14 +277,28 @@ const NewWithdrawal: React.FC = () => {
 
     setLoading(true);
     try {
+      let calculatedDueDate: string | undefined = undefined;
+      if (['สำรองใช้งาน', 'ทดสอบ', 'ยืมใช้งาน'].includes(trimmedType)) {
+        if (borrowDuration === 'custom') {
+          if (customDueDate) {
+            calculatedDueDate = customDueDate;
+          }
+        } else {
+          const d = new Date();
+          d.setDate(d.getDate() + parseInt(borrowDuration, 10));
+          calculatedDueDate = d.toISOString().split('T')[0];
+        }
+      }
+
       const payload = {
         recipient: trimmedRecipient,
         project_name: trimmedProjectName,
-        location: trimmedLocation,
+        location: finalLocation,
         station_id: stationId,
-        station_area_id: stationAreaId,
+        station_area_id: undefined,
         type: trimmedType,
         note: trimmedNote,
+        return_due_date: calculatedDueDate,
         items: selectedItems.map(si => ({ 
           inventory_id: si.inventory_id, 
           quantity: si.quantity,
@@ -259,8 +316,9 @@ const NewWithdrawal: React.FC = () => {
       setIsSubmitted(true);
       notify('บันทึกการเบิกอุปกรณ์เรียบร้อยแล้ว', 'success', 'ระบบคลังพัสดุ', 'inventory');
       playNotificationSound();
-    } catch (error: any) {
-      notify(error.response?.data?.message || 'เกิดข้อผิดพลาดในการบันทึกข้อมูล', 'error', 'ระบบคลังพัสดุ', 'inventory');
+    } catch (error) {
+      const err = error as { response?: { data?: { message?: string } } };
+      notify(err.response?.data?.message || 'เกิดข้อผิดพลาดในการบันทึกข้อมูล', 'error', 'ระบบคลังพัสดุ', 'inventory');
     } finally {
       setLoading(false);
     }
@@ -280,7 +338,7 @@ const NewWithdrawal: React.FC = () => {
   if (isSubmitted) {
     return (
       <div className="withdrawal-success-page" style={{ padding: '3rem 1rem', display: 'flex', justifyContent: 'center' }}>
-        <Card className="success-card" style={{ maxWidth: '600px', width: '100%', textAlign: 'center', padding: '3rem 2rem' }}>
+        <Card className="glass-card success-card" style={{ maxWidth: '600px', width: '100%', textAlign: 'center', padding: '3rem 2rem' }}>
           <div className="success-icon" style={{ display: 'inline-flex', justifyContent: 'center', alignItems: 'center', width: '80px', height: '80px', borderRadius: '50%', background: 'var(--success-light)', color: 'var(--success)', marginBottom: '1.5rem' }}>
             <CheckCircle2 size={48} />
           </div>
@@ -294,7 +352,7 @@ const NewWithdrawal: React.FC = () => {
             <div style={{ textAlign: 'left', background: 'var(--bg-app)', padding: '1.5rem', borderRadius: '12px', border: '1px solid var(--border)', marginBottom: '2rem' }}>
               <h4 style={{ fontWeight: 700, marginBottom: '1rem', color: 'var(--text-main)', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>รายละเอียดรายการที่เบิก:</h4>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {lastWithdrawalData.items_detail.map((item: any, idx: number) => (
+                {lastWithdrawalData.items_detail.map((item: WithdrawalItem, idx: number) => (
                   <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.95rem', alignItems: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <span style={{ minWidth: '20px' }}>{idx + 1}.</span>
@@ -324,6 +382,9 @@ const NewWithdrawal: React.FC = () => {
               </div>
               <div style={{ borderTop: '1px solid var(--border)', paddingTop: '8px', marginTop: '12px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
                 <strong>ผู้เบิก:</strong> {lastWithdrawalData.recipient} | <strong>โครงการ:</strong> {lastWithdrawalData.project_name || '-'} | <strong>สถานที่:</strong> {lastWithdrawalData.location || '-'}
+                {lastWithdrawalData.return_due_date && (
+                  <> | <strong style={{ color: 'var(--warning)' }}>กำหนดคืน:</strong> {lastWithdrawalData.return_due_date}</>
+                )}
               </div>
             </div>
           )}
@@ -339,7 +400,6 @@ const NewWithdrawal: React.FC = () => {
           <Button variant="text" onClick={() => {
             setIsSubmitted(false);
             setSelectedItems([]);
-            setRecipient('');
             setProjectName('');
             setLocation('');
             setStationId(undefined);
@@ -347,6 +407,8 @@ const NewWithdrawal: React.FC = () => {
             setType('ติดตั้งใหม่');
             setSelectedType('ติดตั้งใหม่');
             setCustomType('');
+            setBorrowDuration('7');
+            setCustomDueDate('');
           }}>
             ทำการเบิกรายการใหม่
           </Button>
@@ -373,10 +435,10 @@ const NewWithdrawal: React.FC = () => {
         <div className="withdrawal-layout">
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', minWidth: 0 }}>
             {/* Item Selection Card */}
-            <Card title="รายการอุปกรณ์ที่ต้องการเบิก" icon={<Package size={20} />}>
+            <Card className="glass-card" title="รายการอุปกรณ์ที่ต้องการเบิก" icon={<Package size={20} />} style={{ padding: '2rem' }}>
               <div className="form-group" style={{ marginBottom: '1.5rem' }}>
                 <label>เลือกอุปกรณ์เพิ่ม <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', fontWeight: 400 }}>(เลือกได้หลายอย่าง)</span></label>
-                
+
                 {/* Custom Searchable Dropdown */}
                 <div ref={dropdownRef} style={{ position: 'relative', marginTop: '8px' }}>
                   <div 
@@ -634,7 +696,7 @@ const NewWithdrawal: React.FC = () => {
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', minWidth: 0 }}>
-            <Card title="ข้อมูลการเบิก">
+            <Card className="glass-card" title="ข้อมูลการเบิก" style={{ padding: '2rem', overflow: 'visible' }}>
               <div className="form-group" style={{ marginBottom: '1rem' }}>
                 <label style={{ fontSize: '0.85rem', fontWeight: 700, marginBottom: '6px', display: 'block' }}>ผู้เบิก</label>
                 <div style={{
@@ -666,14 +728,23 @@ const NewWithdrawal: React.FC = () => {
                 </label>
                 <StationSelector
                   selectedStationId={stationId}
-                  selectedAreaId={stationAreaId}
-                  showArea={true}
+                  showArea={false}
                   required={true}
                   onChange={(data) => {
                     setStationId(data.stationId);
-                    setStationAreaId(data.areaId);
                     setLocation(data.stationName);
                   }}
+                />
+              </div>
+
+              <div className="form-group" style={{ marginBottom: '1.5rem' }}>
+                <Input
+                  label="จุดติดตั้ง / บริเวณพื้นที่ย่อย"
+                  maxLength={100}
+                  placeholder="ระบุตำแหน่งติดตั้งย่อยอย่างอิสระ เช่น ข้างเลนชั่ง, กล่องควบคุมฝั่งขาออก, เสา ANPR ตัวที่ 2..."
+                  value={subLocation}
+                  onChange={(e) => setSubLocation(e.target.value)}
+                  disabled={loading}
                 />
               </div>
 
@@ -714,7 +785,7 @@ const NewWithdrawal: React.FC = () => {
                       zIndex: 100,
                       overflow: 'hidden'
                     }}>
-                      {['ติดตั้งใหม่', 'ซ่อมแซม', 'สำรองใช้งาน', 'ทดสอบ', 'อื่นๆ...'].map((opt) => (
+                      {['ติดตั้งใหม่', 'ซ่อมแซม', 'สำรองใช้งาน', 'ทดสอบ', 'ยืมใช้งาน', 'อื่นๆ...'].map((opt) => (
                         <div 
                           key={opt}
                           onClick={() => {
@@ -757,6 +828,54 @@ const NewWithdrawal: React.FC = () => {
                   }}
                   disabled={loading}
                 />
+              )}
+
+              {/* Due Date selection for returnable withdrawal types */}
+              {['สำรองใช้งาน', 'ทดสอบ', 'ยืมใช้งาน'].includes(type) && (
+                <div className="form-group" style={{ marginTop: '1rem', padding: '1rem', background: 'rgba(217, 119, 6, 0.05)', borderRadius: '12px', border: '1px solid rgba(217, 119, 6, 0.15)' }}>
+                  <label style={{ display: 'block', fontWeight: 700, fontSize: '0.85rem', marginBottom: '8px', color: 'var(--primary)' }}>
+                    กำหนดวันส่งคืนอุปกรณ์
+                  </label>
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+                    {[
+                      { label: '7 วัน', value: '7' },
+                      { label: '15 วัน', value: '15' },
+                      { label: '30 วัน', value: '30' },
+                      { label: 'กำหนดเอง', value: 'custom' }
+                    ].map((preset) => (
+                      <button
+                        key={preset.value}
+                        type="button"
+                        onClick={() => setBorrowDuration(preset.value as '7' | '15' | '30' | 'custom')}
+                        style={{
+                          flex: 1,
+                          padding: '8px 12px',
+                          borderRadius: '8px',
+                          border: '1px solid',
+                          borderColor: borrowDuration === preset.value ? 'var(--primary)' : 'var(--border)',
+                          background: borrowDuration === preset.value ? 'var(--primary)' : 'var(--bg-card)',
+                          color: borrowDuration === preset.value ? '#fff' : 'var(--text-main)',
+                          fontSize: '0.8rem',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          transition: 'all 0.2s'
+                        }}
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                  {borrowDuration === 'custom' && (
+                    <div style={{ marginTop: '8px' }}>
+                      <DatePicker
+                        value={customDueDate}
+                        onChange={(val) => setCustomDueDate(val)}
+                        placeholder="เลือกวันกำหนดส่งคืน"
+                        style={{ width: '100%' }}
+                      />
+                    </div>
+                  )}
+                </div>
               )}
               
               <TextArea 

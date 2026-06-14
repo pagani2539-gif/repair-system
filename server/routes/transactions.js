@@ -7,7 +7,6 @@ const { requirePermission } = require('../middlewares/auth');
 router.get('/latest', transactionsController.getLatestTransaction);
 router.get('/', transactionsController.getAllTransactions);
 router.post('/add-stock', transactionsController.addStock);
-router.post('/borrow', transactionsController.borrowItem);
 router.post('/return', uploadReturnImage, transactionsController.returnItem);
 router.delete('/:id', requirePermission('delete.transactions'), transactionsController.deleteTransaction);
 

@@ -20,8 +20,8 @@ export const Skeleton: React.FC<SkeletonProps> = ({
   const baseStyle: React.CSSProperties = {
     width: width,
     height: height,
-    backgroundColor: '#161822',
-    backgroundImage: 'linear-gradient(90deg, #161822 25%, #222538 50%, #161822 75%)',
+    backgroundColor: 'var(--skeleton-bg)',
+    backgroundImage: 'var(--skeleton-shimmer)',
     backgroundSize: '200% 100%',
     animation: 'shimmer 1.5s infinite linear',
   };

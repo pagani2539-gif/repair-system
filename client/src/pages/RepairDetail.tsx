@@ -20,15 +20,16 @@ import {
   Settings
 } from 'lucide-react';
 import PrintTemplate from '../components/PrintTemplate';
-import PrintDialog from '../components/PrintDialog';
+import { printElement } from '../utils/pdfGenerator';
 import PermissionGate from '../components/PermissionGate';
 import { Select } from '../components/ui/Input';
 import StationSelector from '../components/ui/StationSelector';
+import Lightbox from '../components/ui/Lightbox';
 
 const RepairDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { notify } = useNotification();
+  const { notify, confirm } = useNotification();
   const [repair, setRepair] = useState<IRepairDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [showStatusModal, setShowStatusModal] = useState(false);
@@ -38,7 +39,6 @@ const RepairDetail: React.FC = () => {
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [replacingDevice, setReplacingDevice] = useState(false);
   const [updatingEdit, setUpdatingEdit] = useState(false);
-  const [printDialogOpen, setPrintDialogOpen] = useState(false);
   
   const [statusForm, setStatusForm] = useState({ status: '', note: '' });
   const [deviceForm, setDeviceForm] = useState({
@@ -57,6 +57,8 @@ const RepairDetail: React.FC = () => {
     problem: '',
     priority: ''
   });
+  const [subLocation, setSubLocation] = useState('');
+  const [activeLightboxImage, setActiveLightboxImage] = useState<string | null>(null);
 
   const parseDate = (dateStr: string) => {
     if (!dateStr) return new Date();
@@ -84,6 +86,14 @@ const RepairDetail: React.FC = () => {
         problem: data.problem,
         priority: data.priority
       });
+      let initialSubLocation = '';
+      if (data.station_name && data.location_snapshot && data.location_snapshot.startsWith(data.station_name)) {
+        const suffix = data.location_snapshot.slice(data.station_name.length).trim();
+        if (suffix.startsWith('-')) {
+          initialSubLocation = suffix.slice(1).trim();
+        }
+      }
+      setSubLocation(initialSubLocation);
     } catch (error) {
       console.error('Error fetching repair detail:', error);
       notify('ไม่สามารถดึงข้อมูลรายการนี้ได้', 'error');
@@ -184,6 +194,7 @@ const RepairDetail: React.FC = () => {
     const trimmedLocation = editForm.location.trim();
     const trimmedDeviceName = editForm.device_name.trim();
     const trimmedProblem = editForm.problem.trim();
+    const finalLocation = trimmedLocation + (subLocation.trim() ? ` - ${subLocation.trim()}` : '');
 
     if (!trimmedReporter || !trimmedProjectName || !trimmedDeviceName || !trimmedProblem) {
       notify('กรุณากรอกข้อมูลให้ครบถ้วนในช่องที่จำเป็น', 'error');
@@ -198,8 +209,8 @@ const RepairDetail: React.FC = () => {
       notify('ชื่อโครงการยาวเกินไป (ไม่เกิน 100 ตัวอักษร)', 'error');
       return;
     }
-    if (trimmedLocation.length > 100) {
-      notify('สถานที่ยาวเกินไป (ไม่เกิน 100 ตัวอักษร)', 'error');
+    if (finalLocation.length > 150) {
+      notify('สถานที่และจุดติดตั้งย่อยรวมกันยาวเกินไป (ไม่เกิน 150 ตัวอักษร)', 'error');
       return;
     }
     if (trimmedDeviceName.length > 100) {
@@ -216,9 +227,9 @@ const RepairDetail: React.FC = () => {
       await repairApi.update(id, {
         reporter: trimmedReporter,
         project_name: trimmedProjectName,
-        location: trimmedLocation,
+        location: finalLocation,
         station_id: editForm.station_id || undefined,
-        station_area_id: editForm.station_area_id || undefined,
+        station_area_id: undefined,
         device_name: trimmedDeviceName,
         problem: trimmedProblem,
         priority: editForm.priority
@@ -239,7 +250,13 @@ const RepairDetail: React.FC = () => {
     const msg = isClaim 
       ? 'คุณต้องการลบรายการแจ้งเคลมนี้ใช่หรือไม่? การกระทำนี้ไม่สามารถย้อนกลับได้'
       : 'คุณต้องการลบรายการแจ้งซ่อมนี้ใช่หรือไม่? การกระทำนี้ไม่สามารถย้อนกลับได้';
-    if (!id || !window.confirm(msg)) return;
+    if (!id) return;
+    const isConfirmed = await confirm({
+      title: isClaim ? 'ยืนยันการลบรายการแจ้งเคลม' : 'ยืนยันการลบรายการแจ้งซ่อม',
+      message: msg,
+      variant: 'danger'
+    });
+    if (!isConfirmed) return;
     try {
       await repairApi.delete(id);
       notify(isClaim ? 'ลบรายการแจ้งเคลมสำเร็จ' : 'ลบรายการแจ้งซ่อมสำเร็จ');
@@ -251,7 +268,7 @@ const RepairDetail: React.FC = () => {
 
   const handlePrint = () => {
     if (!repair) return;
-    setPrintDialogOpen(true);
+    printElement("pdf-print-template", `${repair.type === 'claim' ? 'ใบเคลม' : 'ใบซ่อม'} - ${repair.ticket_no || repair.id}`);
   };
 
   if (loading) return (
@@ -267,15 +284,9 @@ const RepairDetail: React.FC = () => {
 
   return (
     <div className="repair-detail-page" style={{ padding: '0 0 4rem 0' }}>
-      <PrintDialog
-        open={printDialogOpen}
-        onClose={() => setPrintDialogOpen(false)}
-        templateId="pdf-print-template"
-        docTitle={`${repair.type === 'claim' ? 'ใบเคลม' : 'ใบซ่อม'} - ${repair.ticket_no || repair.id}`}
-        renderTemplate={(companyId, logoId) => (
-          <PrintTemplate repair={repair} companyId={companyId} logoId={logoId} />
-        )}
-      />
+      <div style={{ position: 'absolute', left: '-99999px', top: 0, pointerEvents: 'none' }}>
+        <PrintTemplate repair={repair} />
+      </div>
 
       {/* Sticky Glass Header */}
       <div className="glass-card" style={{ 
@@ -296,7 +307,7 @@ const RepairDetail: React.FC = () => {
           </button>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--primary)', fontWeight: 700, fontSize: '0.75rem', textTransform: 'uppercase' }}>
-              <Wrench size={14} /> Repair Case File
+              <Wrench size={14} /> แฟ้มบันทึกงานซ่อม
             </div>
             <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800 }}>{repair.ticket_no}</h2>
           </div>
@@ -321,21 +332,21 @@ const RepairDetail: React.FC = () => {
         <div className="glass-card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2.5rem', padding: '1.5rem 2rem', borderRadius: '20px' }}>
           <div style={{ display: 'flex', gap: '3rem' }}>
             <div>
-              <label style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Status</label>
+              <label style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>สถานะ</label>
               <span className={`badge badge-${repair.status}`} style={{ fontSize: '0.85rem', padding: '6px 16px', fontWeight: 800 }}>
                 {repair.status}
               </span>
             </div>
             <div>
-              <label style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Priority</label>
+              <label style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>ความสำคัญ</label>
               <p className={`priority-${repair.priority === 'วิกฤต' || repair.priority === 'ด่วนมาก' ? 'high' : repair.priority === 'ด่วน' ? 'medium' : 'low'}`} style={{ fontWeight: 800, margin: 0, fontSize: '1.1rem' }}>{repair.priority}</p>
             </div>
             <div className="hide-on-tablet">
-              <label style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Received At</label>
+              <label style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>วันที่ได้รับแจ้ง</label>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, fontSize: '0.95rem' }}><Clock size={16} color="var(--primary)"/> {parseDate(repair.received_at).toLocaleString('th-TH')}</div>
             </div>
             <div className="hide-on-tablet">
-              <label style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>Last Updated</label>
+              <label style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>อัปเดตล่าสุด</label>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, fontSize: '0.95rem' }}><Settings size={16} color="var(--primary)"/> {parseDate(repair.updated_at).toLocaleString('th-TH')}</div>
             </div>
           </div>
@@ -353,7 +364,7 @@ const RepairDetail: React.FC = () => {
                   <FileText size={28} color="var(--primary)" /> รายละเอียดงาน{repair.type === 'claim' ? 'เคลม' : 'ซ่อม'}
                 </h3>
                 <div style={{ padding: '8px 16px', background: 'var(--primary-light)', color: 'var(--primary)', borderRadius: '12px', fontWeight: 800, fontSize: '0.8rem' }}>
-                  CASE ID: #{repair.id}
+                  รหัสงาน: #{repair.id}
                 </div>
               </div>
 
@@ -392,7 +403,11 @@ const RepairDetail: React.FC = () => {
                   </label>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', paddingLeft: '46px' }}>
                     <MapPin size={16} color="var(--danger)" />
-                    <p style={{ fontWeight: 700, margin: 0 }}>{repair.location || '-'}</p>
+                    <p style={{ fontWeight: 700, margin: 0 }}>
+                      {repair.station_name
+                        ? `${repair.station_name}${repair.location_snapshot && repair.location_snapshot.startsWith(repair.station_name) && repair.location_snapshot.length > repair.station_name.length ? ' - ' + repair.location_snapshot.slice(repair.station_name.length).replace(/^[-\s]+/, '') : ''}`
+                        : (repair.location || repair.location_snapshot || '-')}
+                    </p>
                   </div>
                 </div>
               </div>
@@ -418,7 +433,7 @@ const RepairDetail: React.FC = () => {
             {/* Timeline Card */}
             <div className="card glass-card" style={{ borderRadius: '24px', padding: '2.5rem' }}>
               <h3 style={{ marginBottom: '2.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem', fontSize: '1.25rem', fontWeight: 800 }}>
-                <HistoryIcon size={24} color="var(--primary)" /> Activity Log & Audit Trail
+                <HistoryIcon size={24} color="var(--primary)" /> บันทึกกิจกรรมและประวัติการตรวจสอบ
               </h3>
               <div className="timeline" style={{ paddingLeft: '0.5rem' }}>
                 {repair.logs.map((log, index) => (
@@ -459,18 +474,18 @@ const RepairDetail: React.FC = () => {
             {/* Evidence Card */}
             <div className="card glass-card" style={{ borderRadius: '24px', padding: '1.75rem' }}>
               <h3 style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem', fontSize: '1.1rem', fontWeight: 800 }}>
-                <ImageIcon size={20} color="var(--primary)" /> Evidence Gallery
+                <ImageIcon size={20} color="var(--primary)" /> แกลเลอรีหลักฐาน
               </h3>
               {repair.images.length > 0 ? (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1rem' }}>
                   {repair.images.map(img => (
                     <div key={img.id} style={{ borderRadius: '16px', overflow: 'hidden', border: '1px solid var(--border)', cursor: 'zoom-in', boxShadow: 'var(--elevation-1)', transition: 'transform 0.2s' }}>
-                      <img 
-                        src={`${UPLOAD_URL}/${img.file_path}`} 
+                      <img
+                        src={`${UPLOAD_URL}/uploads/${img.file_path}`}
                         crossOrigin="anonymous"
-                        alt="repair evidence" 
-                        style={{ width: '100%', height: '180px', objectFit: 'cover' }} 
-                        onClick={() => window.open(`${UPLOAD_URL}/${img.file_path}`, '_blank')}
+                        alt="repair evidence"
+                        style={{ width: '100%', height: '180px', objectFit: 'cover' }}
+                        onClick={() => setActiveLightboxImage(`${UPLOAD_URL}/uploads/${img.file_path}`)}
                       />
                     </div>
                   ))}
@@ -505,14 +520,14 @@ const RepairDetail: React.FC = () => {
                         <Calendar size={14} /> {parseDate(dev.changed_at).toLocaleDateString('th-TH')}
                       </div>
                       <div style={{ marginBottom: '12px' }}>
-                         <div style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--danger)', textTransform: 'uppercase', marginBottom: '4px' }}>Removed Item</div>
+                         <div style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--danger)', textTransform: 'uppercase', marginBottom: '4px' }}>อุปกรณ์ที่ถอดออก</div>
                          <div style={{ fontWeight: 800 }}>{dev.old_model}</div>
-                         <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>S/N: {dev.old_serial}</div>
+                         <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>S/N (หมายเลขเครื่อง): {dev.old_serial}</div>
                       </div>
                       <div>
-                         <div style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--success)', textTransform: 'uppercase', marginBottom: '4px' }}>Installed Item</div>
+                         <div style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--success)', textTransform: 'uppercase', marginBottom: '4px' }}>อุปกรณ์ที่ติดตั้งใหม่</div>
                          <div style={{ fontWeight: 800 }}>{dev.new_model}</div>
-                         <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>S/N: {dev.new_serial}</div>
+                         <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>S/N (หมายเลขเครื่อง): {dev.new_serial}</div>
                       </div>
                     </div>
                   ))}
@@ -541,16 +556,26 @@ const RepairDetail: React.FC = () => {
                 <label style={{ display: 'block', marginBottom: '8px', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-main)' }}>สถานที่ / ด่านชั่ง</label>
                 <StationSelector
                   selectedStationId={editForm.station_id || undefined}
-                  selectedAreaId={editForm.station_area_id || undefined}
-                  showArea={true}
+                  showArea={false}
                   onChange={(data) => {
                     setEditForm({
                       ...editForm,
                       station_id: data.stationId || null,
-                      station_area_id: data.areaId || null,
                       location: data.stationName || ''
                     });
                   }}
+                />
+              </div>
+
+              <div className="form-group" style={{ marginBottom: '1.25rem' }}>
+                <label>จุดติดตั้ง / บริเวณพื้นที่ย่อย</label>
+                <input
+                  type="text"
+                  maxLength={100}
+                  placeholder="ระบุตำแหน่งติดตั้งย่อยอย่างอิสระ เช่น ข้างเลนชั่ง, กล่องควบคุมฝั่งขาออก..."
+                  value={subLocation}
+                  onChange={(e) => setSubLocation(e.target.value)}
+                  disabled={updatingEdit}
                 />
               </div>
               <div className="form-group" style={{ marginBottom: '1.25rem' }}>
@@ -569,7 +594,7 @@ const RepairDetail: React.FC = () => {
                   border: '1px solid var(--border)',
                   fontSize: '0.95rem',
                   color: 'var(--text-main)',
-                  backgroundColor: '#ffffff'
+                  backgroundColor: 'var(--bg-card)'
                 }}
               >
                 <option value="ปกติ">ปกติ</option>
@@ -608,7 +633,7 @@ const RepairDetail: React.FC = () => {
                   border: '1px solid var(--border)',
                   fontSize: '0.95rem',
                   color: 'var(--text-main)',
-                  backgroundColor: '#ffffff'
+                  backgroundColor: 'var(--bg-card)'
                 }}
               >
                 <option value="รอดำเนินการ">รอดำเนินการ</option>
@@ -643,7 +668,7 @@ const RepairDetail: React.FC = () => {
                     <input type="text" required placeholder="ระบุรุ่นที่ถอดออก" maxLength={100} value={deviceForm.old_model} onChange={e => setDeviceForm({...deviceForm, old_model: e.target.value})} disabled={replacingDevice} />
                   </div>
                   <div className="form-group" style={{ marginBottom: '1rem' }}>
-                    <label>Serial No.</label>
+                    <label>หมายเลขเครื่อง (S/N)</label>
                     <input type="text" required placeholder="ระบุ Serial เดิม" maxLength={100} value={deviceForm.old_serial} onChange={e => setDeviceForm({...deviceForm, old_serial: e.target.value})} disabled={replacingDevice} />
                   </div>
                 </div>
@@ -654,7 +679,7 @@ const RepairDetail: React.FC = () => {
                     <input type="text" required placeholder="ระบุรุ่นที่ติดตั้งใหม่" maxLength={100} value={deviceForm.new_model} onChange={e => setDeviceForm({...deviceForm, new_model: e.target.value})} disabled={replacingDevice} />
                   </div>
                   <div className="form-group" style={{ marginBottom: '1rem' }}>
-                    <label>Serial No.</label>
+                    <label>หมายเลขเครื่อง (S/N)</label>
                     <input type="text" required placeholder="ระบุ Serial ใหม่" maxLength={100} value={deviceForm.new_serial} onChange={e => setDeviceForm({...deviceForm, new_serial: e.target.value})} disabled={replacingDevice} />
                   </div>
                 </div>
@@ -666,6 +691,14 @@ const RepairDetail: React.FC = () => {
             </form>
           </div>
         </div>
+      )}
+
+      {activeLightboxImage && (
+        <Lightbox 
+          src={activeLightboxImage} 
+          alt="รูปภาพหลักฐานการทำงาน" 
+          onClose={() => setActiveLightboxImage(null)} 
+        />
       )}
     </div>
   );

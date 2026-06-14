@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { repairApi } from '../api';
+import React, { useState, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { repairApi, stationApi } from '../api';
 import { useNotification } from '../components/Layout';
 import { useAuth } from '../contexts/AuthContext';
 import { Card } from '../components/ui/Card';
@@ -12,9 +12,11 @@ import {
   X, 
   FileText
 } from 'lucide-react';
+import { compressImage } from '../utils/imageCompressor';
 
 const NewClaim: React.FC = () => {
   const navigate = useNavigate();
+  const locationSearch = useLocation();
   const { notify, refreshUnreadCounts, playNotificationSound } = useNotification();
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
@@ -22,22 +24,51 @@ const NewClaim: React.FC = () => {
     project_name: '',
     location: '',
     station_id: undefined as number | undefined,
-    station_area_id: undefined as number | undefined,
     device_name: '',
     problem: '',
     priority: 'ปกติ',
     received_at: new Date().toLocaleString('sv-SE').replace(' ', 'T').slice(0, 16)
   });
+  const [subLocation, setSubLocation] = useState('');
   const [images, setImages] = useState<File[]>([]);
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const searchParams = new URLSearchParams(locationSearch.search);
+  const stationIdParam = searchParams.get('station_id');
+
+  useEffect(() => {
+    if (stationIdParam) {
+      const stationId = parseInt(stationIdParam, 10);
+      if (!isNaN(stationId)) {
+        stationApi.getUniqueList({ status: 1 }).then(list => {
+          const matched = list.find(st => st.id === stationId);
+          if (matched) {
+            setFormData(prev => ({
+              ...prev,
+              station_id: matched.id,
+              location: matched.name
+            }));
+          }
+        }).catch(err => {
+          console.error('Failed to prefetch station for prefill:', err);
+        });
+      }
+    }
+  }, [stationIdParam]);
+
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       const newImages = Array.from(e.target.files);
       if (images.length + newImages.length > 4) {
         notify('จำกัดการอัปโหลดสูงสุด 4 รูปเท่านั้น', 'error');
         return;
       }
-      setImages([...images, ...newImages]);
+      try {
+        const compressed = await Promise.all(newImages.map(file => compressImage(file)));
+        setImages([...images, ...compressed]);
+      } catch (err) {
+        console.error('Image compression failed:', err);
+        setImages([...images, ...newImages]);
+      }
     }
   };
 
@@ -53,6 +84,7 @@ const NewClaim: React.FC = () => {
     const trimmedLocation = formData.location.trim();
     const trimmedDeviceName = formData.device_name.trim();
     const trimmedProblem = formData.problem.trim();
+    const finalLocation = trimmedLocation + (subLocation.trim() ? ` - ${subLocation.trim()}` : '');
 
     if (!trimmedProjectName || !formData.station_id || !trimmedDeviceName || !trimmedProblem) {
       notify('กรุณากรอกข้อมูลให้ครบถ้วนในช่องที่จำเป็น', 'error');
@@ -63,8 +95,8 @@ const NewClaim: React.FC = () => {
       notify('ชื่อโครงการยาวเกินไป (ไม่เกิน 100 ตัวอักษร)', 'error');
       return;
     }
-    if (trimmedLocation.length > 100) {
-      notify('สถานที่ยาวเกินไป (ไม่เกิน 100 ตัวอักษร)', 'error');
+    if (finalLocation.length > 150) {
+      notify('สถานที่และจุดติดตั้งย่อยรวมกันยาวเกินไป (ไม่เกิน 150 ตัวอักษร)', 'error');
       return;
     }
     if (trimmedDeviceName.length > 100) {
@@ -87,12 +119,9 @@ const NewClaim: React.FC = () => {
     try {
       const data = new FormData();
       data.append('project_name', trimmedProjectName);
-      data.append('location', trimmedLocation);
+      data.append('location', finalLocation);
       if (formData.station_id) {
         data.append('station_id', String(formData.station_id));
-      }
-      if (formData.station_area_id) {
-        data.append('station_area_id', String(formData.station_area_id));
       }
       data.append('device_name', trimmedDeviceName);
       data.append('problem', trimmedProblem);
@@ -125,30 +154,32 @@ const NewClaim: React.FC = () => {
         </div>
       </div>
       
-      <Card style={{ maxWidth: '800px', margin: '0 auto' }}>
+      <Card className="glass-card" style={{ maxWidth: '800px', margin: '0 auto', padding: '2rem', overflow: 'visible' }}>
         <form onSubmit={handleSubmit}>
-          <div className="form-group" style={{ marginBottom: '1rem' }}>
-            <label style={{ fontSize: '0.85rem', fontWeight: 700, marginBottom: '6px', display: 'block' }}>ผู้แจ้งเคลม</label>
-            <div style={{
-              padding: '10px 14px', background: 'var(--bg-app)',
-              border: '1px solid var(--border)', borderRadius: '10px',
-              fontSize: '0.9rem', color: 'var(--text-main)', fontWeight: 600,
-            }}>
-              👤 {user?.full_name || '—'}
-              <span style={{ marginLeft: '8px', fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400 }}>
-                (ดึงจากบัญชีที่เข้าสู่ระบบ)
-              </span>
-            </div>
-          </div>
-
           <div className="form-grid">
+            {/* ผู้แจ้งเคลม (Full width) */}
+            <div style={{ gridColumn: '1 / -1' }} className="form-group">
+              <label style={{ fontSize: '0.85rem', fontWeight: 700, marginBottom: '6px', display: 'block' }}>ผู้แจ้งเคลม</label>
+              <div style={{
+                padding: '10px 14px', background: 'var(--bg-app)',
+                border: '1px solid var(--border)', borderRadius: '10px',
+                fontSize: '0.9rem', color: 'var(--text-main)', fontWeight: 600,
+              }}>
+                👤 {user?.full_name || '—'}
+                <span style={{ marginLeft: '8px', fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400 }}>
+                  (ดึงจากบัญชีที่เข้าสู่ระบบ)
+                </span>
+              </div>
+            </div>
+
+            {/* ระดับความสำคัญ & โครงการ/งาน */}
             <Select 
               label="ระดับความสำคัญ"
               value={formData.priority}
               onChange={(e) => setFormData({...formData, priority: e.target.value})}
             >
-              <option value="ปกติ">ปกติ (Normal)</option>
-              <option value="ด่วน">ด่วน (High)</option>
+              <option value="ปกติ">ปกติ</option>
+              <option value="ด่วน">ด่วน</option>
             </Select>
             <Input 
               label="โครงการ / งาน"
@@ -158,74 +189,92 @@ const NewClaim: React.FC = () => {
               value={formData.project_name}
               onChange={(e) => setFormData({...formData, project_name: e.target.value})}
             />
-          </div>
 
-          <div className="form-group" style={{ marginBottom: '1.5rem' }}>
-            <label style={{ display: 'block', marginBottom: '8px', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-main)' }}>
-              สถานที่ตั้งด่าน / จุดควบคุมน้ำหนักทางหลวง <span style={{ color: 'var(--danger)' }}>*</span>
-            </label>
-            <StationSelector
-              selectedStationId={formData.station_id}
-              selectedAreaId={formData.station_area_id}
-              showArea={true}
-              required={true}
-              onChange={(data) => {
-                setFormData({
-                  ...formData,
-                  station_id: data.stationId,
-                  station_area_id: data.areaId,
-                  location: data.stationName + (data.areaName ? ` - ${data.areaName}` : '')
-                });
-              }}
+            {/* วันที่เกิดปัญหา & ชื่ออุปกรณ์ */}
+            <Input
+              label="วันที่และเวลาที่รับเครื่อง / เกิดปัญหา"
+              type="datetime-local"
+              required
+              value={formData.received_at}
+              onChange={(e) => setFormData({...formData, received_at: e.target.value})}
             />
-          </div>
+            <Input 
+              label="ชื่ออุปกรณ์ / รุ่น (เพื่อการเคลม)"
+              required 
+              maxLength={100}
+              placeholder="ชื่ออุปกรณ์และ Serial Number"
+              value={formData.device_name}
+              onChange={(e) => setFormData({...formData, device_name: e.target.value})}
+            />
 
-          <Input 
-            label="ชื่ออุปกรณ์ / รุ่น (เพื่อการเคลม)"
-            required 
-            maxLength={100}
-            placeholder="ชื่ออุปกรณ์และ Serial Number"
-            value={formData.device_name}
-            onChange={(e) => setFormData({...formData, device_name: e.target.value})}
-          />
+            {/* สถานที่ตั้งด่าน & จุดติดตั้งย่อย */}
+            <div className="form-group">
+              <label style={{ display: 'block', marginBottom: '8px', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-main)' }}>
+                สถานที่ตั้งด่าน / จุดควบคุมน้ำหนักทางหลวง <span style={{ color: 'var(--danger)' }}>*</span>
+              </label>
+              <StationSelector
+                selectedStationId={formData.station_id}
+                showArea={false}
+                required={true}
+                onChange={(data) => {
+                  setFormData({
+                    ...formData,
+                    station_id: data.stationId,
+                    location: data.stationName
+                  });
+                }}
+              />
+            </div>
+            <Input
+              label="จุดติดตั้ง / บริเวณพื้นที่ย่อย"
+              maxLength={100}
+              placeholder="ระบุตำแหน่งติดตั้งย่อย เช่น ข้างเลนชั่ง, กล่องควบคุมฝั่งขาออก..."
+              value={subLocation}
+              onChange={(e) => setSubLocation(e.target.value)}
+            />
 
-          <TextArea 
-            label="เหตุผลการเคลม / อาการเสีย"
-            required 
-            rows={4}
-            maxLength={1000}
-            placeholder="ระบุรายละเอียดอาการที่ต้องการเคลม..."
-            value={formData.problem}
-            onChange={(e) => setFormData({...formData, problem: e.target.value})}
-          />
+            {/* เหตุผลการเคลม (Full width) */}
+            <div style={{ gridColumn: '1 / -1' }}>
+              <TextArea 
+                label="เหตุผลการเคลม / อาการเสีย"
+                required 
+                rows={4}
+                maxLength={1000}
+                placeholder="ระบุรายละเอียดอาการที่ต้องการเคลม..."
+                value={formData.problem}
+                onChange={(e) => setFormData({...formData, problem: e.target.value})}
+              />
+            </div>
 
-          <div className="form-group">
-            <label><FileText size={16} color="var(--primary)" /> รูปภาพหลักฐานการเคลม (สูงสุด 4 รูป)</label>
-            <div className="image-uploader-grid" style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
-              {images.map((image, index) => (
-                <div key={index} className="image-preview-card">
-                  <img src={URL.createObjectURL(image)} alt="preview" />
-                  <button type="button" className="remove-btn" onClick={() => removeImage(index)} disabled={loading}>
-                    <X size={16} />
-                  </button>
-                </div>
-              ))}
-              {images.length < 4 && (
-                images.length === 0 ? (
-                  <label className="image-uploader-box" style={{ width: '100%', height: '120px', cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.6 : 1 }}>
-                    <Upload size={24} style={{ marginBottom: '8px' }} />
-                    <span style={{ fontSize: '0.85rem', fontWeight: 500 }}>คลิกเพื่อเลือกรูปภาพหลักฐานการเคลม</span>
-                    <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '4px' }}>รองรับไฟล์ JPG, PNG (สูงสุด 4 รูป)</span>
-                    <input type="file" multiple accept="image/*" style={{ display: 'none' }} onChange={handleImageChange} disabled={loading} />
-                  </label>
-                ) : (
-                  <label className="image-uploader-box" style={{ width: '100px', height: '100px', padding: 0, cursor: loading ? 'not-allowed' : 'pointer' }}>
-                    <Upload size={20} />
-                    <span style={{ fontSize: '0.75rem', marginTop: '4px' }}>เพิ่มรูปภาพ</span>
-                    <input type="file" multiple accept="image/*" style={{ display: 'none' }} onChange={handleImageChange} disabled={loading} />
-                  </label>
-                )
-              )}
+            {/* รูปภาพประกอบ (Full width) */}
+            <div style={{ gridColumn: '1 / -1' }} className="form-group">
+              <label><FileText size={16} color="var(--primary)" /> รูปภาพหลักฐานการเคลม (สูงสุด 4 รูป)</label>
+              <div className="image-uploader-grid" style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
+                {images.map((image, index) => (
+                  <div key={index} className="image-preview-card">
+                    <img src={URL.createObjectURL(image)} alt="preview" />
+                    <button type="button" className="remove-btn" onClick={() => removeImage(index)} disabled={loading}>
+                      <X size={16} />
+                    </button>
+                  </div>
+                ))}
+                {images.length < 4 && (
+                  images.length === 0 ? (
+                    <label className="image-uploader-box" style={{ width: '100%', height: '120px', cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.6 : 1, background: 'var(--bg-app)', border: '1px dashed var(--border)' }}>
+                      <Upload size={24} style={{ marginBottom: '8px' }} />
+                      <span style={{ fontSize: '0.85rem', fontWeight: 500 }}>คลิกเพื่อเลือกรูปภาพหลักฐานการเคลม</span>
+                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '4px' }}>รองรับไฟล์ JPG, PNG (สูงสุด 4 รูป)</span>
+                      <input type="file" multiple accept="image/*" style={{ display: 'none' }} onChange={handleImageChange} disabled={loading} />
+                    </label>
+                  ) : (
+                    <label className="image-uploader-box" style={{ width: '100px', height: '100px', padding: 0, cursor: loading ? 'not-allowed' : 'pointer', background: 'var(--bg-app)', border: '1px dashed var(--border)' }}>
+                      <Upload size={20} />
+                      <span style={{ fontSize: '0.75rem', marginTop: '4px' }}>เพิ่มรูปภาพ</span>
+                      <input type="file" multiple accept="image/*" style={{ display: 'none' }} onChange={handleImageChange} disabled={loading} />
+                    </label>
+                  )
+                )}
+              </div>
             </div>
           </div>
 

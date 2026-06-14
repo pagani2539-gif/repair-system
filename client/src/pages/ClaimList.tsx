@@ -11,8 +11,9 @@ import type { Repair } from '../types';
 import type { TableColumn, TableAction } from '../types/table.types';
 import {
   Plus,
-  ChevronRight,
-  Trash,
+  Trash2,
+  ScanEye,
+  CirclePlay,
   AlertTriangle,
   UserCheck,
   Inbox,
@@ -24,7 +25,8 @@ import {
   Package,
   RefreshCw,
   AlertCircle,
-  MessageSquare
+  MessageSquare,
+  Download
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import StationCell from '../components/shared/StationCell';
@@ -32,18 +34,18 @@ import BaseDataTable from '../components/tables/BaseDataTable';
 import TableToolbar from '../components/tables/TableToolbar';
 import TablePagination from '../components/tables/TablePagination';
 import { useTableUrlState } from '../hooks/useTableUrlState';
+import { exportToCsv } from '../utils/csvExporter';
 
 const ClaimList: React.FC = () => {
-  const { notify } = useNotification();
+  const { notify, confirm } = useNotification();
   const { hasPermission } = useAuth();
   const { urlState, setTableState } = useTableUrlState(20);
   
-  const [locations, setLocations] = useState<{label: string, value: string}[]>([]);
   const [showModal, setShowModal] = useState<{ id: number, type: 'receive' | 'complete' | 'hold' } | null>(null);
   const [modalData, setModalData] = useState({ technician: '', note: '' });
 
   const { data: claims = [], loading, error, request: fetchClaims } = useApi(
-    async (params: any) => await repairApi.getAll({ ...params, type: 'claim' })
+    async (params?: Record<string, unknown>) => await repairApi.getAll({ ...params, type: 'claim' })
   );
 
   const { data: stats, request: fetchStats } = useApi(repairApi.getStats);
@@ -63,14 +65,11 @@ const ClaimList: React.FC = () => {
     fetchData();
   }, [fetchData]);
 
-  useEffect(() => {
-    const list = claims || [];
-    if (list.length > 0 && locations.length === 0) {
-      const locSet = new Set<string>();
-      list.forEach(c => { if (c.location) locSet.add(c.location); });
-      setLocations(Array.from(locSet).sort().map(l => ({ label: l, value: l })));
-    }
-  }, [claims, locations.length]);
+  const locations = useMemo(() => {
+    const locSet = new Set<string>();
+    (claims || []).forEach(c => { if (c.location) locSet.add(c.location); });
+    return Array.from(locSet).sort().map(l => ({ label: l, value: l }));
+  }, [claims]);
 
   const filteredData = useMemo(() => {
     const list = claims || [];
@@ -104,6 +103,26 @@ const ClaimList: React.FC = () => {
   const indexOfFirstItem = indexOfLastItem - urlState.pageSize;
   const paginatedData = filteredData.slice(indexOfFirstItem, indexOfLastItem);
 
+  const handleExportExcel = () => {
+    const headers = [
+      'เลขที่ใบงาน', 'อุปกรณ์', 'อาการเสีย/ปัญหา', 'ผู้แจ้ง', 'สถานที่', 'ช่างผู้รับผิดชอบ', 'ความสำคัญ', 'สถานะ', 'วันที่รับเข้า', 'วันที่แจ้ง'
+    ];
+    const rows = filteredData.map(r => [
+      r.ticket_no,
+      r.device_name,
+      r.problem,
+      r.reporter,
+      r.location,
+      r.technician || '-',
+      r.priority,
+      r.status,
+      r.received_at ? new Date(r.received_at).toLocaleDateString('th-TH') : '-',
+      r.created_at ? new Date(r.created_at).toLocaleDateString('th-TH') : '-'
+    ]);
+    exportToCsv(`claims_export_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`, headers, rows);
+    notify('ส่งออกข้อมูล Excel เรียบร้อยแล้ว');
+  };
+
   const handleWorkflow = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!showModal) return;
@@ -126,7 +145,12 @@ const ClaimList: React.FC = () => {
   };
 
   const handleDelete = async (id: number) => {
-    if (confirm('คุณต้องการลบรายการเคลมนี้จริงหรือไม่?')) {
+    const isConfirmed = await confirm({
+      title: 'ยืนยันการลบรายการเคลม',
+      message: 'คุณต้องการลบรายการเคลมนี้จริงหรือไม่? การดำเนินการนี้ไม่สามารถย้อนกลับได้',
+      variant: 'danger'
+    });
+    if (isConfirmed) {
       try {
         await repairApi.delete(id);
         notify('ลบรายการสำเร็จ');
@@ -191,20 +215,12 @@ const ClaimList: React.FC = () => {
       )
     },
     {
-      id: 'location', header: 'สถานที่', accessor: 'location', priority: 2, width: 'auto',
+      id: 'location', header: 'สถานที่', accessor: 'location', priority: 1, width: 'auto',
       render: (_, row) => {
         const hasLocation = row.station_name || row.location;
         if (!hasLocation) return <span className="cell-empty">— ไม่ระบุสถานี —</span>;
-        return <StationCell stationName={row.station_name} areaName={row.station_area_name} province={row.station_province} fallbackLocation={row.location} compact={true} />;
+        return <StationCell stationName={row.station_name} areaName={row.station_area_name} province={row.station_province} fallbackLocation={row.location} locationSnapshot={row.location_snapshot} compact={true} />;
       }
-    },
-    {
-      id: 'priority', header: 'ความสำคัญ', accessor: 'priority', priority: 1, width: '110px', align: 'center',
-      render: (val) => (
-        <span className={`badge badge-priority-${val === 'วิกฤต' ? 'critical' : val === 'ด่วนมาก' ? 'urgent' : val === 'ด่วน' ? 'high' : 'normal'}`} style={{ minWidth: '80px', justifyContent: 'center' }}>
-          {val}
-        </span>
-      )
     },
     {
       id: 'status', header: 'สถานะ', accessor: 'status', priority: 1, width: '120px', align: 'center',
@@ -246,16 +262,19 @@ const ClaimList: React.FC = () => {
     {
       id: 'workflow',
       label: 'ดำเนินการ',
+      icon: <CirclePlay size={14} />,
       onClick: (row) => setShowModal({ id: row.id, type: row.status === 'รอดำเนินการ' || row.status === 'รออะไหล่' ? 'receive' : 'complete' }),
       hidden: (row) => row.status === 'เสร็จสิ้น',
-      variant: 'primary'
+      variant: 'primary',
+      inline: true
     },
     {
-      id: 'view', label: 'รายละเอียด', icon: <ChevronRight size={14} />,
-      onClick: (row) => window.location.href = `/claim-history/${row.id}`
+      id: 'view', label: 'รายละเอียด', icon: <ScanEye size={14} />,
+      onClick: (row) => window.location.href = `/claim-history/${row.id}`,
+      inline: true
     },
     {
-      id: 'delete', label: 'ลบรายการ', icon: <Trash size={14} />, variant: 'danger',
+      id: 'delete', label: 'ลบรายการ', icon: <Trash2 size={14} />, variant: 'danger',
       onClick: (row) => handleDelete(row.id),
       hidden: () => !hasPermission('delete.claims')
     }
@@ -290,7 +309,7 @@ const ClaimList: React.FC = () => {
           <MapPin size={18} /> สถานที่แจ้งเคลม
         </h4>
         <Card style={{ padding: '1rem', backgroundColor: 'var(--bg-app)' }}>
-          <StationCell stationName={row.station_name} province={row.station_province} fallbackLocation={row.location} compact={false} />
+          <StationCell stationName={row.station_name} province={row.station_province} fallbackLocation={row.location} locationSnapshot={row.location_snapshot} compact={false} />
         </Card>
       </section>
 
@@ -340,6 +359,7 @@ const ClaimList: React.FC = () => {
           <p>ติดตามและจัดการรายการเคลมอุปกรณ์ที่ส่งเข้าศูนย์บริการ</p>
         </div>
         <div style={{ display: 'flex', gap: '12px' }}>
+          <Button variant="outline" icon={<Download size={20} />} onClick={handleExportExcel}>ส่งออก Excel</Button>
           <Link to="/claim"><Button variant="primary" icon={<Plus size={20} />}>แจ้งเคลมใหม่</Button></Link>
           <Link to="/new"><Button variant="outline" icon={<Plus size={20} />}>แจ้งซ่อมใหม่</Button></Link>
         </div>
@@ -387,7 +407,7 @@ const ClaimList: React.FC = () => {
         getRowAccent={(r) => getAccentColor(r.status, r.priority)}
         mobileConfig={{
           title: (r) => r.device_name,
-          subtitle: (r) => `CLAIM: ${r.ticket_no} · ${r.reporter}`,
+          subtitle: (r) => `ใบเคลม: ${r.ticket_no} · ${r.reporter}`,
           statusBadge: (r) => <span className={`badge badge-${r.status}`}>{r.status === 'กำลังซ่อม' ? 'กำลังเคลม' : r.status}</span>
         }}
       />

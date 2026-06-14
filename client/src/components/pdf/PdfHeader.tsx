@@ -2,6 +2,7 @@ import React from 'react';
 import { UPLOAD_URL } from '../../api';
 import type { Company, CompanyLogo } from '../../types';
 import { pdfTheme, docLabels, type DocType } from './pdfTheme';
+import { Wrench, ShieldCheck, Package, RotateCcw } from 'lucide-react';
 
 interface Props {
   docType: DocType;
@@ -10,6 +11,8 @@ interface Props {
   company: Company | null;
   logo: CompanyLogo | null;
   statusBadge?: { label: string; tone?: 'success' | 'warning' | 'danger' | 'neutral' };
+  /** Show the corporate company block (logo + name + address). Default true. Set false for repair/claim/withdrawal forms. */
+  showCompany?: boolean;
 }
 
 /**
@@ -24,9 +27,20 @@ interface Props {
  *  │       <<accent stripe>>                              │
  *  └──────────────────────────────────────────────────────┘
  */
-export const PdfHeader: React.FC<Props> = ({ docType, docNumber, docDate, company, logo, statusBadge }) => {
+export const PdfHeader: React.FC<Props> = ({ docType, docNumber, docDate, company, logo, statusBadge, showCompany = true }) => {
   const labels = docLabels[docType];
   const accentColor = pdfTheme.accents[docType];
+
+  const getSoftTint = (type: DocType): string => {
+    switch (type) {
+      case 'withdrawal': return '#f0f9ff';
+      case 'return':     return '#f5f3ff';
+      case 'claim':      return '#fef2f2';
+      case 'repair':     return '#ecfdf5';
+      case 'purchase':   return '#fff7ed';
+      default:           return '#f8fafc';
+    }
+  };
 
   const toneColors = {
     success: { bg: '#d1fae5', text: '#065f46' },
@@ -40,152 +54,198 @@ export const PdfHeader: React.FC<Props> = ({ docType, docNumber, docDate, compan
     <header style={{ marginBottom: pdfTheme.space.sectionGap }}>
       <div style={{
         display: 'grid',
-        gridTemplateColumns: '1.4fr 1fr',
-        gap: pdfTheme.space.sectionGap,
-        alignItems: 'flex-start',
+        gridTemplateColumns: '1.2fr 1fr',
+        gap: `${pdfTheme.space.sectionGap}px`,
+        alignItems: 'center',
       }}>
-        {/* ─── Left: Company Block ─── */}
-        <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-start' }}>
-          {logo && (
+        {/* ─── Left Column: Company Info (Detailed or Mini) ─── */}
+        {!showCompany ? (
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', fontFamily: pdfTheme.fonts.body }}>
             <div style={{
-              width: '72px',
-              height: '72px',
+              width: '38px',
+              height: '38px',
               flexShrink: 0,
-              border: pdfTheme.border.light,
-              borderRadius: pdfTheme.radius.md,
-              padding: '4px',
-              background: pdfTheme.colors.bgPage,
+              borderRadius: '50%',
+              background: getSoftTint(docType),
+              border: `1.5px solid ${accentColor}`,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
             }}>
-              <img
-                src={`${UPLOAD_URL}/uploads/${logo.file_path}`}
-                alt={logo.label}
-                style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
-                crossOrigin="anonymous"
-              />
+              {docType === 'repair' && <Wrench size={16} color={accentColor} />}
+              {docType === 'claim' && <ShieldCheck size={16} color={accentColor} />}
+              {docType === 'withdrawal' && <Package size={16} color={accentColor} />}
+              {docType === 'return' && <RotateCcw size={16} color={accentColor} />}
             </div>
-          )}
+            
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <div style={{
+                fontSize: `${pdfTheme.size.h2}px`,
+                fontWeight: 800,
+                color: pdfTheme.colors.primary,
+                lineHeight: 1.15,
+                letterSpacing: '0.01em',
+              }}>
+                ระบบบริหารจัดการงานซ่อมบำรุงและพัสดุอุปกรณ์
+              </div>
+              <div style={{
+                fontSize: `${pdfTheme.size.micro}px`,
+                color: pdfTheme.colors.textMuted,
+                fontWeight: 600,
+                marginTop: '1px',
+                letterSpacing: '0.03em',
+              }}>
+                REPAIR & INVENTORY MANAGEMENT SYSTEM
+              </div>
+              <div style={{
+                fontSize: '7.5px',
+                color: pdfTheme.colors.textLight,
+                marginTop: '1px',
+                fontStyle: 'italic',
+              }}>
+                INTERNAL OPERATIONAL SLIP · เอกสารบันทึกการทำงานภายในระบบ
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+            {logo && (
+              <div style={{
+                width: '56px',
+                height: '56px',
+                flexShrink: 0,
+                border: pdfTheme.border.light,
+                borderRadius: pdfTheme.radius.md,
+                padding: '3px',
+                background: pdfTheme.colors.bgPage,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}>
+                <img
+                  src={`${UPLOAD_URL}/uploads/${logo.file_path}`}
+                  alt=""
+                  style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+                  crossOrigin="anonymous"
+                />
+              </div>
+            )}
 
-          <div style={{ flex: 1, fontFamily: pdfTheme.fonts.body, color: pdfTheme.colors.text }}>
-            <div style={{
-              fontSize: pdfTheme.size.h2 + 2,
-              fontWeight: 800,
-              lineHeight: 1.25,
-              letterSpacing: '-0.01em',
-            }}>
-              {company?.name_th || 'บริษัทของคุณ'}
-            </div>
-            {company?.name_en && (
+            <div style={{ flex: 1, fontFamily: pdfTheme.fonts.body, color: pdfTheme.colors.text }}>
               <div style={{
-                fontSize: pdfTheme.size.small,
-                color: pdfTheme.colors.textMuted,
-                fontWeight: 500,
+                fontSize: `${pdfTheme.size.h2}px`,
+                fontWeight: 800,
+                lineHeight: 1.2,
+                letterSpacing: '-0.01em',
+              }}>
+                {company?.name_th || 'บริษัทของคุณ'}
+              </div>
+              {company?.name_en && (
+                <div style={{
+                  fontSize: `${pdfTheme.size.micro}px`,
+                  color: pdfTheme.colors.textMuted,
+                  fontWeight: 500,
+                  marginTop: '1px',
+                }}>
+                  {company.name_en}
+                </div>
+              )}
+              {company?.address && (
+                <div style={{
+                  fontSize: `${pdfTheme.size.micro}px`,
+                  color: pdfTheme.colors.textMuted,
+                  marginTop: '3px',
+                  lineHeight: 1.3,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  maxWidth: '300px',
+                }}>
+                  {company.address}
+                </div>
+              )}
+              <div style={{
+                fontSize: `${pdfTheme.size.micro}px`,
+                color: pdfTheme.colors.textLight,
                 marginTop: '2px',
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: '6px',
               }}>
-                {company.name_en}
+                {company?.phone && <span>โทร. {company.phone}</span>}
+                {company?.email && <span>· {company.email}</span>}
+                {company?.tax_id && <span>· เลขผู้เสียภาษี {company.tax_id}</span>}
               </div>
-            )}
-            {company?.address && (
-              <div style={{
-                fontSize: pdfTheme.size.small,
-                color: pdfTheme.colors.textMuted,
-                marginTop: '6px',
-                lineHeight: 1.45,
-                whiteSpace: 'pre-wrap',
-              }}>
-                {company.address}
-              </div>
-            )}
+            </div>
+          </div>
+        )}
+
+        {/* ─── Right Column: Document Metadata ─── */}
+        <div style={{
+          border: `1px solid ${accentColor}25`,
+          borderRadius: pdfTheme.radius.md,
+          padding: '8px 12px',
+          background: getSoftTint(docType),
+          fontFamily: pdfTheme.fonts.body,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: '8px',
+        }}>
+          <div>
             <div style={{
-              fontSize: pdfTheme.size.micro,
-              color: pdfTheme.colors.textLight,
+              fontSize: `${pdfTheme.size.h2}px`,
+              fontWeight: 800,
+              color: pdfTheme.colors.text,
+              lineHeight: 1.1,
+            }}>
+              {labels.th}
+            </div>
+            <div style={{
+              fontSize: `${pdfTheme.size.micro}px`,
+              fontWeight: 500,
+              color: pdfTheme.colors.textMuted,
+              marginTop: '1px',
+            }}>
+              {labels.en}
+            </div>
+            <div style={{
               marginTop: '4px',
               display: 'flex',
-              flexWrap: 'wrap',
-              gap: '8px',
+              gap: '10px',
+              fontSize: `${pdfTheme.size.small}px`,
             }}>
-              {company?.phone && <span>โทร. {company.phone}</span>}
-              {company?.email && <span>· {company.email}</span>}
-              {company?.tax_id && <span>· เลขผู้เสียภาษี {company.tax_id}</span>}
-              {company?.website && <span>· {company.website}</span>}
+              <span style={{ color: pdfTheme.colors.textMuted }}>
+                เลขที่: <strong style={{ fontFamily: pdfTheme.fonts.mono, color: accentColor }}>{docNumber}</strong>
+              </span>
+              <span style={{ color: pdfTheme.colors.textMuted }}>
+                วันที่: <strong style={{ color: pdfTheme.colors.text }}>{docDate}</strong>
+              </span>
             </div>
           </div>
-        </div>
 
-        {/* ─── Right: Document Meta ─── */}
-        <div style={{
-          border: pdfTheme.border.base,
-          borderRadius: pdfTheme.radius.md,
-          padding: '14px 18px',
-          background: pdfTheme.colors.bgSubtle,
-          fontFamily: pdfTheme.fonts.body,
-        }}>
-          <div style={{
-            fontSize: pdfTheme.size.docTitle,
-            fontWeight: 800,
-            color: pdfTheme.colors.text,
-            lineHeight: 1.2,
-            letterSpacing: '-0.01em',
-          }}>
-            {labels.th}
-          </div>
-          <div style={{
-            fontSize: pdfTheme.size.docSubtitle,
-            fontWeight: 500,
-            color: pdfTheme.colors.textMuted,
-            marginTop: '2px',
-            letterSpacing: '0.01em',
-          }}>
-            {labels.en}
-          </div>
-
-          <div style={{
-            marginTop: '10px',
-            paddingTop: '10px',
-            borderTop: pdfTheme.border.light,
-            display: 'grid',
-            gridTemplateColumns: 'auto 1fr',
-            columnGap: '12px',
-            rowGap: '4px',
-            fontSize: pdfTheme.size.body,
-          }}>
-            <span style={{ color: pdfTheme.colors.textMuted }}>เลขที่:</span>
-            <span style={{
-              fontFamily: pdfTheme.fonts.mono,
+          {statusBadge && badgeColors && (
+            <div style={{
+              padding: '4px 8px',
+              borderRadius: pdfTheme.radius.sm,
+              background: badgeColors.bg,
+              color: badgeColors.text,
               fontWeight: 700,
-              color: accentColor,
-              letterSpacing: '0.04em',
-            }}>{docNumber}</span>
-            <span style={{ color: pdfTheme.colors.textMuted }}>วันที่:</span>
-            <span style={{ fontWeight: 600, color: pdfTheme.colors.text }}>{docDate}</span>
-            {statusBadge && badgeColors && (
-              <>
-                <span style={{ color: pdfTheme.colors.textMuted }}>สถานะ:</span>
-                <span style={{
-                  display: 'inline-block',
-                  padding: '2px 10px',
-                  borderRadius: pdfTheme.radius.sm,
-                  background: badgeColors.bg,
-                  color: badgeColors.text,
-                  fontWeight: 700,
-                  fontSize: pdfTheme.size.small,
-                  width: 'fit-content',
-                }}>
-                  {statusBadge.label}
-                </span>
-              </>
-            )}
-          </div>
+              fontSize: `${pdfTheme.size.micro}px`,
+              textAlign: 'center',
+              alignSelf: 'center',
+            }}>
+              {statusBadge.label}
+            </div>
+          )}
         </div>
       </div>
 
       {/* ─── Accent Stripe ─── */}
       <div style={{
-        height: '4px',
+        height: '3px',
         background: `linear-gradient(90deg, ${accentColor} 0%, ${accentColor} 70%, ${pdfTheme.colors.primary} 100%)`,
-        marginTop: '14px',
+        marginTop: '8px',
         borderRadius: pdfTheme.radius.sm,
       }} />
     </header>

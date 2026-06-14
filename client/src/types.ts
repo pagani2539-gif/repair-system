@@ -82,6 +82,8 @@ export interface InventoryItem {
   requires_sn: number;
   image_path?: string;
   storage_location?: string;
+  unit_price?: number;
+  warranty_months?: number;
   created_at: string;
   updated_at: string;
 }
@@ -114,6 +116,7 @@ export interface Withdrawal {
   location_snapshot?: string;
   type: string;
   note?: string;
+  return_due_date?: string;
   created_at: string;
   items_summary?: string;
   items_missing_sn?: number;
@@ -164,6 +167,24 @@ export interface DashboardData {
     total_spent: number;
     recentPurchaseOrders: (PurchaseOrder & { total_cost?: number; total_items?: number })[];
   };
+  supervisors?: {
+    name: string;
+    station_count: number;
+    stations_list: string;
+    total_repairs: number;
+    active_repairs: number;
+  }[];
+  unassignedStationsCount?: number;
+  claimsKpis?: {
+    total: number;
+    pending: number;
+    in_progress: number;
+    completed: number;
+  };
+  inventoryConditions?: {
+    condition: string;
+    count: number;
+  }[];
 }
 
 export interface GlobalSearchResults {
@@ -194,6 +215,7 @@ export interface InventoryTransaction {
   quantity_returned: number;
   project_name?: string;
   location?: string;
+  location_snapshot?: string;
   station_id?: number;
   station_name?: string;
   station_code?: string;
@@ -210,6 +232,7 @@ export interface InventoryTransaction {
   withdrawal_id?: number;
   status?: string;
   return_image?: string;
+  return_due_date?: string;
 }
 
 export interface PurchaseOrderItem {
@@ -243,6 +266,8 @@ export interface PurchaseOrder {
   buyer_email?: string;
   created_at: string;
   updated_at: string;
+  approved_by?: string;
+  approved_at?: string;
   item_count?: number;
   total_price?: number;
   items?: PurchaseOrderItem[];
@@ -351,5 +376,44 @@ export interface CompanyLogo {
   is_default: number;
   company_id: number | null;
   uploaded_at?: string;
+}
+
+export interface SystemSettings {
+  line_token_repair?: string;
+  line_token_stock?: string;
+  [key: string]: string | undefined;
+}
+
+
+export interface AuditLog {
+  id: number;
+  entity_type: string;
+  entity_id: number;
+  action: string;
+  old_data?: string | null;
+  new_data?: string | null;
+  user_name: string;
+  created_at: string;
+}
+
+export interface AssetLifecycleItem {
+  instance_id: number;
+  serial_number: string;
+  status: string;
+  current_location: string;
+  station_id: number;
+  installed_at: string;
+  inventory_id: number;
+  device_name: string;
+  model?: string;
+  unit_price: number;
+  warranty_months: number;
+  station_name?: string;
+  station_code?: string;
+  total_repair_cost: number;
+  age_months: number;
+  is_expired_warranty: boolean;
+  cost_exceeds_threshold: boolean;
+  recommended_replacement: boolean;
 }
 

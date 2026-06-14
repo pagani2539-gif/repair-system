@@ -12,7 +12,9 @@ import type { TableColumn, TableAction } from '../types/table.types';
 import {
   Boxes,
   Plus,
-  Trash,
+  Trash2,
+  SquarePen,
+  Barcode,
   Pencil,
   Image as ImageIcon,
   XCircle,
@@ -24,9 +26,10 @@ import {
   ArrowUpCircle,
   ArrowDownCircle,
   RefreshCcw,
-  Tag,
-  Clock
+  Download
 } from 'lucide-react';
+import { exportToCsv } from '../utils/csvExporter';
+import { compressImage } from '../utils/imageCompressor';
 import BaseDataTable from '../components/tables/BaseDataTable';
 import TableToolbar from '../components/tables/TableToolbar';
 import TablePagination from '../components/tables/TablePagination';
@@ -34,27 +37,47 @@ import { useTableUrlState } from '../hooks/useTableUrlState';
 import { ProvideSnModal } from '../components/ProvideSnModal';
 
 const InventoryList: React.FC = () => {
-  const { notify, refreshUnreadCounts } = useNotification();
+  const { notify, confirm, refreshUnreadCounts } = useNotification();
   const { hasPermission } = useAuth();
   const { urlState, setTableState } = useTableUrlState(20);
 
   const [showModal, setShowModal] = useState<boolean>(false);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
   const [formData, setFormData] = useState({
-    name: '', model: '', description: '', quantity: 0, min_stock: 10, requires_sn: 1, storage_location: ''
+    name: '', model: '', description: '', quantity: 0, min_stock: 10, requires_sn: 1, storage_location: '', unit_price: 0, warranty_months: 36
   });
 
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  const handleInventoryImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const compressed = await compressImage(file);
+      setSelectedImage(compressed);
+      const reader = new FileReader();
+      reader.onloadend = () => setImagePreview(reader.result as string);
+      reader.readAsDataURL(compressed);
+    } catch (err) {
+      console.error('Image compression failed:', err);
+      setSelectedImage(file);
+      const reader = new FileReader();
+      reader.onloadend = () => setImagePreview(reader.result as string);
+      reader.readAsDataURL(file);
+    }
+  };
   const [snModal, setSnModal] = useState<{
     isOpen: boolean;
     item: InventoryItem | null;
     existingSns: string[];
+    instances: Array<{ id: number; serial_number: string; condition: string }>;
   }>({
     isOpen: false,
     item: null,
     existingSns: [],
+    instances: [],
   });
 
   // For Detail Drawer History
@@ -108,11 +131,31 @@ const InventoryList: React.FC = () => {
   const handleOpenModal = (item?: InventoryItem) => {
     if (item) {
       setEditingItem(item);
-      setFormData({ name: item.name, model: item.model || '', description: item.description || '', quantity: item.quantity, min_stock: item.min_stock, requires_sn: item.requires_sn, storage_location: item.storage_location || '' });
+      setFormData({
+        name: item.name,
+        model: item.model || '',
+        description: item.description || '',
+        quantity: item.quantity,
+        min_stock: item.min_stock,
+        requires_sn: item.requires_sn,
+        storage_location: item.storage_location || '',
+        unit_price: item.unit_price || 0,
+        warranty_months: item.warranty_months || 36
+      });
       setImagePreview(item.image_path ? `${UPLOAD_URL}/uploads/${item.image_path}` : null);
     } else {
       setEditingItem(null);
-      setFormData({ name: '', model: '', description: '', quantity: 0, min_stock: 10, requires_sn: 1, storage_location: '' });
+      setFormData({
+        name: '',
+        model: '',
+        description: '',
+        quantity: 0,
+        min_stock: 10,
+        requires_sn: 1,
+        storage_location: '',
+        unit_price: 0,
+        warranty_months: 36
+      });
       setImagePreview(null);
     }
     setSelectedImage(null);
@@ -128,6 +171,8 @@ const InventoryList: React.FC = () => {
     payload.append('min_stock', String(Math.max(0, Number(formData.min_stock) || 0)));
     payload.append('requires_sn', String(formData.requires_sn));
     payload.append('storage_location', formData.storage_location.trim());
+    payload.append('unit_price', String(Math.max(0, Number(formData.unit_price) || 0)));
+    payload.append('warranty_months', String(Math.max(0, Number(formData.warranty_months) || 0)));
 
     if (selectedImage) {
       payload.append('image', selectedImage);
@@ -163,11 +208,31 @@ const InventoryList: React.FC = () => {
       setShowModal(false);
       await fetchData();
       refreshUnreadCounts();
-    } catch (error: any) {
-      notify(error.response?.data?.message || 'เกิดข้อผิดพลาดในการบันทึกข้อมูล', 'error');
+    } catch (error) {
+      const err = error as { response?: { data?: { message?: string } } };
+      notify(err.response?.data?.message || 'เกิดข้อผิดพลาดในการบันทึกข้อมูล', 'error');
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleExportExcel = () => {
+    const headers = [
+      'ชื่ออุปกรณ์', 'รุ่น/Model', 'คำอธิบาย', 'ที่เก็บอุปกรณ์', 'จำนวนคงเหลือ', 'จุดเตือนสต็อกขั้นต่ำ', 'ราคาต่อหน่วย (บาท)', 'ระยะรับประกัน (เดือน)', 'ต้องมี S/N'
+    ];
+    const rows = filteredData.map(item => [
+      item.name,
+      item.model || '-',
+      item.description || '-',
+      item.storage_location || '-',
+      item.quantity,
+      item.min_stock,
+      item.unit_price || 0,
+      item.warranty_months || 0,
+      item.requires_sn === 1 ? 'ใช่' : 'ไม่'
+    ]);
+    exportToCsv(`inventory_export_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`, headers, rows);
+    notify('ส่งออกข้อมูล Excel เรียบร้อยแล้ว');
   };
 
   const fetchItemHistory = async (itemId: number) => {
@@ -196,6 +261,7 @@ const InventoryList: React.FC = () => {
         isOpen: true,
         item,
         existingSns,
+        instances,
       });
     } catch {
       notify('ไม่สามารถดึงข้อมูล Serial Number ได้', 'error');
@@ -204,12 +270,21 @@ const InventoryList: React.FC = () => {
 
   useEffect(() => {
     if (selectedHistoryItemId !== null) {
-      fetchItemHistory(selectedHistoryItemId);
+      const timer = setTimeout(() => {
+        fetchItemHistory(selectedHistoryItemId);
+      }, 0);
+      return () => clearTimeout(timer);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedHistoryItemId]);
 
   const handleDelete = async (id: number) => {
-    if (confirm('คุณต้องการลบอุปกรณ์นี้ออกจากระบบจริงหรือไม่?')) {
+    const isConfirmed = await confirm({
+      title: 'ยืนยันการลบอุปกรณ์',
+      message: 'คุณต้องการลบอุปกรณ์นี้ออกจากระบบจริงหรือไม่? การดำเนินการนี้ไม่สามารถย้อนกลับได้',
+      variant: 'danger'
+    });
+    if (isConfirmed) {
       try {
         await inventoryApi.delete(id);
         notify('ลบอุปกรณ์เรียบร้อยแล้ว');
@@ -291,7 +366,7 @@ const InventoryList: React.FC = () => {
               <span style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--text-muted)' }}>min: {min}</span>
             </div>
             <div className="qty-progress-track">
-              <div className="qty-progress-fill" style={{ width: `${ratio}%`, background: accent }} />
+              <div className="qty-progress-fill" style={{ transform: `scaleX(${ratio / 100})`, background: accent }} />
             </div>
           </div>
         );
@@ -320,9 +395,9 @@ const InventoryList: React.FC = () => {
   ];
 
   const actions: TableAction<InventoryItem>[] = [
-    { id: 'edit', label: 'แก้ไขข้อมูล', icon: <Pencil size={14} />, onClick: (row) => handleOpenModal(row) },
-    { id: 'sn', label: 'จัดการ S/N', icon: <Zap size={14} />, onClick: (row) => handleOpenSnModal(row) },
-    { id: 'delete', label: 'ลบอุปกรณ์', icon: <Trash size={14} />, variant: 'danger', onClick: (row) => handleDelete(row.id), hidden: () => !hasPermission('delete.inventory') }
+    { id: 'edit', label: 'แก้ไขข้อมูล', icon: <SquarePen size={14} />, onClick: (row) => handleOpenModal(row), inline: true },
+    { id: 'sn', label: 'จัดการ S/N', icon: <Barcode size={14} />, onClick: (row) => handleOpenSnModal(row), inline: true },
+    { id: 'delete', label: 'ลบอุปกรณ์', icon: <Trash2 size={14} />, variant: 'danger', onClick: (row) => handleDelete(row.id), hidden: () => !hasPermission('delete.inventory') }
   ];
 
   const renderDetailDrawer = useCallback((item: InventoryItem) => {
@@ -351,7 +426,9 @@ const InventoryList: React.FC = () => {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', fontSize: '0.9rem' }}>
               <div><strong>ที่เก็บ:</strong> {item.storage_location || '-'}</div>
               <div><strong>จำนวนคงเหลือ:</strong> {item.quantity} ชิ้น (แจ้งเตือนที่ {item.min_stock} ชิ้น)</div>
-              <div><strong>ประเภทการติดตาม:</strong> {item.requires_sn ? 'ต้องระบุ Serial Number' : 'ไม่ระบุ Serial Number'}</div>
+              <div><strong>ราคาต่อหน่วย:</strong> {item.unit_price ? `${item.unit_price.toLocaleString()} บาท` : '0 บาท'}</div>
+              <div><strong>การรับประกัน:</strong> {item.warranty_months ? `${item.warranty_months} เดือน` : '36 เดือน'}</div>
+              <div><strong>ประเภทการติดตาม:</strong> {item.requires_sn ? 'ต้องระบุหมายเลขเครื่อง (S/N)' : 'ไม่ระบุหมายเลขเครื่อง (S/N)'}</div>
               <div><strong>คำอธิบาย:</strong> {item.description || '-'}</div>
             </div>
           </Card>
@@ -413,7 +490,10 @@ const InventoryList: React.FC = () => {
       <div style={{ maxWidth: '1400px', margin: '0 auto', padding: '2rem 2.5rem' }}>
         <div className="page-header boot-animate stagger-0" style={{ marginBottom: '2rem' }}>
           <div className="page-title"><h2>จัดการอุปกรณ์และสต็อก</h2><p>เพิ่ม แก้ไข และติดตามจำนวนอุปกรณ์คงเหลือในระบบ</p></div>
-          <Button variant="primary" icon={<Plus size={20} />} onClick={() => handleOpenModal()}>เพิ่มอุปกรณ์ใหม่</Button>
+          <div style={{ display: 'flex', gap: '12px' }}>
+            <Button variant="outline" icon={<Download size={20} />} onClick={handleExportExcel}>ส่งออก Excel</Button>
+            <Button variant="primary" icon={<Plus size={20} />} onClick={() => handleOpenModal()}>เพิ่มอุปกรณ์ใหม่</Button>
+          </div>
         </div>
 
       <div className="stats-grid boot-animate stagger-1" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.25rem', marginBottom: '2rem' }}>
@@ -522,7 +602,7 @@ const InventoryList: React.FC = () => {
                         </div>
                       </div>
                     )}
-                    <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if(f){ setSelectedImage(f); const r = new FileReader(); r.onloadend = () => setImagePreview(r.result as string); r.readAsDataURL(f); } }} />
+                    <input type="file" accept="image/*" style={{ display: 'none' }} onChange={handleInventoryImageChange} />
                   </label>
                 </div>
               </div>
@@ -544,7 +624,7 @@ const InventoryList: React.FC = () => {
                   disabled={saving}
                 />
                 <div className="form-group">
-                  <label>การติดตาม Serial Number</label>
+                  <label>การติดตามหมายเลขเครื่อง (S/N)</label>
                   <label
                     style={{
                       minHeight: '46px',
@@ -571,6 +651,26 @@ const InventoryList: React.FC = () => {
                   </label>
                 </div>
               </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.25rem' }}>
+                <Input
+                  label="ราคาต่อหน่วย (บาท)"
+                  type="number"
+                  min={0}
+                  value={formData.unit_price}
+                  onChange={e => setFormData({ ...formData, unit_price: Number(e.target.value) })}
+                  disabled={saving}
+                  placeholder="เช่น 1500"
+                />
+                <Input
+                  label="ระยะรับประกัน (เดือน)"
+                  type="number"
+                  min={0}
+                  value={formData.warranty_months}
+                  onChange={e => setFormData({ ...formData, warranty_months: Number(e.target.value) })}
+                  disabled={saving}
+                  placeholder="เช่น 36"
+                />
+              </div>
               <TextArea
                 label="รายละเอียดเพิ่มเติม"
                 value={formData.description}
@@ -591,11 +691,19 @@ const InventoryList: React.FC = () => {
 
       <ProvideSnModal
         isOpen={snModal.isOpen}
-        onClose={() => setSnModal({ isOpen: false, item: null, existingSns: [] })}
+        onClose={() => setSnModal({ isOpen: false, item: null, existingSns: [], instances: [] })}
         onSuccess={fetchData}
         title={`จัดการ Serial Number: ${snModal.item?.name || ''}`}
         totalQuantity={snModal.item?.quantity || 0}
         existingSns={snModal.existingSns}
+        instances={snModal.instances}
+        onUpdateCondition={async (instanceId, condition) => {
+          await inventoryApi.updateInstanceCondition(instanceId, condition);
+          setSnModal(prev => ({
+            ...prev,
+            instances: prev.instances.map(inst => inst.id === instanceId ? { ...inst, condition } : inst),
+          }));
+        }}
         onSubmit={async (newSns) => {
           if (!snModal.item) return;
           await inventoryApi.addSerialNumbers(snModal.item.id, newSns);

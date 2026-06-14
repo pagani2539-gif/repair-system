@@ -20,26 +20,36 @@ const logTransaction = (data, callback) => {
     return_image = null
   } = data;
 
-  db.run(`
-    INSERT INTO inventory_transactions (
-      inventory_id, instance_id, transaction_type, 
+  const insertTx = (resolvedLocation) => {
+    db.run(`
+      INSERT INTO inventory_transactions (
+        inventory_id, instance_id, transaction_type, 
+        quantity_added, quantity_withdrawn, quantity_borrowed, quantity_returned,
+        project_name, location, station_id, user_name, note, withdrawal_id, return_image
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      inventory_id, instance_id, transaction_type,
       quantity_added, quantity_withdrawn, quantity_borrowed, quantity_returned,
-      project_name, location, station_id, user_name, note, withdrawal_id, return_image
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? IS NOT NULL THEN (SELECT name FROM stations WHERE id = ?) ELSE ? END, ?, ?, ?, ?, ?)
-  `, [
-    inventory_id, instance_id, transaction_type,
-    quantity_added, quantity_withdrawn, quantity_borrowed, quantity_returned,
-    project_name, station_id || null, station_id || null, location, station_id || null, user_name, note, withdrawal_id, return_image
-  ], function(err) {
-    if (!err) {
-      logAudit('inventory_transaction', this.lastID, 'inventory movement', null, data, user_name || 'System').catch(e => console.error(e));
-    }
-    if (callback) callback(err, this.lastID);
-  });
+      project_name, resolvedLocation, station_id, user_name, note, withdrawal_id, return_image
+    ], function(err) {
+      if (!err) {
+        logAudit('inventory_transaction', this.lastID, 'inventory movement', null, data, user_name || 'System').catch(e => console.error(e));
+      }
+      if (callback) callback(err, this.lastID);
+    });
+  };
+
+  if (station_id && !location) {
+    db.get('SELECT name FROM stations WHERE id = ?', [station_id], (err, row) => {
+      insertTx(row ? row.name : null);
+    });
+  } else {
+    insertTx(location);
+  }
 };
 
 exports.getAllTransactions = (req, res) => {
-  const { inventory_id, station_id, withdrawal_id } = req.query;
+  const { inventory_id, station_id, withdrawal_id, pending_only } = req.query;
   let query = `
     SELECT *
     FROM transactions_view
@@ -57,6 +67,9 @@ exports.getAllTransactions = (req, res) => {
   if (withdrawal_id) {
     conditions.push(`withdrawal_id = ?`);
     params.push(withdrawal_id);
+  }
+  if (pending_only === 'true') {
+    conditions.push(`(status IS NULL OR status != 'RETURNED') AND (transaction_type = 'BORROW' OR (transaction_type = 'WITHDRAW' AND withdrawal_type IN ('ทดสอบ', 'สำรองใช้งาน', 'ยืมใช้งาน', 'ยืม')))`);
   }
   if (conditions.length > 0) {
     query += ` WHERE ` + conditions.join(' AND ');
@@ -84,9 +97,16 @@ exports.addStock = (req, res) => {
       // 2. If serial numbers provided, create instances
       if (serial_numbers && serial_numbers.length > 0) {
         let processed = 0;
+        let failed = false;
         serial_numbers.forEach(sn => {
-          db.run(`INSERT INTO inventory_instances (inventory_id, serial_number, status) VALUES (?, ?, 'In Stock')`, 
+          db.run(`INSERT INTO inventory_instances (inventory_id, serial_number, status) VALUES (?, ?, 'In Stock')`,
             [inventory_id, sn], (err) => {
+            if (failed) return;
+            if (err) {
+              failed = true;
+              db.run('ROLLBACK');
+              return res.status(500).json({ error: err.message });
+            }
             processed++;
             if (processed === serial_numbers.length) {
               // 3. Log the transaction
@@ -122,64 +142,6 @@ exports.addStock = (req, res) => {
   });
 };
 
-exports.borrowItem = (req, res) => {
-  const { inventory_id, instance_id, quantity, project_name, location, station_id, note } = req.body;
-  const user_name = req.user.full_name;
-
-  db.serialize(() => {
-    db.run('BEGIN TRANSACTION');
-
-    // 1. Check stock
-    db.get('SELECT quantity FROM inventory WHERE id = ?', [inventory_id], (err, item) => {
-      if (err || !item || item.quantity < quantity) {
-        db.run('ROLLBACK');
-        return res.status(400).json({ message: 'สต็อกไม่เพียงพอ' });
-      }
-
-      // 2. Update inventory
-      db.run('UPDATE inventory SET quantity = quantity - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', 
-        [quantity, inventory_id], (err) => {
-        if (err) { db.run('ROLLBACK'); return res.status(500).json({ error: err.message }); }
-
-        // 3. Update instance status if provided
-        if (instance_id) {
-          db.run(`UPDATE inventory_instances SET status = 'Borrowed', current_location = ?, station_id = ? WHERE id = ?`, 
-            [location, station_id || null, instance_id], (err) => {
-            if (err) { db.run('ROLLBACK'); return res.status(500).json({ error: err.message }); }
-            
-            // 4. Log transaction
-            logTransaction({
-              inventory_id, instance_id, transaction_type: 'BORROW',
-              quantity_borrowed: quantity, user_name, project_name, location, station_id, note
-            }, (err) => {
-              if (err) { db.run('ROLLBACK'); return res.status(500).json({ error: err.message }); }
-              db.run('COMMIT');
-              const { checkAndGenerateAutoPOs } = require('../utils/autoPo');
-              checkAndGenerateAutoPOs((autoPoErr) => {
-                if (autoPoErr) console.error('Error auto-generating POs after borrow:', autoPoErr.message);
-              });
-              res.json({ message: 'บันทึกการยืมเรียบร้อย' });
-            });
-          });
-        } else {
-          // Bulk borrow
-          logTransaction({
-            inventory_id, transaction_type: 'BORROW',
-            quantity_borrowed: quantity, user_name, project_name, location, station_id, note
-          }, (err) => {
-            if (err) { db.run('ROLLBACK'); return res.status(500).json({ error: err.message }); }
-            db.run('COMMIT');
-            const { checkAndGenerateAutoPOs } = require('../utils/autoPo');
-            checkAndGenerateAutoPOs((autoPoErr) => {
-              if (autoPoErr) console.error('Error auto-generating POs after borrow (bulk):', autoPoErr.message);
-            });
-            res.json({ message: 'บันทึกการยืมเรียบร้อย' });
-          });
-        }
-      });
-    });
-  });
-};
 
 exports.returnItem = (req, res) => {
   const { inventory_id, instance_id, quantity, condition, note, transaction_id } = req.body;

@@ -13,12 +13,13 @@ import {
   Download,
   Printer,
   Loader2,
-  Calendar
+  Calendar,
+  TrendingUp
 } from 'lucide-react';
 import { inventoryApi, withdrawalApi, purchaseOrderApi } from '../api';
-import type { InventoryItem, Withdrawal, PurchaseOrder } from '../types';
+import type { InventoryItem, Withdrawal, PurchaseOrder, AssetLifecycleItem } from '../types';
 
-type ReportType = 'inventory_summary' | 'low_stock' | 'withdrawals' | 'purchase_orders';
+type ReportType = 'inventory_summary' | 'low_stock' | 'withdrawals' | 'purchase_orders' | 'asset_lifecycle';
 
 const Reports: React.FC = () => {
   const { notify } = useNotification();
@@ -123,6 +124,9 @@ const Reports: React.FC = () => {
           });
         }
         return data;
+      } else if (type === 'asset_lifecycle') {
+        const data = await inventoryApi.getLifecycleReport();
+        return data;
       }
       return [];
     } catch {
@@ -204,13 +208,17 @@ const Reports: React.FC = () => {
     } 
     else if (type === 'withdrawals') {
       const items = data as Withdrawal[];
-      const headers = ['รหัสใบเบิก', 'ผู้รับ/ผู้เบิก', 'ประเภทงานเบิก', 'โครงการ/หน้างาน', 'สถานที่ติดตั้ง', 'รายการพัสดุที่เบิก', 'วันที่ทำรายการ'];
+      const headers = ['รหัสใบเบิก', 'ผู้รับ/ผู้เบิก', 'ประเภทงานเบิก', 'โครงการ/หน้างาน', 'รหัสสถานี', 'ชื่อสถานี', 'พื้นที่ย่อย', 'จังหวัด', 'ภูมิภาค', 'รายการพัสดุที่เบิก', 'วันที่ทำรายการ'];
       const rows = items.map(w => [
         w.id,
         w.recipient,
         w.type,
         w.project_name || '-',
-        w.location || '-',
+        w.station_code || '-',
+        w.station_name || w.location_snapshot || w.location || '-',
+        w.station_area_name || '-',
+        w.station_province || '-',
+        w.station_region || '-',
         w.items_summary || '-',
         formatDateThai(w.created_at)
       ]);
@@ -219,18 +227,36 @@ const Reports: React.FC = () => {
     } 
     else if (type === 'purchase_orders') {
       const items = data as PurchaseOrder[];
-      const headers = ['เลขที่ใบสั่งซื้อ', 'ประเภทผู้ออกเอกสาร', 'จำนวนรายการอุปกรณ์', 'ราคารวมสั่งซื้อ (บาท)', 'สถานะใบสั่งซื้อ', 'วันที่อัปเดตล่าสุด', 'หมายเหตุประกอบ'];
+      const headers = ['เลขที่ใบสั่งซื้อ', 'ประเภทผู้ออกเอกสาร', 'จำนวนรายการอุปกรณ์', 'สถานะใบสั่งซื้อ', 'วันที่อัปเดตล่าสุด', 'หมายเหตุประกอบ'];
       const rows = items.map(po => [
         po.po_no,
         po.created_by === 'System' ? 'ระบบอัตโนมัติ' : 'เจ้าหน้าที่คลัง',
         po.item_count || 0,
-        po.total_price || 0,
         po.status === 'Draft' ? 'แบบร่าง' : po.status === 'Pending' ? 'สั่งซื้อแล้ว/รอตรวจรับ' : po.status === 'Received' ? 'รับของแล้ว' : 'ยกเลิก',
         formatDateThai(po.updated_at),
         po.note || '-'
       ]);
       const csvStr = getCsvString(headers, rows);
       downloadCsv(csvStr, `purchase_orders${periodSuffix}`);
+    }
+    else if (type === 'asset_lifecycle') {
+      const items = data as AssetLifecycleItem[];
+      const headers = ['Serial Number', 'ชื่ออุปกรณ์', 'รุ่น (Model)', 'ด่านติดตั้ง', 'ราคาอะไหล่/ชิ้น', 'ระยะรับประกัน (เดือน)', 'อายุการใช้งาน (เดือน)', 'ค่าซ่อมบำรุงสะสม', 'หมดประกันแล้ว', 'ค่าซ่อมบำรุงเกิน 70%', 'คำแนะนำ'];
+      const rows = items.map(i => [
+        i.serial_number,
+        i.device_name,
+        i.model || '-',
+        i.station_name ? `${i.station_code ? `[${i.station_code}] ` : ''}${i.station_name}` : i.current_location,
+        i.unit_price,
+        i.warranty_months,
+        i.age_months,
+        i.total_repair_cost,
+        i.is_expired_warranty ? 'หมดประกัน' : 'ยังไม่หมดประกัน',
+        i.cost_exceeds_threshold ? 'เกิน 70%' : 'ไม่เกิน 70%',
+        i.recommended_replacement ? 'แนะนำให้สับเปลี่ยน (Replace)' : 'ใช้งานต่อได้ (Keep)'
+      ]);
+      const csvStr = getCsvString(headers, rows);
+      downloadCsv(csvStr, `asset_lifecycle_analysis_${today}`);
     }
 
     notify('ส่งออกข้อมูล Excel (CSV) สำเร็จ');
@@ -303,7 +329,9 @@ const Reports: React.FC = () => {
         `#${w.id}`,
         w.recipient,
         w.type,
-        w.project_name || w.location || '-',
+        w.project_name 
+          ? `${w.project_name} (${w.station_code ? `[${w.station_code}] ` : ''}${w.station_name || w.location_snapshot || w.location || '-'}${w.station_area_name ? ` - ${w.station_area_name}` : ''}${w.station_province ? ` จ.${w.station_province}` : ''})` 
+          : `${w.station_code ? `[${w.station_code}] ` : ''}${w.station_name || w.location_snapshot || w.location || '-'}${w.station_area_name ? ` - ${w.station_area_name}` : ''}${w.station_province ? ` จ.${w.station_province}` : ''}`,
         w.items_summary || '-',
         formatDateThai(w.created_at).split(' เวลา ')[0]
       ]);
@@ -312,22 +340,44 @@ const Reports: React.FC = () => {
     else if (type === 'purchase_orders') {
       const items = data as PurchaseOrder[];
       title = 'รายงานสรุปประวัติจัดสั่งซื้อสินค้าคลัง (Purchase Orders)';
-      headers = ['เลขที่ใบสั่งซื้อ', 'ออกโดย', 'จำนวนสินค้า', 'ราคารวม (บาท)', 'สถานะจัดซื้อ', 'ปรับปรุงล่าสุด'];
+      headers = ['เลขที่ใบสั่งซื้อ', 'ออกโดย', 'จำนวนสินค้า', 'สถานะจัดซื้อ', 'ปรับปรุงล่าสุด'];
       rows = items.map(po => {
         const stat = po.status === 'Draft' ? 'แบบร่าง' : po.status === 'Pending' ? 'สั่งซื้อแล้ว/รอตรวจรับ' : po.status === 'Received' ? 'ตรวจรับเรียบร้อย' : 'ยกเลิก';
         return [
           po.po_no,
-          po.created_by === 'System' ? '🤖 ระบบอัตโนมัติ' : 'เจ้าหน้าที่คลัง',
+          po.created_by === 'System' ? 'ระบบอัตโนมัติ' : 'เจ้าหน้าที่คลัง',
           `${po.item_count} รายการ`,
-          (po.total_price || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 }),
           stat,
           formatDateThai(po.updated_at).split(' เวลา ')[0]
         ];
       });
-      const grandTotal = items.reduce((acc, curr) => acc + (curr.total_price || 0), 0);
       totals = [
-        { label: 'จำนวนใบสั่งซื้อรวม:', value: `${items.length} ฉบับ` },
-        { label: 'มูลค่าการสั่งจัดซื้อรวม:', value: `${grandTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })} บาท` }
+        { label: 'จำนวนใบสั่งซื้อรวม:', value: `${items.length} ฉบับ` }
+      ];
+    }
+    else if (type === 'asset_lifecycle') {
+      const items = data as AssetLifecycleItem[];
+      title = 'รายงานวิเคราะห์รอบอายุและค่าใช้จ่ายสะสม (Asset Lifecycle & Maintenance Analysis)';
+      headers = ['Serial No.', 'อุปกรณ์', 'ด่าน/สถานที่', 'อายุใช้งาน', 'ค่าซ่อมสะสม', 'สถานะ/คำแนะนำ'];
+      rows = items.map(i => {
+        const expiredStr = i.is_expired_warranty ? 'หมดประกัน' : 'ในประกัน';
+        const costStr = i.cost_exceeds_threshold ? 'ค่าซ่อมเกิน 70%' : 'ปกติ';
+        const recStr = i.recommended_replacement 
+          ? `แนะนำสับเปลี่ยน (${costStr === 'ปกติ' ? expiredStr : costStr})` 
+          : 'ปกติ (Keep)';
+        return [
+          i.serial_number,
+          `${i.device_name} (${i.model || '-'})`,
+          i.station_name ? `${i.station_code || ''} ${i.station_name}` : i.current_location,
+          `${i.age_months} ด. (${expiredStr})`,
+          `${i.total_repair_cost.toLocaleString()} บ.`,
+          recStr
+        ];
+      });
+      const replacedCount = items.filter(i => i.recommended_replacement).length;
+      totals = [
+        { label: 'อุปกรณ์ในวิเคราะห์ทั้งหมด:', value: `${items.length} รายการ` },
+        { label: 'อุปกรณ์แนะนำสับเปลี่ยน (Replace):', value: `${replacedCount} รายการ` }
       ];
     }
 
@@ -353,10 +403,10 @@ const Reports: React.FC = () => {
   };
 
   return (
-    <div className="reports-page" style={{ padding: '2rem 2.5rem', backgroundColor: '#f8fafc', minHeight: '100vh' }}>
+    <div className="reports-page" style={{ padding: '2rem 2.5rem', backgroundColor: 'var(--bg-app)', minHeight: '100vh' }}>
       <div className="page-header" style={{ marginBottom: '2rem' }}>
         <div className="page-title">
-          <h2>รายงานสรุปสถิติสำหรับผู้บริหาร (Executive Reports)</h2>
+          <h2>รายงานสรุปสถิติสำหรับผู้บริหาร</h2>
           <p>ระบบออกเอกสารรายงาน พิมพ์ A4 PDF และดาวน์โหลดข้อมูลพัสดุในรูปแบบ Excel สำหรับส่งข้อมูลเสนอผู้บริหาร</p>
         </div>
       </div>
@@ -369,14 +419,14 @@ const Reports: React.FC = () => {
               <Calendar size={18} />
             </div>
             <div>
-              <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: '#1e293b' }}>เลือกช่วงเวลาของรายงาน</h3>
+              <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-main)' }}>เลือกช่วงเวลาของรายงาน</h3>
               <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted)' }}>กำหนดขอบเขตวันที่ของข้อมูลสำหรับรายงานประวัติเบิกจ่ายและใบสั่งซื้อ</p>
             </div>
           </div>
           
           <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', flexWrap: 'wrap' }}>
             {/* Quick Presets */}
-            <div style={{ display: 'flex', gap: '0.25rem', background: '#f1f5f9', padding: '4px', borderRadius: '10px' }}>
+            <div style={{ display: 'flex', gap: '0.25rem', background: 'var(--bg-app)', padding: '4px', borderRadius: '10px' }}>
               {([
                 { label: 'ทั้งหมด', value: 'all' },
                 { label: '30 วันล่าสุด', value: '30_days' },
@@ -391,12 +441,12 @@ const Reports: React.FC = () => {
                     padding: '6px 12px',
                     borderRadius: '8px',
                     border: 'none',
-                    background: quickFilter === opt.value ? '#ffffff' : 'transparent',
-                    color: quickFilter === opt.value ? '#1e293b' : '#64748b',
+                    background: quickFilter === opt.value ? 'var(--bg-card)' : 'transparent',
+                    color: quickFilter === opt.value ? 'var(--text-main)' : 'var(--text-muted)',
                     fontSize: '0.8rem',
                     fontWeight: 700,
                     cursor: 'pointer',
-                    boxShadow: quickFilter === opt.value ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                    boxShadow: quickFilter === opt.value ? 'var(--shadow-sm)' : 'none',
                     transition: 'all 0.2s'
                   }}
                 >
@@ -407,13 +457,13 @@ const Reports: React.FC = () => {
             
             {/* Date Pickers */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#64748b' }}>ตั้งแต่</span>
+              <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)' }}>ตั้งแต่</span>
               <DatePicker
                 value={startDate}
                 onChange={(val) => handleDateChange('start', val)}
                 placeholder="เริ่มวันที่"
               />
-              <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#64748b' }}>ถึง</span>
+              <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)' }}>ถึง</span>
               <DatePicker
                 value={endDate}
                 onChange={(val) => handleDateChange('end', val)}
@@ -434,14 +484,14 @@ const Reports: React.FC = () => {
             </div>
             <div>
               <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700 }}>รายงานสรุปพัสดุคงคลังทั้งหมด</h3>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>ยอดจำนวนสินค้าและมูลค่าคลังคงคลัง</span>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>ภาพรวมจำนวนพัสดุคงคลังทั้งหมด</span>
             </div>
           </div>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', margin: 0, minHeight: '40px' }}>
             แสดงรายละเอียดปริมาณพัสดุอะไหล่ในสต็อก เกณฑ์ระดับความปลอดภัย สถานะภาพคงเหลือ และการตรวจนับพัสดุภาพรวมของระบบ
           </p>
           
-          <div style={{ fontSize: '0.75rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '6px', background: '#f1f5f9', padding: '6px 10px', borderRadius: '8px', marginTop: 'auto' }}>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px', background: 'var(--bg-app)', padding: '6px 10px', borderRadius: '8px', marginTop: 'auto' }}>
             <span style={{ display: 'inline-block', width: '6px', height: '6px', backgroundColor: '#3b82f6', borderRadius: '50%' }}></span>
             ข้อมูลสรุปยอดคงเหลือจริง ณ เวลาปัจจุบัน
           </div>
@@ -454,7 +504,7 @@ const Reports: React.FC = () => {
               style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '0.8rem', fontWeight: 700 }}
             >
               {loadingReport === 'inventory_summary' ? <Loader2 className="animate-spin" size={14} /> : <Download size={14} />}
-              Excel (CSV)
+              ส่งออกไฟล์ Excel
             </Button>
             <Button
               disabled={loadingReport !== null}
@@ -480,10 +530,10 @@ const Reports: React.FC = () => {
             </div>
           </div>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', margin: 0, minHeight: '40px' }}>
-            สรุปข้อมูลสินค้าคงคลังที่ต่ำกว่าเกณฑ์ความปลอดภัยสูงสุด (min_stock) เพื่อเป็นเอกสารเสนอของบประมาณอนุมัติสั่งจัดซื้อพัสดุเพิ่มเติม
+            สรุปข้อมูลสินค้าคงคลังที่ต่ำกว่าเกณฑ์ขั้นต่ำ (min_stock) เพื่อใช้พิจารณาดำเนินการสั่งจัดซื้อพัสดุเพิ่มเติม
           </p>
 
-          <div style={{ fontSize: '0.75rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '6px', background: '#f1f5f9', padding: '6px 10px', borderRadius: '8px', marginTop: 'auto' }}>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px', background: 'var(--bg-app)', padding: '6px 10px', borderRadius: '8px', marginTop: 'auto' }}>
             <span style={{ display: 'inline-block', width: '6px', height: '6px', backgroundColor: '#f59e0b', borderRadius: '50%' }}></span>
             ข้อมูลวิเคราะห์จากสถานะคงเหลือจริง ณ เวลาปัจจุบัน
           </div>
@@ -496,7 +546,7 @@ const Reports: React.FC = () => {
               style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '0.8rem', fontWeight: 700 }}
             >
               {loadingReport === 'low_stock' ? <Loader2 className="animate-spin" size={14} /> : <Download size={14} />}
-              Excel (CSV)
+              ส่งออกไฟล์ Excel
             </Button>
             <Button
               disabled={loadingReport !== null}
@@ -525,7 +575,7 @@ const Reports: React.FC = () => {
             แสดงประวัติการเบิกสินค้าพัสดุไปใช้ โครงการที่ได้รับพัสดุ วันเวลาที่ส่งออกพัสดุ และชื่อของพนักงานผู้เบิกอุปกรณ์
           </p>
 
-          <div style={{ fontSize: '0.75rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '6px', background: '#f1f5f9', padding: '6px 10px', borderRadius: '8px', marginTop: 'auto' }}>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px', background: 'var(--bg-app)', padding: '6px 10px', borderRadius: '8px', marginTop: 'auto' }}>
             <span style={{ display: 'inline-block', width: '6px', height: '6px', backgroundColor: '#10b981', borderRadius: '50%' }}></span>
             ช่วงเวลาที่เลือก: {getSelectedRangeLabel()}
           </div>
@@ -538,7 +588,7 @@ const Reports: React.FC = () => {
               style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '0.8rem', fontWeight: 700 }}
             >
               {loadingReport === 'withdrawals' ? <Loader2 className="animate-spin" size={14} /> : <Download size={14} />}
-              Excel (CSV)
+              ส่งออกไฟล์ Excel
             </Button>
             <Button
               disabled={loadingReport !== null}
@@ -560,14 +610,14 @@ const Reports: React.FC = () => {
             </div>
             <div>
               <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700 }}>รายงานประวัติจัดสั่งซื้อพัสดุ</h3>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>สรุปยอดจัดจัดซื้อและมูลค่ารวมสะสม</span>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>สรุปประวัติและสถานะการจัดสั่งซื้อ</span>
             </div>
           </div>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', margin: 0, minHeight: '40px' }}>
-            รายงานสรุปประวัติจัดสั่งสินค้าที่ส่งซื้อให้แก่ผู้ขาย สถานะการตรวจรับสินค้า รายละเอียดเลขใบสั่งซื้อและราคาทั้งสิ้น
+            รายงานสรุปประวัติจัดสั่งซื้อพัสดุจากผู้ขาย สถานะการตรวจรับ รายละเอียดเลขใบสั่งซื้อ และจำนวนรายการที่ดำเนินการ
           </p>
 
-          <div style={{ fontSize: '0.75rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '6px', background: '#f1f5f9', padding: '6px 10px', borderRadius: '8px', marginTop: 'auto' }}>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px', background: 'var(--bg-app)', padding: '6px 10px', borderRadius: '8px', marginTop: 'auto' }}>
             <span style={{ display: 'inline-block', width: '6px', height: '6px', backgroundColor: '#6366f1', borderRadius: '50%' }}></span>
             ช่วงเวลาที่เลือก: {getSelectedRangeLabel()}
           </div>
@@ -580,13 +630,55 @@ const Reports: React.FC = () => {
               style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '0.8rem', fontWeight: 700 }}
             >
               {loadingReport === 'purchase_orders' ? <Loader2 className="animate-spin" size={14} /> : <Download size={14} />}
-              Excel (CSV)
+              ส่งออกไฟล์ Excel
             </Button>
             <Button
               disabled={loadingReport !== null}
               onClick={() => handlePrintPDF('purchase_orders')}
               className="btn-report-indigo"
               style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '0.8rem', fontWeight: 700 }}
+            >
+              <Printer size={14} />
+              พิมพ์ PDF (A4)
+            </Button>
+          </div>
+        </Card>
+
+        {/* Report 5: Asset Cost & Lifecycle Analytics */}
+        <Card style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem', borderTop: '4px solid #f43f5e' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <div style={{ backgroundColor: 'rgba(244, 63, 94, 0.06)', color: '#f43f5e', padding: '10px', borderRadius: '10px' }}>
+              <TrendingUp size={22} />
+            </div>
+            <div>
+              <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700 }}>รายงานวิเคราะห์รอบอายุและค่าใช้จ่าย</h3>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>วิเคราะห์รอบอายุหมดประกันและค่าใช้จ่ายสะสม</span>
+            </div>
+          </div>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', margin: 0, minHeight: '40px' }}>
+            แสดงรายการทรัพย์สินที่มีอายุใช้งานมากกว่าระยะรับประกัน หรือค่าซ่อมแซมสะสมที่จุดด่านซ่อมสูงเกินกว่า 70% ของมูลค่าเครื่องใหม่
+          </p>
+
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px', background: 'var(--bg-app)', padding: '6px 10px', borderRadius: '8px', marginTop: 'auto' }}>
+            <span style={{ display: 'inline-block', width: '6px', height: '6px', backgroundColor: '#f43f5e', borderRadius: '50%' }}></span>
+            วิเคราะห์คำแนะนำในการสับเปลี่ยนทรัพย์สิน (Keep/Replace)
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginTop: '0.5rem' }}>
+            <Button
+              variant="outline"
+              disabled={loadingReport !== null}
+              onClick={() => handleExportExcel('asset_lifecycle')}
+              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '0.8rem', fontWeight: 700 }}
+            >
+              {loadingReport === 'asset_lifecycle' ? <Loader2 className="animate-spin" size={14} /> : <Download size={14} />}
+              ส่งออกไฟล์ Excel
+            </Button>
+            <Button
+              disabled={loadingReport !== null}
+              onClick={() => handlePrintPDF('asset_lifecycle')}
+              className="btn-report-rose"
+              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '0.8rem', fontWeight: 700, backgroundColor: '#f43f5e', color: '#ffffff', border: 'none' }}
             >
               <Printer size={14} />
               พิมพ์ PDF (A4)
@@ -621,7 +713,7 @@ const Reports: React.FC = () => {
             }}>
               <div>
                 <h1 style={{ color: '#0f172a', fontSize: '18px', margin: 0, fontWeight: 800, lineHeight: 1.1, letterSpacing: '-0.3px' }}>
-                  CMA - CENTRAL MAINTENANCE & ASSET
+                  CMA - ระบบซ่อมบำรุงและจัดสรรพัสดุกลาง
                 </h1>
                 <p style={{ margin: '3px 0 0 0', fontSize: '10.5px', color: '#475569', fontWeight: 700 }}>
                   ระบบบริหารจัดการงานซ่อมบำรุงและพัสดุอุปกรณ์
@@ -675,7 +767,26 @@ const Reports: React.FC = () => {
               overflow: 'hidden',
               boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)'
             }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', tableLayout: 'fixed' }}>
+                <colgroup>
+                  {((type: ReportType): string[] => {
+                    switch (type) {
+                      case 'inventory_summary':
+                      case 'low_stock':
+                        return ['10%', '25%', '20%', '15%', '15%', '15%'];
+                      case 'withdrawals':
+                        return ['10%', '15%', '15%', '30%', '20%', '10%'];
+                      case 'purchase_orders':
+                        return ['20%', '20%', '15%', '15%', '15%', '15%'];
+                      case 'asset_lifecycle':
+                        return ['15%', '30%', '20%', '15%', '10%', '10%'];
+                      default:
+                        return [];
+                    }
+                  })(printData.type).map((w, idx) => (
+                    <col key={idx} style={{ width: w }} />
+                  ))}
+                </colgroup>
                 <thead>
                   <tr style={{ backgroundColor: '#475569', color: '#ffffff' }}>
                     {printData.headers.map((h, index) => (
@@ -685,7 +796,10 @@ const Reports: React.FC = () => {
                           padding: '6px 8px',
                           textAlign: index === 0 ? 'left' : (index === printData.headers.length - 1 ? 'right' : 'center'),
                           fontWeight: 700,
-                          fontSize: '11px'
+                          fontSize: '11px',
+                          wordWrap: 'break-word',
+                          whiteSpace: 'normal',
+                          overflowWrap: 'break-word'
                         }}
                       >
                         {h}
@@ -708,8 +822,11 @@ const Reports: React.FC = () => {
                           style={{
                             padding: '6px 8px',
                             textAlign: cellIdx === 0 ? 'left' : (cellIdx === row.length - 1 ? 'right' : 'center'),
-                            color: cell === 'สินค้าหมด' ? '#ef4444' : cell === 'สต็อกต่ำกว่าเกณฑ์' ? '#f59e0b' : '#334155',
-                            fontWeight: cell === 'สินค้าหมด' || cell === 'สต็อกต่ำกว่าเกณฑ์' ? 700 : 'normal'
+                            color: cell === 'สินค้าหมด' || (typeof cell === 'string' && cell.startsWith('แนะนำให้สับเปลี่ยน')) ? '#ef4444' : cell === 'สต็อกต่ำกว่าเกณฑ์' ? '#f59e0b' : '#334155',
+                            fontWeight: cell === 'สินค้าหมด' || cell === 'สต็อกต่ำกว่าเกณฑ์' || (typeof cell === 'string' && cell.startsWith('แนะนำให้สับเปลี่ยน')) ? 700 : 'normal',
+                            wordWrap: 'break-word',
+                            whiteSpace: 'normal',
+                            overflowWrap: 'break-word'
                           }}
                         >
                           {cell}
@@ -799,7 +916,7 @@ const Reports: React.FC = () => {
               paddingTop: '4px',
               borderTop: '1px solid #e2e8f0'
             }}>
-              <span>ระบบบริหารสรุปสถิติออกรายงานโดยอัตโนมัติ CMA Management System</span>
+              <span>ระบบบริหารสรุปสถิติออกรายงานโดยอัตโนมัติ CMA</span>
               <span>Ref: CMA-RP-AUTO | พิมพ์เป็นเอกสารหลักฐานการบริหารจัดการ</span>
             </div>
 

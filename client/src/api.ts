@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Repair, RepairDetail, RepairStatsResponse, InventoryItem, Withdrawal, InventoryStats, DashboardData, GlobalSearchResults, PurchaseOrder, StationDetailResponse, Station, StationArea, VendorContact, Company, CompanyLogo, User } from './types';
+import type { Repair, RepairDetail, RepairStatsResponse, InventoryItem, Withdrawal, InventoryStats, DashboardData, GlobalSearchResults, PurchaseOrder, StationDetailResponse, Station, StationArea, VendorContact, Company, CompanyLogo, User, SystemSettings, AuditLog, AssetLifecycleItem } from './types';
 
 const TOKEN_KEY = 'maintenance_auth_token';
 
@@ -69,7 +69,7 @@ export const repairApi = {
   },
   
   getUnreadCount: async () => {
-    const response = await api.get<{ repair: number; claim: number; lowStock: number; total: number; count: number }>('/repairs/unread-count');
+    const response = await api.get<{ repair: number; claim: number; lowStock: number; total: number; count: number; pendingReturns?: number }>('/repairs/unread-count');
     return response.data;
   },
   
@@ -174,8 +174,16 @@ export const inventoryApi = {
     });
     return response.data;
   },
+  updateInstanceCondition: async (instanceId: number | string, condition: string) => {
+    const response = await api.patch(`/inventory/instances/${instanceId}/condition`, { condition });
+    return response.data;
+  },
   delete: async (id: number | string) => {
     const response = await api.delete(`/inventory/${id}`);
+    return response.data;
+  },
+  getLifecycleReport: async () => {
+    const response = await api.get<AssetLifecycleItem[]>('/inventory/lifecycle-report');
     return response.data;
   }
 };
@@ -215,7 +223,7 @@ export const withdrawalApi = {
 };
 
 export const transactionApi = {
-  getAll: async (params?: { inventory_id?: number | string }) => {
+  getAll: async (params?: { inventory_id?: number | string; withdrawal_id?: number | string; station_id?: number | string; pending_only?: boolean }) => {
     const response = await api.get('/transactions', { params });
     return response.data;
   },
@@ -283,6 +291,10 @@ export const purchaseOrderApi = {
     const response = await api.post<{ id: number; po_no: string; message: string }>('/purchase-orders', data);
     return response.data;
   },
+  update: async (id: number | string, data: { status?: 'Draft' | 'Pending' | 'Approved' | 'Cancelled'; approved_by?: string }) => {
+    const response = await api.patch(`/purchase-orders/${id}`, data);
+    return response.data;
+  },
   delete: async (id: number | string) => {
     const response = await api.delete(`/purchase-orders/${id}`);
     return response.data;
@@ -307,12 +319,11 @@ export const stationApi = {
     return response.data;
   },
   getAreas: async (stationId: number | string) => {
-    const response = await api.get<StationArea[]>(`/stations/${stationId}/areas`);
-    return response.data;
+    if (stationId) { /* no-op */ }
+    return [] as StationArea[];
   },
   createArea: async (stationId: number | string, name: string) => {
-    const response = await api.post<StationArea>(`/stations/${stationId}/areas`, { name });
-    return response.data;
+    return { id: 0, station_id: Number(stationId), name, status: 1 } as StationArea;
   },
   create: async (data: Omit<Station, 'id' | 'status' | 'code'>) => {
     const response = await api.post<Station>('/stations', data);
@@ -376,6 +387,34 @@ export const settingsApi = {
     const response = await api.delete<{ message: string }>(`/settings/logos/${id}`);
     return response.data;
   },
+
+  // System Settings
+  getSystemSettings: async () => {
+    const response = await api.get<SystemSettings>('/settings/system');
+    return response.data;
+  },
+  updateSystemSettings: async (data: SystemSettings) => {
+    const response = await api.put<{ message: string }>('/settings/system', data);
+    return response.data;
+  },
+
+  // Backups
+  getBackups: async () => {
+    const response = await api.get<Array<{ filename: string; size: number; created_at: string }>>('/settings/backups');
+    return response.data;
+  },
+  createBackup: async () => {
+    const response = await api.post<{ message: string; filename: string }>('/settings/backups');
+    return response.data;
+  },
+  deleteBackup: async (filename: string) => {
+    const response = await api.delete<{ message: string }>(`/settings/backups/${filename}`);
+    return response.data;
+  },
+  restoreBackup: async (data: { filename: string; password?: string; confirm_text?: string }) => {
+    const response = await api.post<{ message: string }>('/settings/backups/restore', data);
+    return response.data;
+  },
 };
 
 export const authApi = {
@@ -411,6 +450,10 @@ export const userApi = {
   },
   remove: async (id: number) => {
     const response = await api.delete<{ message: string }>(`/users/${id}`);
+    return response.data;
+  },
+  getAuditLogs: async (params?: { limit?: number; offset?: number; search?: string }) => {
+    const response = await api.get<{ logs: AuditLog[]; total: number }>('/users/audit-logs', { params });
     return response.data;
   },
 };

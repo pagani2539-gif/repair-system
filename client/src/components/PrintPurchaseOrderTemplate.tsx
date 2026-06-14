@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import React from 'react';
 import type { PurchaseOrder, PurchaseOrderItem } from '../types';
 import { useCompanyData } from '../hooks/useCompanyData';
@@ -37,15 +36,13 @@ const formatDateTimeThai = (date: Date): string => {
 const statusInfo = (status: string): { label: string; tone: 'success' | 'warning' | 'danger' | 'neutral' } => {
   switch (status) {
     case 'Draft':     return { label: 'แบบร่าง', tone: 'neutral' };
-    case 'Pending':   return { label: 'รออนุมัติ / รอรับของ', tone: 'warning' };
+    case 'Pending':   return { label: 'รออนุมัติ', tone: 'warning' };
     case 'Approved':  return { label: 'อนุมัติแล้ว', tone: 'success' };
     case 'Received':  return { label: 'รับของเข้าคลังแล้ว', tone: 'success' };
     case 'Cancelled': return { label: 'ยกเลิก', tone: 'danger' };
     default:          return { label: status || '-', tone: 'neutral' };
   }
 };
-
-const ITEMS_PER_PAGE = 14;
 
 const PrintPurchaseOrderTemplate: React.FC<Props> = ({ po, isPreview, companyId, logoId }) => {
   const { company, logo } = useCompanyData(companyId ?? null, logoId ?? null);
@@ -56,19 +53,11 @@ const PrintPurchaseOrderTemplate: React.FC<Props> = ({ po, isPreview, companyId,
   const status = statusInfo(po.status);
 
   const items: PurchaseOrderItem[] = po.items || [];
-  const totalQty = items.reduce((sum, i) => sum + (Number(i.quantity) || 0), 0);
-
-  const pages: PurchaseOrderItem[][] = [];
-  for (let i = 0; i < items.length; i += ITEMS_PER_PAGE) {
-    pages.push(items.slice(i, i + ITEMS_PER_PAGE));
-  }
-  if (pages.length === 0) pages.push([]);
-  const totalPages = pages.length;
 
   const itemColumns: PdfTableColumn<PurchaseOrderItem>[] = [
     {
       key: 'name',
-      header: 'รายการสินค้า / Item',
+      header: 'รายการสินค้า',
       render: (row) => (
         <>
           <div style={{ fontWeight: 700 }}>{row.item_name || '-'}</div>
@@ -86,7 +75,7 @@ const PrintPurchaseOrderTemplate: React.FC<Props> = ({ po, isPreview, companyId,
       width: '90px',
       align: 'center',
       render: (row) => (
-        <span style={{ fontFamily: pdfTheme.fonts.mono, fontWeight: 700, fontSize: pdfTheme.size.h3 }}>
+        <span style={{ fontFamily: pdfTheme.fonts.mono, fontWeight: 700, fontSize: pdfTheme.size.docNumber }}>
           {row.quantity}
         </span>
       ),
@@ -112,7 +101,6 @@ const PrintPurchaseOrderTemplate: React.FC<Props> = ({ po, isPreview, companyId,
     },
   ];
 
-  // Vendor info (if provided)
   const hasVendor = po.company_name || po.vendor_address || po.vendor_phone;
 
   return (
@@ -124,81 +112,98 @@ const PrintPurchaseOrderTemplate: React.FC<Props> = ({ po, isPreview, companyId,
         top: isPreview ? 'auto' : 0,
       }}
     >
-      {pages.map((pageItems, pageIdx) => (
-        <PdfPage key={pageIdx} isPreview={isPreview}>
-          <PdfHeader
+      <PdfPage isPreview={isPreview}>
+        <PdfHeader
+          docType="purchase"
+          docNumber={docNumber}
+          docDate={docDate}
+          company={company}
+          logo={logo}
+          statusBadge={status}
+        />
+
+        {/* Side-by-side Buyer & Vendor info */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr 1.2fr',
+          gap: '12px',
+          margin: 0,
+        }}>
+          {/* Buyer Info */}
+          <PdfInfoGrid
+            title="ข้อมูลการสั่งซื้อ"
+            columns={1}
             docType="purchase"
-            docNumber={docNumber}
-            docDate={docDate}
-            company={company}
-            logo={logo}
-            statusBadge={status}
+            fields={[
+              { label: 'ผู้สั่งซื้อ', value: po.ordered_by || po.created_by || '-' },
+              { label: 'แผนก / หน่วยงาน', value: po.buyer_department || '-' },
+              { label: 'เบอร์ติดต่อ / อีเมล', value: `${po.buyer_phone || '-'} / ${po.buyer_email || '-'}` },
+              { label: 'ชื่อโครงการ / งาน', value: po.project_name || '-' },
+            ]}
           />
 
-          {pageIdx === 0 && (
-            <>
-              {/* Buyer + Order info */}
-              <PdfInfoGrid
-                title="ข้อมูลการสั่งซื้อ"
-                columns={2}
-                fields={[
-                  { label: 'ผู้สั่งซื้อ', value: po.ordered_by || po.created_by || '-' },
-                  { label: 'แผนก / หน่วยงาน', value: po.buyer_department || '-' },
-                  { label: 'เบอร์ติดต่อ', value: po.buyer_phone || '-' },
-                  { label: 'อีเมล', value: po.buyer_email || '-' },
-                  { label: 'ชื่อโครงการ / งาน', value: po.project_name || '-', span: 2 },
-                  { label: 'จำนวนรายการรวม', value: `${items.length} รายการ (${totalQty} ชิ้นรวม)`, span: 2 },
-                  { label: 'หมายเหตุ', value: po.note || '-', span: 2 },
-                ]}
-              />
-
-              {/* Vendor info — only if any vendor field present */}
-              {hasVendor && (
-                <PdfInfoGrid
-                  title="ผู้ขาย / Vendor"
-                  columns={2}
-                  fields={[
-                    { label: 'ชื่อบริษัท / ผู้ขาย', value: po.company_name || '-', span: 2 },
-                    { label: 'ที่อยู่', value: po.vendor_address || '-', span: 2 },
-                    { label: 'ผู้ติดต่อ', value: po.vendor_contact_person || '-' },
-                    { label: 'เบอร์โทร', value: po.vendor_phone || '-' },
-                    { label: 'เลขประจำตัวผู้เสียภาษี', value: po.vendor_tax_id || '-', span: 2 },
-                  ]}
-                />
-              )}
-            </>
-          )}
-
-          <PdfTable
-            docType="purchase"
-            title={pageIdx === 0 ? 'รายการสินค้าที่สั่งซื้อ' : `รายการสินค้า (ต่อหน้า ${pageIdx + 1})`}
-            columns={itemColumns}
-            rows={pageItems}
-            emptyMessage="ไม่มีรายการสั่งซื้อ"
-          />
-
-          {pageIdx === totalPages - 1 && (
-            <PdfSignatureBlock
-              slots={[
-                { role: 'ผู้สั่งซื้อ', roleEn: 'Ordered by', name: po.ordered_by || po.created_by || undefined },
-                { role: 'ผู้อนุมัติสั่งซื้อ', roleEn: 'Approved by' },
-                { role: 'ผู้รับสินค้า', roleEn: 'Received by' },
+          {/* Vendor Info */}
+          {hasVendor ? (
+            <PdfInfoGrid
+              title="ผู้ขาย"
+              columns={1}
+              docType="purchase"
+              fields={[
+                { label: 'ชื่อบริษัท / ผู้ขาย', value: `${po.company_name || '-'} (${po.vendor_contact_person || '-'})` },
+                { label: 'ที่อยู่', value: po.vendor_address || '-' },
+                { label: 'เบอร์โทร / เลขประจำตัวผู้เสียภาษี', value: `${po.vendor_phone || '-'} / ${po.vendor_tax_id || '-'}` },
+                { label: 'หมายเหตุ', value: po.note || '-' },
               ]}
             />
+          ) : (
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              border: pdfTheme.border.light,
+              borderRadius: pdfTheme.radius.md,
+              padding: '12px',
+              background: pdfTheme.colors.bgSubtle,
+              color: pdfTheme.colors.textMuted,
+              fontSize: pdfTheme.size.body,
+              height: '100%',
+            }}>
+              — ไม่มีข้อมูลผู้ขาย —
+            </div>
           )}
+        </div>
 
-          <div style={{ marginTop: 'auto' }} />
+        <PdfTable
+          docType="purchase"
+          title="รายการสินค้าที่สั่งซื้อ"
+          columns={itemColumns}
+          rows={items}
+          emptyMessage="ไม่มีรายการสั่งซื้อ"
+        />
 
-          <PdfFooter
-            docType="purchase"
-            docNumber={docNumber}
-            company={company}
-            pageNumber={pageIdx + 1}
-            totalPages={totalPages}
-            printedAt={printedAt}
-          />
-        </PdfPage>
-      ))}
+        <div style={{ marginTop: 'auto' }} />
+
+        <PdfSignatureBlock
+          slots={[
+            { role: 'ผู้สั่งซื้อ', name: po.ordered_by || po.created_by || undefined },
+            { 
+              role: 'ผู้อนุมัติสั่งซื้อ', 
+              name: po.approved_by || undefined, 
+              date: po.approved_at ? formatDateThai(parseDate(po.approved_at)) : undefined 
+            },
+            { role: 'ผู้รับสินค้า' },
+          ]}
+        />
+
+        <PdfFooter
+          docType="purchase"
+          docNumber={docNumber}
+          company={company}
+          pageNumber={1}
+          totalPages={1}
+          printedAt={printedAt}
+        />
+      </PdfPage>
     </div>
   );
 };

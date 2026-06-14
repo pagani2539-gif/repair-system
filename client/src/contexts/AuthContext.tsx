@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { authApi, tokenStorage } from '../api';
 import type { User } from '../types';
@@ -34,8 +35,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const hydrate = useCallback(async () => {
     const token = tokenStorage.get();
     if (!token) {
-      setUser(null);
-      setLoading(false);
+      setTimeout(() => {
+        setUser(null);
+        setLoading(false);
+      }, 0);
       return;
     }
     try {
@@ -50,7 +53,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   useEffect(() => {
-    hydrate();
+    const timer = setTimeout(() => {
+      hydrate();
+    }, 0);
+    return () => clearTimeout(timer);
   }, [hydrate]);
 
   const login = useCallback(async (username: string, password: string) => {

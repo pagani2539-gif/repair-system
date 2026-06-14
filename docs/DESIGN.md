@@ -52,23 +52,28 @@ components:
 
 ## 1. Overview
 
-**Creative North Star: "The Confident Hub"**
+**Creative North Star: "The Executive Hub"**
 
-The Repair & Equipment Replacement Management System is designed for technicians, inventory managers, IT directors, and procurement staff who operate in high-velocity corporate environments. The visual system represents efficiency, precision, and confidence. It balances professional reliability with modern visual delight.
+The Repair & Equipment Replacement Management System is designed for technicians, inventory managers, IT directors, and procurement staff who operate in high-velocity corporate environments. The visual system represents efficiency, precision, and confidence. It balances professional reliability with modern visual delight through a premium **"Executive Hub"** aesthetic.
 
-The interface rejects SaaS marketing cliches (like overly large decorative text, excessive brand declarations, or flashy gradient text) in favor of clear, dense, and structured information layouts. It presents key metrics, work progress, and inventory status in an immediately actionable format, reducing cognitive load and maximizing usability.
+The interface rejects SaaS marketing cliches in favor of clear, dense, and structured information layouts. It presents key metrics, work progress, and inventory status via a modular **Bento Grid Dashboard**, reducing cognitive load and maximizing usability.
 
 **Key Characteristics:**
+- **Glassmorphic Depth**: Global use of frosted glass backgrounds, blurs, and layered elevation shadows to create a sophisticated, high-end feel.
 - **Sleek Density**: Structured grids, clean lines, and compact typography that prioritizes readability and quick scanning.
+- **Bento Grid Layout**: A modular 12-column grid system for the dashboard that organizes complex analytics into distinct, interactive cards.
 - **Micro-Delight**: Responsive elevation scaling, subtle background glows, and rotational transitions on interactive badges.
-- **Reliable Hierarchy**: Clear typographic weight differences and color coding to communicate status severity at a glance.
 
 ## 2. Colors
 
-The color palette centers on a primary sky-blue accent combined with clean neutral backgrounds, supporting high-contrast semantic cues for status tracking.
+The color palette centers on a primary sky-blue accent combined with clean neutral backgrounds and glassmorphic layers.
+
+### Glassmorphism
+- **Glass Background** (`--glass-bg`: `rgba(255, 255, 255, 0.7)`): The base for all frosted glass panels.
+- **Glass Blur** (`--glass-blur`: `blur(12px)`): Applied to headers, sidebars, and dashboard cards for depth.
 
 ### Primary
-- **Active Sky Blue** (#29b6f6): The primary brand identifier. Used for key interactive controls, active page navigation highlights, and brand identity icons.
+- **Active Sky Blue** (#29b6f6): The primary brand identifier. Used for key interactive controls and active navigation.
 - **Hover Sky Blue** (#03a9f4): A slightly darker, more saturated shade of the primary color. Used exclusively for hovered states of primary buttons.
 
 ### Neutral

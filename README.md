@@ -58,13 +58,19 @@ A comprehensive full-stack web application for managing device repairs, equipmen
    The frontend will run on [http://localhost:5222](http://localhost:5222).
 
 ## ✨ Key Features
-- **Interactive Dashboard**: Real-time KPI cards and visual charts for repair status, inventory movements, and technician workload.
+- **Executive Command Center V2**: High-density analytical dashboard with Bento Grid layout, interactive Recharts (Asset Health, Workload, Stock Movements), and real-time operational pulse timeline.
+- **The Executive Hub Redesign**: Premium UI/UX featuring global glassmorphism, frosted glass headers, centered command palette (Ctrl+K), and smooth reveal animations.
 - **Repair Tracking**: Full lifecycle management of repair tickets, including technician assignments and status history.
 - **Inventory Management**: Comprehensive stock tracking with minimum stock alerts and image support for equipment identification.
 - **Withdrawal System**: Support for multiple withdrawal types (New Install, Backup, Testing) with automated stock deduction.
-- **Global Search (Ctrl+K)**: Command palette for quick navigation and searching across repairs, claims, and inventory.
-- **Return Tracking**: Manage returnable withdrawals for testing or backup units with overdue indicators.
-- **Purchase Orders (PO)**: Automated draft PO creation when inventory falls below minimum stock level (`min_stock`), custom manual PO builder, non-inventory items support, and stock replenishment workflow upon receipt. Includes safe deletion of POs (reverting stock quantities and log history for Received POs).
-- **Executive Reports**: Visual reports with timezone-safe custom date range filters, clean printing layout, and Excel-compatible client-side CSV exports (using UTF-8 BOM encoding).
-- **PDF Reporting**: Generate professional PDF reports for repair completions and withdrawal slips.
+- **Station Management**: Comprehensive station tracking with automated code generation (`STN-{id}-{dir}`), status management, and custom station types.
+- **Data Integrity Tools**: Built-in scripts for database maintenance, migrations, and comprehensive data clearing (`clear_all_data.js`) plus 1,000 WIM stations seeder for testing.
+- **Global Search (Ctrl+K)**: Centered command palette for quick navigation and searching across repairs, claims, inventory, and stations.
+- **Return Tracking**: Manage returnable withdrawals for testing or backup units with 30-day overdue indicators.
+- **Purchase Orders (PO)**: Automated draft PO creation when inventory falls below minimum stock level (`min_stock`), custom manual PO builder, non-inventory items support, and stock replenishment workflow upon receipt.
+- **Executive Reports**: Visual reports with timezone-safe custom date range filters, clean printing layout, and Excel-compatible client-side CSV exports.
+- **PDF Reporting**: Generate professional "Dashboard Style" infographic PDF reports for repairs, withdrawals, and purchase orders.
 - **Image Management**: Attach diagnostic or product images to repairs and inventory items.
+
+---
+*Last updated: 2025-06-08*

@@ -1,6 +1,7 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import React from 'react';
+import { Camera } from 'lucide-react';
 import type { RepairDetail } from '../types';
+import { UPLOAD_URL } from '../api';
 import { useCompanyData } from '../hooks/useCompanyData';
 import { pdfTheme, docLabels } from './pdf/pdfTheme';
 import PdfPage from './pdf/PdfPage';
@@ -34,6 +35,23 @@ const formatDateTimeThai = (date: Date): string => {
     + ' ' + date.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
 };
 
+const formatDuration = (fromStr: string, toStr: string): string => {
+  if (!fromStr || !toStr) return '-';
+  const from = parseDate(fromStr).getTime();
+  const to = parseDate(toStr).getTime();
+  if (isNaN(from) || isNaN(to) || to < from) return '-';
+  const diffMs = to - from;
+  const totalMinutes = Math.floor(diffMs / 60000);
+  const days = Math.floor(totalMinutes / (60 * 24));
+  const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
+  const minutes = totalMinutes % 60;
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days} วัน`);
+  if (hours > 0) parts.push(`${hours} ชม.`);
+  if (days === 0 && minutes > 0) parts.push(`${minutes} นาที`);
+  return parts.length > 0 ? parts.join(' ') : 'น้อยกว่า 1 นาที';
+};
+
 const statusToTone = (status: string): 'success' | 'warning' | 'danger' | 'neutral' => {
   if (status === 'เสร็จสิ้น') return 'success';
   if (status === 'รอดำเนินการ') return 'warning';
@@ -51,16 +69,33 @@ const PrintTemplate: React.FC<Props> = ({ repair, isPreview, companyId, logoId }
   const docDate = formatDateThai(parseDate(repair.created_at));
   const printedAt = formatDateTimeThai(new Date());
 
+  let derivedAreaName = repair.station_area_name;
+  if (!derivedAreaName && repair.station_name && repair.location_snapshot && repair.location_snapshot.startsWith(repair.station_name)) {
+    const suffix = repair.location_snapshot.slice(repair.station_name.length).trim();
+    if (suffix.startsWith('-')) {
+      derivedAreaName = suffix.slice(1).trim();
+    }
+  }
+
   const locationText = repair.station_name
-    ? `${repair.station_name}${repair.station_area_name ? ' / ' + repair.station_area_name : ''}`
+    ? `${repair.station_name}${derivedAreaName ? ' / ' + derivedAreaName : ''}`
     : (repair.location || repair.location_snapshot || '-');
 
   const devices = repair.devices || [];
+  const logs = repair.logs || [];
+
+  const isClosed = repair.status === 'เสร็จสิ้น';
+  const closedAtText = isClosed && repair.updated_at
+    ? formatDateThai(parseDate(repair.updated_at))
+    : '— ยังไม่ปิดงาน —';
+  const durationEnd = isClosed && repair.updated_at ? repair.updated_at : new Date().toISOString();
+  const durationText = formatDuration(repair.received_at || repair.created_at, durationEnd);
+  const durationLabel = isClosed ? 'ระยะเวลาดำเนินการ' : 'ดำเนินการมาแล้ว';
 
   const deviceColumns: PdfTableColumn<typeof devices[0]>[] = [
     {
       key: 'old',
-      header: 'อุปกรณ์เดิม / Old Device',
+      header: 'อุปกรณ์เดิม',
       render: (row) => (
         <>
           <div style={{ fontWeight: 700 }}>{row.old_model || '-'}</div>
@@ -74,7 +109,7 @@ const PrintTemplate: React.FC<Props> = ({ repair, isPreview, companyId, logoId }
     },
     {
       key: 'new',
-      header: 'อุปกรณ์ใหม่ / New Device',
+      header: 'อุปกรณ์ใหม่',
       render: (row) => (
         <>
           <div style={{ fontWeight: 700 }}>{row.new_model || '-'}</div>
@@ -125,67 +160,166 @@ const PrintTemplate: React.FC<Props> = ({ repair, isPreview, companyId, logoId }
           docDate={docDate}
           company={company}
           logo={logo}
+          showCompany={false}
           statusBadge={{ label: repair.status, tone: statusToTone(repair.status) }}
         />
 
+        {/* 1. Operational Info Grid (3 columns) */}
         <PdfInfoGrid
           title={isClaim ? 'ข้อมูลการเคลม' : 'ข้อมูลการแจ้งซ่อม'}
-          columns={2}
+          columns={3}
+          docType={docType}
           fields={[
             { label: 'ผู้แจ้ง', value: repair.reporter || '-' },
+            { label: 'วันที่รับเรื่อง', value: repair.received_at ? formatDateThai(parseDate(repair.received_at)) : '-' },
             {
               label: 'ความเร่งด่วน',
               value: (
                 <span style={{
                   display: 'inline-block',
-                  padding: '2px 10px',
+                  padding: '1px 6px',
                   borderRadius: pdfTheme.radius.sm,
                   background: priorityColors.bg,
                   color: priorityColors.text,
                   fontWeight: 700,
-                  fontSize: pdfTheme.size.small,
+                  fontSize: pdfTheme.size.micro,
                 }}>
                   {repair.priority}
                 </span>
               ),
             },
-            { label: 'ชื่อโครงการ / งาน', value: repair.project_name || '-' },
-            { label: 'สถานที่', value: locationText },
-            { label: 'อุปกรณ์ที่แจ้ง', value: repair.device_name || '-', span: 2 },
-            { label: 'อาการ / รายละเอียดปัญหา', value: repair.problem || '-', span: 2 },
-          ]}
-        />
-
-        <PdfInfoGrid
-          title="สถานะการดำเนินการ"
-          columns={2}
-          fields={[
             { label: 'ผู้รับผิดชอบ / ช่าง', value: repair.technician || '— ยังไม่ได้มอบหมาย —' },
-            { label: 'วันที่รับเรื่อง', value: repair.received_at ? formatDateThai(parseDate(repair.received_at)) : '-' },
-            { label: 'หมายเหตุการซ่อม / ผลการดำเนินการ', value: repair.repair_note || '— ยังไม่มีบันทึก —', span: 2 },
+            { label: 'วันที่ปิดงาน', value: closedAtText },
+            { label: durationLabel, value: durationText },
+            { label: 'ชื่อโครงการ / งาน', value: repair.project_name || '-', span: 2 },
+            { label: 'อุปกรณ์ที่แจ้ง', value: repair.device_name || '-' },
+            { label: 'สถานที่ / หน้างาน', value: locationText, span: 2 },
+            { label: 'อาการ / รายละเอียดปัญหา', value: repair.problem || '-', span: 3 },
+            { label: 'หมายเหตุการซ่อม / ผลการดำเนินการ', value: repair.repair_note || '— ยังไม่มีบันทึก —', span: 3 },
           ]}
         />
 
+        {/* 2. Replaced Devices Table (S/N Table) */}
         {devices.length > 0 && (
+          <div style={{ marginBottom: `${pdfTheme.space.sectionGap}px` }}>
+            <PdfTable
+              docType={docType}
+              title="ประวัติการเปลี่ยนอุปกรณ์ (รายการ S/N)"
+              columns={deviceColumns}
+              rows={devices.slice(0, 3)}
+              emptyMessage="ไม่มีการเปลี่ยนอุปกรณ์"
+              showRowNumber
+            />
+          </div>
+        )}
+
+        {/* 3. Evidence Images Grid (Always 4 frames) */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: `${pdfTheme.space.sectionGap}px` }}>
+          <h2 style={{
+            fontSize: `${pdfTheme.size.h2}px`,
+            fontWeight: 800,
+            color: pdfTheme.colors.primary,
+            textTransform: 'uppercase',
+            letterSpacing: '0.04em',
+            margin: '4px 0 6px 0',
+            paddingBottom: '2px',
+          }}>
+            รูปภาพหลักฐานการดำเนินงาน
+          </h2>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(2, 1fr)',
+            gap: '8px',
+          }}>
+            {[0, 1, 2, 3].map((index) => {
+              const img = repair.images && repair.images[index];
+              return (
+                <div key={index} style={{
+                  height: '140px',
+                  border: img ? '1px solid #cbd5e1' : '1px dashed #94a3b8',
+                  borderRadius: pdfTheme.radius.md,
+                  background: img ? pdfTheme.colors.bgPage : '#f8fafc',
+                  overflow: 'hidden',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.02)',
+                }}>
+                  {img ? (
+                    <img
+                      src={`${UPLOAD_URL}/uploads/${img.file_path}`}
+                      alt={`หลักฐาน ${index + 1}`}
+                      crossOrigin="anonymous"
+                      style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+                    />
+                  ) : (
+                    <div style={{ 
+                      display: 'flex', 
+                      flexDirection: 'column', 
+                      alignItems: 'center', 
+                      justifyContent: 'center', 
+                      gap: '4px',
+                      color: '#94a3b8',
+                    }}>
+                      <Camera size={24} style={{ opacity: 0.5 }} />
+                      <span style={{ fontSize: '8px', fontWeight: 600 }}>ไม่มีรูปภาพ {index + 1}</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* 4. Activity Timeline */}
+        {logs.length > 0 && (
           <PdfTable
             docType={docType}
-            title="ประวัติการเปลี่ยนอุปกรณ์"
-            columns={deviceColumns}
-            rows={devices}
-            emptyMessage="ไม่มีการเปลี่ยนอุปกรณ์"
+            title="ประวัติการดำเนินงาน"
+            columns={[
+              {
+                key: 'created_at',
+                header: 'วัน-เวลา',
+                width: '110px',
+                render: (row) => (
+                  <span style={{ fontFamily: pdfTheme.fonts.mono, fontSize: pdfTheme.size.small }}>
+                    {formatDateTimeThai(parseDate(row.created_at))}
+                  </span>
+                ),
+              },
+              {
+                key: 'user',
+                header: 'ผู้ดำเนินการ',
+                width: '120px',
+                render: (row) => row.user || '-',
+              },
+              {
+                key: 'action',
+                header: 'การกระทำ',
+                width: '120px',
+                render: (row) => <span style={{ fontWeight: 700 }}>{row.action || '-'}</span>,
+              },
+              {
+                key: 'note',
+                header: 'หมายเหตุ',
+                render: (row) => row.note || '-',
+              },
+            ]}
+            rows={logs.slice(0, 6)}
+            emptyMessage="ไม่มีบันทึก"
             showRowNumber
           />
         )}
 
+        <div style={{ marginTop: 'auto' }} />
+
         <PdfSignatureBlock
           slots={[
-            { role: 'ผู้แจ้ง', roleEn: 'Reporter', name: repair.reporter || undefined },
-            { role: isClaim ? 'ผู้อนุมัติเคลม' : 'ผู้อนุมัติซ่อม', roleEn: 'Approved by' },
-            { role: isClaim ? 'ผู้ดำเนินการเคลม' : 'ช่างผู้ดำเนินการ', roleEn: isClaim ? 'Claim Officer' : 'Technician', name: repair.technician || undefined },
+            { role: 'ผู้แจ้งซ่อม', name: repair.reporter || undefined },
+            { role: isClaim ? 'ผู้อนุมัติเคลม' : 'ผู้อนุมัติซ่อม' },
+            { role: isClaim ? 'ผู้ดำเนินการเคลม' : 'ช่างผู้ดำเนินการ', name: repair.technician || undefined },
           ]}
         />
-
-        <div style={{ marginTop: 'auto' }} />
 
         <PdfFooter
           docType={docType}
