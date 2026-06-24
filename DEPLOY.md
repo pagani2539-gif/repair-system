@@ -1,64 +1,116 @@
 # คู่มือการรันระบบในโหมดใช้งานจริง (Production Deployment)
 
-คู่มือนี้แนะนำขั้นตอนการขึ้นระบบเพื่อให้ทำงานได้อย่างเสถียร รวดเร็ว และทำงานอยู่เบื้องหลังตลอดเวลา
+คู่มือนี้แนะนำขั้นตอนการขึ้นระบบเพื่อให้ทำงานได้อย่างเสถียร ปลอดภัย และทำงานอยู่เบื้องหลังตลอดเวลา
 
 ---
 
-## 🏗️ 1. Build Frontend (เตรียมไฟล์หน้าเว็บ)
-ขั้นตอนนี้จะแปลงโค้ด React ให้เป็นไฟล์ Static ที่ทำงานได้รวดเร็ว
-1. เข้าไปที่โฟลเดอร์ `client`:
+## 🔐 1. ตั้งค่า Environment (`server/.env`) — สำคัญที่สุด
+ระบบใช้ระบบล็อกอิน (JWT) จึง **ต้อง** ตั้งค่า environment ก่อนขึ้น production
+มิฉะนั้น Server จะไม่ยอมสตาร์ท (ตั้งใจให้ fail-closed เพื่อความปลอดภัย)
+
+1. คัดลอกไฟล์ตัวอย่าง:
    ```bash
-   cd client
+   cd server
+   cp .env.example .env
    ```
-2. รันคำสั่ง Build:
-   ```bash
-   npm run build
+2. แก้ไข `server/.env` ให้ครบ:
+   ```ini
+   NODE_ENV=production
+   PORT=5221
+
+   # ต้องเป็นค่าสุ่มยาว (เช่น openssl rand -base64 48) — ห้ามใช้ค่า default
+   JWT_SECRET=<ใส่ค่าสุ่มยาวของคุณเอง>
+   JWT_EXPIRES_IN=7d
+
+   # เว้นว่างได้ถ้าเข้าผ่าน origin เดียวกับ Server (กรณีปกติ)
+   CORS_ORIGIN=
+
+   # รหัสผ่าน admin เริ่มต้น (seed เฉพาะตอนฐานข้อมูลยังไม่มี user)
+   # ถ้าเว้นว่าง ระบบจะสุ่มรหัสให้และพิมพ์ลง log ตอน boot ครั้งแรก
+   SEED_ADMIN_USERNAME=admin
+   SEED_ADMIN_PASSWORD=<ตั้งรหัสผ่านเริ่มต้นของ admin>
    ```
-   *หมายเหตุ: ระบบจะสร้างโฟลเดอร์ `client/dist` ขึ้นมา ซึ่ง Server จะเรียกใช้ไฟล์จากที่นี่*
+
+> ⚠️ ไฟล์ `.env` ถูก gitignore ไว้ ต้องสร้างบนเครื่อง production เอง (ไม่ถูก deploy มากับโค้ด)
 
 ---
 
-## 🚀 2. ติดตั้งและรันด้วย PM2 (Process Manager)
-เพื่อให้ระบบรันอยู่เบื้องหลัง (Background) และ Re-start ตัวเองอัตโนมัติหากเกิดปัญหา
+## 🏗️ 2. Build Frontend (เตรียมไฟล์หน้าเว็บ)
+แปลงโค้ด React ให้เป็นไฟล์ Static ที่ Server จะ serve ออกไป
+```bash
+cd client
+npm install
+npm run build
+```
+*ระบบจะสร้างโฟลเดอร์ `client/dist` ซึ่ง Server จะเรียกใช้ไฟล์จากที่นี่*
+
+> ฐานข้อมูลและตารางทั้งหมดจะถูกสร้าง/อัปเกรดอัตโนมัติ (auto-migration) ตอน Server สตาร์ทครั้งแรก ไม่ต้องรัน `init-db` แยก
+
+---
+
+## ✅ 3. ตรวจความพร้อมก่อนขึ้น (Pre-flight check)
+รันจาก **โฟลเดอร์ราก** ของโปรเจกต์:
+```bash
+npm run production:check
+```
+สคริปต์จะตรวจ `NODE_ENV`, `JWT_SECRET`, `client/dist`, dependencies, PM2 config ฯลฯ
+**ต้องผ่านทุกข้อ (PASS)** ก่อนไปขั้นต่อไป
+
+---
+
+## 🚀 4. ติดตั้งและรันด้วย PM2 (Process Manager)
+เพื่อให้ระบบรันเบื้องหลังและ restart อัตโนมัติเมื่อเกิดปัญหา
 
 1. **ติดตั้ง PM2** (ทำครั้งเดียว):
    ```bash
    npm install pm2 -g
    ```
-
-2. **สั่งรันระบบ**:
-   เข้าไปที่โฟลเดอร์ `server` แล้วรันคำสั่ง:
+2. **สั่งรันด้วยไฟล์ config** จาก **โฟลเดอร์รากของโปรเจกต์**:
    ```bash
-   cd server
-   pm2 start index.js --name "maintenance-system"
+   pm2 start ecosystem.config.cjs
    ```
+   > ใช้ `ecosystem.config.cjs` เท่านั้น — ไฟล์นี้ตั้ง `NODE_ENV=production`, `PORT=5221`
+   > และ `max_memory_restart` ให้อัตโนมัติ **อย่าใช้ `pm2 start index.js` ตรงๆ**
+   > เพราะจะไม่ได้ตั้ง `NODE_ENV=production` (ทำให้ความปลอดภัยลดลง)
 
 ---
 
-## 🖥️ 3. การเข้าใช้งาน (Production URL)
-ในโหมดใช้งานจริง คุณไม่จำเป็นต้องเปิด Port 5222 อีกต่อไป ให้เข้าใช้งานผ่าน Port ของ Server ได้โดยตรง:
-👉 **URL: [http://localhost:5221](http://localhost:5221)**
+## 🔑 5. เข้าสู่ระบบครั้งแรก
+1. เปิด **http://localhost:5221**
+2. ล็อกอินด้วย `admin` และรหัสที่ตั้งไว้ใน `SEED_ADMIN_PASSWORD`
+   - ถ้าเว้นว่างไว้ ให้ดูรหัสสุ่มจาก log: `pm2 logs maintenance-system`
+3. ระบบจะ **บังคับเปลี่ยนรหัสผ่าน** ทันทีในการล็อกอินครั้งแรก
 
 ---
 
-## 🛠️ 4. คำสั่งที่จำเป็นของ PM2
-*   **ดูสถานะการทำงาน**: `pm2 status`
-*   **ดู Log (ประวัติการทำงาน/Error)**: `pm2 logs maintenance-system`
-*   **หยุดการทำงาน**: `pm2 stop maintenance-system`
+## 🛠️ 6. คำสั่งที่จำเป็นของ PM2
+*   **ดูสถานะ**: `pm2 status`
+*   **ดู Log / Error**: `pm2 logs maintenance-system`
+*   **หยุด**: `pm2 stop maintenance-system`
 *   **รันใหม่**: `pm2 restart maintenance-system`
 *   **ลบออกจากรายการ**: `pm2 delete maintenance-system`
 
+> ชื่อ process คือ `maintenance-system` (กำหนดใน `ecosystem.config.cjs`)
+
 ---
 
-## 🛡️ 5. ตั้งค่าให้รันอัตโนมัติเมื่อเปิดเครื่อง (สำหรับ Windows)
-เพื่อให้ระบบเปิดเองทันทีที่เปิดคอมพิวเตอร์:
+## 🛡️ 7. ตั้งให้รันอัตโนมัติเมื่อเปิดเครื่อง (Windows)
 1. ติดตั้ง Helper: `npm install pm2-windows-startup -g`
 2. รันคำสั่งติดตั้ง: `pm2-startup install`
 3. บันทึกสถานะปัจจุบัน: `pm2 save`
 
 ---
 
-## 🌐 การเข้าใช้งานจากเครื่องอื่นในเครือข่าย (LAN)
+## 🌐 8. การเข้าใช้งานจากเครื่องอื่นในเครือข่าย (LAN)
 1. ตรวจสอบ IP ของเครื่อง Server (เช่น `192.168.1.50`)
 2. เปิด Port **5221** ที่ Windows Firewall
 3. ให้เครื่องอื่นเข้าผ่าน: `http://[IP-ของ-Server]:5221`
+   - ถ้าเข้าจาก origin อื่น (เช่น โดเมน/พอร์ตต่าง) ให้ใส่ origin นั้นใน `CORS_ORIGIN`
+
+---
+
+## 💾 9. การสำรอง/กู้คืนฐานข้อมูล
+- ฐานข้อมูล: `server/database/repair_system.db`
+- ระบบสำรองอัตโนมัติเก็บไว้ที่ `server/database/backups/`
+- จัดการ backup/restore ได้จากหน้า **Settings** ในแอป (ต้องเป็น user สิทธิ์เต็ม)
+- ปิดการสำรองชั่วคราวได้ด้วย `DISABLE_BACKUP_SCHEDULER=1` ใน `.env`

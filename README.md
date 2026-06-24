@@ -17,9 +17,10 @@ A comprehensive full-stack web application for managing device repairs, equipmen
 
 ### Backend
 - **Runtime**: Node.js & Express
-- **Database**: SQLite3
+- **Database**: SQLite3 (auto-migrations on startup)
+- **Authentication**: JWT (`jsonwebtoken`) + `bcryptjs` password hashing
 - **File Uploads**: Multer
-- **Middleware**: CORS, Morgan (logging), Centralized Error Handling.
+- **Middleware**: CORS, Morgan (logging), login rate limiting, security headers, centralized error handling.
 
 ## 🚀 Getting Started
 
@@ -41,6 +42,14 @@ A comprehensive full-stack web application for managing device repairs, equipmen
    npm install
    ```
 
+3. **Configure Environment:**
+   ```bash
+   cd ../server
+   cp .env.example .env   # then set JWT_SECRET and SEED_ADMIN_PASSWORD
+   ```
+   For development, missing values fall back to insecure defaults (with a warning).
+   For production this is mandatory — see [`DEPLOY.md`](DEPLOY.md).
+
 ### Running the Application
 
 1. **Start the Backend:**
@@ -58,6 +67,9 @@ A comprehensive full-stack web application for managing device repairs, equipmen
    The frontend will run on [http://localhost:5222](http://localhost:5222).
 
 ## ✨ Key Features
+- **Authentication & User Management**: JWT-based login with per-user permission gates, full-access (admin) accounts, forced password change on first login, and login rate limiting.
+- **Audit Logs**: Server-side audit trail of state-changing actions, searchable from the admin UI.
+- **Contracts**: Track service contracts and link withdrawals/assets to them.
 - **Executive Command Center V2**: High-density analytical dashboard with Bento Grid layout, interactive Recharts (Asset Health, Workload, Stock Movements), and real-time operational pulse timeline.
 - **The Executive Hub Redesign**: Premium UI/UX featuring global glassmorphism, frosted glass headers, centered command palette (Ctrl+K), and smooth reveal animations.
 - **Repair Tracking**: Full lifecycle management of repair tickets, including technician assignments and status history.
@@ -72,5 +84,10 @@ A comprehensive full-stack web application for managing device repairs, equipmen
 - **PDF Reporting**: Generate professional "Dashboard Style" infographic PDF reports for repairs, withdrawals, and purchase orders.
 - **Image Management**: Attach diagnostic or product images to repairs and inventory items.
 
+## 🚢 Production Deployment
+For production setup (environment config, build, PM2, pre-flight checks, first
+login), follow [`DEPLOY.md`](DEPLOY.md). Run `npm run production:check` from the
+project root to validate the environment before going live.
+
 ---
-*Last updated: 2025-06-08*
+*Last updated: 2026-06-24*
