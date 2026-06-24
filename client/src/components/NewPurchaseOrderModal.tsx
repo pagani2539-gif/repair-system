@@ -6,7 +6,8 @@ import { useNotification } from './Layout';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from './ui/Button';
 import { Input, TextArea } from './ui/Input';
-import type { InventoryItem, VendorContact } from '../types';
+import FormSection from './ui/FormSection';
+import type { InventoryItem, PurchaseOrder } from '../types';
 import {
   ShoppingBag,
   X,
@@ -17,8 +18,9 @@ import {
   ChevronDown,
   Sparkles,
   CheckCircle2,
-  Building2,
-  UserCheck
+  UserCheck,
+  User,
+  FileText
 } from 'lucide-react';
 
 interface POItemRow {
@@ -33,31 +35,20 @@ interface NewPurchaseOrderModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: () => void;
+  editingPo?: PurchaseOrder | null;
 }
 
-const NewPurchaseOrderModal: React.FC<NewPurchaseOrderModalProps> = ({ isOpen, onClose, onSuccess }) => {
+const NewPurchaseOrderModal: React.FC<NewPurchaseOrderModalProps> = ({ isOpen, onClose, onSuccess, editingPo }) => {
   const { notify } = useNotification();
   const { user } = useAuth();
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [loadingInventory, setLoadingInventory] = useState(false);
 
-  // PO Header fields
-  const [companyName, setCompanyName] = useState('');
-  const [vendorAddress, setVendorAddress] = useState('');
-  const [vendorPhone, setVendorPhone] = useState('');
-  const [vendorContactPerson, setVendorContactPerson] = useState('');
-  const [vendorTaxId, setVendorTaxId] = useState('');
-  const [orderedBy, setOrderedBy] = useState(user?.full_name || '');
   const [projectName, setProjectName] = useState('');
   const [buyerDepartment, setBuyerDepartment] = useState('');
   const [buyerPhone, setBuyerPhone] = useState('');
   const [buyerEmail, setBuyerEmail] = useState('');
   const [note, setNote] = useState('');
-
-  // Vendor autocomplete
-  const [vendors, setVendors] = useState<VendorContact[]>([]);
-  const [isVendorListOpen, setIsVendorListOpen] = useState(false);
-  const vendorBoxRef = useRef<HTMLDivElement>(null);
 
   // Items list
   const [items, setItems] = useState<POItemRow[]>([]);
@@ -76,18 +67,30 @@ const NewPurchaseOrderModal: React.FC<NewPurchaseOrderModalProps> = ({ isOpen, o
 
   const [submitting, setSubmitting] = useState(false);
 
-  // Load inventory + vendors เมื่อเปิด modal
   useEffect(() => {
     if (!isOpen) return;
     const load = async () => {
       setLoadingInventory(true);
       try {
-        const [list, vendorList] = await Promise.all([
-          inventoryApi.getAll({}),
-          purchaseOrderApi.getVendors().catch(() => [])
-        ]);
+        const list = await inventoryApi.getAll({});
         setInventory(list);
-        setVendors(vendorList);
+
+        if (editingPo) {
+          const fullPo = await purchaseOrderApi.getById(editingPo.id);
+          setProjectName(fullPo.project_name || '');
+          setBuyerDepartment(fullPo.buyer_department || '');
+          setBuyerPhone(fullPo.buyer_phone || '');
+          setBuyerEmail(fullPo.buyer_email || '');
+          setNote(fullPo.note || '');
+          
+          const mappedItems: POItemRow[] = (fullPo.items || []).map(item => ({
+            inventory_id: item.inventory_id,
+            name: item.item_name || '',
+            model: item.item_model || '',
+            quantity: item.quantity
+          }));
+          setItems(mappedItems);
+        }
       } catch {
         notify('ไม่สามารถโหลดข้อมูลพัสดุได้', 'error');
       } finally {
@@ -95,16 +98,10 @@ const NewPurchaseOrderModal: React.FC<NewPurchaseOrderModalProps> = ({ isOpen, o
       }
     };
     load();
-  }, [isOpen, notify]);
+  }, [isOpen, notify, editingPo]);
 
   // Reset state เมื่อปิด modal
   const handleClose = () => {
-    setCompanyName('');
-    setVendorAddress('');
-    setVendorPhone('');
-    setVendorContactPerson('');
-    setVendorTaxId('');
-    setOrderedBy(user?.full_name || '');
     setProjectName('');
     setBuyerDepartment('');
     setBuyerPhone('');
@@ -113,7 +110,6 @@ const NewPurchaseOrderModal: React.FC<NewPurchaseOrderModalProps> = ({ isOpen, o
     setItems([]);
     setSearchTerm('');
     setIsPickerOpen(false);
-    setIsVendorListOpen(false);
     setShowNewItemForm(false);
     setNewItemName('');
     setNewItemModel('');
@@ -133,34 +129,6 @@ const NewPurchaseOrderModal: React.FC<NewPurchaseOrderModalProps> = ({ isOpen, o
       return () => document.removeEventListener('mousedown', handle);
     }
   }, [isPickerOpen]);
-
-  // Click outside vendor list → close
-  useEffect(() => {
-    const handle = (e: MouseEvent) => {
-      if (vendorBoxRef.current && !vendorBoxRef.current.contains(e.target as Node)) {
-        setIsVendorListOpen(false);
-      }
-    };
-    if (isVendorListOpen) {
-      document.addEventListener('mousedown', handle);
-      return () => document.removeEventListener('mousedown', handle);
-    }
-  }, [isVendorListOpen]);
-
-  const filteredVendors = useMemo(() => {
-    const s = companyName.trim().toLowerCase();
-    if (!s) return vendors;
-    return vendors.filter(v => (v.company_name || '').toLowerCase().includes(s));
-  }, [vendors, companyName]);
-
-  const selectVendor = (v: VendorContact) => {
-    setCompanyName(v.company_name || '');
-    setVendorAddress(v.vendor_address || '');
-    setVendorPhone(v.vendor_phone || '');
-    setVendorContactPerson(v.vendor_contact_person || '');
-    setVendorTaxId(v.vendor_tax_id || '');
-    setIsVendorListOpen(false);
-  };
 
   const filteredInventory = useMemo(() => {
     const s = searchTerm.toLowerCase();
@@ -238,45 +206,47 @@ const NewPurchaseOrderModal: React.FC<NewPurchaseOrderModalProps> = ({ isOpen, o
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSave = async (submitStatus: 'Draft' | 'Pending') => {
     if (items.length === 0) {
       notify('กรุณาเลือกหรือเพิ่มพัสดุอย่างน้อย 1 รายการ', 'error');
-      return;
-    }
-    if (!orderedBy.trim()) {
-      notify('กรุณากรอกชื่อผู้สั่งซื้อ', 'error');
       return;
     }
 
     setSubmitting(true);
     try {
-      const res = await purchaseOrderApi.create({
-        company_name: companyName.trim() || undefined,
-        vendor_address: vendorAddress.trim() || undefined,
-        vendor_phone: vendorPhone.trim() || undefined,
-        vendor_contact_person: vendorContactPerson.trim() || undefined,
-        vendor_tax_id: vendorTaxId.trim() || undefined,
+      const poData = {
+        company_name: undefined,
+        vendor_address: undefined,
+        vendor_phone: undefined,
+        vendor_contact_person: undefined,
+        vendor_tax_id: undefined,
         buyer_department: buyerDepartment.trim() || undefined,
         buyer_phone: buyerPhone.trim() || undefined,
         buyer_email: buyerEmail.trim() || undefined,
-        ordered_by: orderedBy.trim(),
+        ordered_by: user?.full_name || 'System',
         project_name: projectName.trim() || undefined,
         note: note.trim() || undefined,
-        status: 'Pending',
-        created_by: orderedBy.trim() || 'User',
+        status: submitStatus,
+        created_by: user?.full_name || 'System',
         items: items.map(it => ({
           inventory_id: it.inventory_id,
           quantity: it.quantity,
-          unit_price: 0 // ไม่แสดงราคาในระบบ ตาม memory rule
+          unit_price: 0
         }))
-      });
-      notify(`🎉 สร้างใบสั่งซื้อ ${res.po_no} เรียบร้อยแล้ว`);
+      };
+
+      if (editingPo) {
+        await purchaseOrderApi.update(editingPo.id, poData);
+        notify(`🎉 อัปเดตใบสั่งซื้อ ${editingPo.po_no} เรียบร้อยแล้ว`);
+      } else {
+        const res = await purchaseOrderApi.create(poData);
+        notify(`🎉 สร้างใบสั่งซื้อ ${res.po_no} เรียบร้อยแล้ว`);
+      }
       onSuccess();
       handleClose();
     } catch (err) {
       const error = err as { response?: { data?: { message?: string } }; message?: string };
-      notify(error?.response?.data?.message || error?.message || 'เกิดข้อผิดพลาดในการสร้างใบสั่งซื้อ', 'error');
+      notify(error?.response?.data?.message || error?.message || 'เกิดข้อผิดพลาดในการบันทึกใบสั่งซื้อ', 'error');
     } finally {
       setSubmitting(false);
     }
@@ -289,23 +259,22 @@ const NewPurchaseOrderModal: React.FC<NewPurchaseOrderModalProps> = ({ isOpen, o
       <div className="modal-content" style={{ maxWidth: '800px', width: '100%', maxHeight: '92vh', overflow: 'auto' }}>
         <div className="modal-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
           <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <ShoppingBag size={22} color="var(--primary)" /> สร้างใบสั่งซื้อใหม่ (PO)
+            <ShoppingBag size={22} color="var(--primary)" /> {editingPo ? `แก้ไขใบสั่งซื้อ ${editingPo.po_no}` : 'สร้างใบสั่งซื้อใหม่ (PO)'}
           </h3>
           <button type="button" className="close-btn" onClick={handleClose}><X size={20} /></button>
         </div>
 
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={(e) => { e.preventDefault(); }}>
+          <FormSection title="ข้อมูลผู้สั่งซื้อ" icon={<User size={18} />} columns={1}>
           {/* PO Header — ผู้สั่งซื้อ & โครงการ */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
             <Input
-              label="ผู้สั่งซื้อ *"
+              label="ผู้สั่งซื้อ"
               type="text"
               required
-              maxLength={100}
-              placeholder="ระบุชื่อผู้สั่งซื้อ..."
-              value={orderedBy}
-              onChange={e => setOrderedBy(e.target.value)}
-              disabled={submitting}
+              value={user?.full_name || ''}
+              disabled={true}
+              style={{ backgroundColor: 'var(--bg-app)', cursor: 'not-allowed' }}
             />
             <Input
               label="โครงการ / งบประมาณ"
@@ -320,7 +289,6 @@ const NewPurchaseOrderModal: React.FC<NewPurchaseOrderModalProps> = ({ isOpen, o
 
           {/* ═══ Buyer Details Section (กระชับ) ═══ */}
           <div style={{
-            marginTop: '0.5rem',
             padding: '12px 14px',
             border: '1px solid var(--border)',
             borderRadius: '12px',
@@ -361,119 +329,16 @@ const NewPurchaseOrderModal: React.FC<NewPurchaseOrderModalProps> = ({ isOpen, o
               />
             </div>
           </div>
-
-          {/* ═══ Vendor Details Section ═══ */}
-          <div style={{
-            marginTop: '0.5rem',
-            padding: '14px',
-            border: '1px solid var(--border)',
-            borderRadius: '12px',
-            background: 'rgba(99, 102, 241, 0.03)'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-              <Building2 size={16} color="var(--primary)" />
-              <span style={{ fontSize: '0.9rem', fontWeight: 800, color: 'var(--text-main)' }}>ข้อมูลบริษัทผู้ขาย / ผู้จัดจำหน่าย</span>
-              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600 }}>
-                (กรอกแล้วจะถูกบันทึก ครั้งต่อไปเลือกจาก dropdown ได้)
-              </span>
-            </div>
-
-            {/* Company name with autocomplete */}
-            <div ref={vendorBoxRef} style={{ position: 'relative', marginBottom: '10px' }}>
-              <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, marginBottom: '4px', color: 'var(--text-main)' }}>
-                ชื่อบริษัท / ผู้ขาย
-              </label>
-              <div style={{ position: 'relative' }}>
-                <input
-                  type="text"
-                  maxLength={150}
-                  placeholder="พิมพ์ชื่อบริษัท หรือเลือกจากรายการที่เคยใช้"
-                  value={companyName}
-                  onChange={e => { setCompanyName(e.target.value); setIsVendorListOpen(true); }}
-                  onFocus={() => setIsVendorListOpen(true)}
-                  disabled={submitting}
-                  style={{ width: '100%', padding: '9px 36px 9px 12px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '10px', fontSize: '0.88rem', color: 'var(--text-main)' }}
-                />
-                <ChevronDown
-                  size={16}
-                  onClick={() => !submitting && setIsVendorListOpen(v => !v)}
-                  style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', cursor: 'pointer' }}
-                />
-              </div>
-              {isVendorListOpen && filteredVendors.length > 0 && (
-                <div style={{
-                  position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0,
-                  background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '10px',
-                  boxShadow: '0 10px 25px rgba(0,0,0,0.15)', zIndex: 60, maxHeight: '240px', overflowY: 'auto'
-                }}>
-                  {filteredVendors.map((v, idx) => (
-                    <div
-                      key={`${v.company_name}-${idx}`}
-                      onClick={() => selectVendor(v)}
-                      className="dropdown-item-hover"
-                      style={{ padding: '9px 14px', borderBottom: '1px solid var(--border)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px' }}
-                    >
-                      <Building2 size={15} color="var(--text-muted)" style={{ flexShrink: 0 }} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 700, fontSize: '0.85rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.company_name}</div>
-                        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {[v.vendor_contact_person, v.vendor_phone, v.vendor_tax_id].filter(Boolean).join(' · ') || '—'}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-              <Input
-                label="ผู้ติดต่อ"
-                type="text"
-                maxLength={150}
-                placeholder="ชื่อพนักงานขาย / ผู้ติดต่อ"
-                value={vendorContactPerson}
-                onChange={e => setVendorContactPerson(e.target.value)}
-                disabled={submitting}
-              />
-              <Input
-                label="เบอร์โทรศัพท์"
-                type="text"
-                maxLength={50}
-                placeholder="เช่น 02-123-4567 หรือ 081-234-5678"
-                value={vendorPhone}
-                onChange={e => setVendorPhone(e.target.value)}
-                disabled={submitting}
-              />
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '10px', marginTop: '10px' }}>
-              <TextArea
-                label="ที่อยู่บริษัท"
-                rows={2}
-                maxLength={500}
-                placeholder="ที่อยู่สำหรับออกใบเสร็จ/ใบกำกับภาษี"
-                value={vendorAddress}
-                onChange={e => setVendorAddress(e.target.value)}
-                disabled={submitting}
-              />
-              <Input
-                label="เลขผู้เสียภาษี (Tax ID)"
-                type="text"
-                maxLength={20}
-                placeholder="13 หลัก"
-                value={vendorTaxId}
-                onChange={e => setVendorTaxId(e.target.value)}
-                disabled={submitting}
-              />
-            </div>
-          </div>
+          </FormSection>
 
           {/* Items section */}
-          <div style={{ marginTop: '1.5rem' }}>
-            <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 700, marginBottom: '8px' }}>
-              รายการพัสดุที่ต้องการสั่งซื้อ * <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 500 }}>({items.length} รายการ)</span>
-            </label>
-
+          <FormSection
+            title="รายการพัสดุที่ต้องการสั่งซื้อ"
+            subtitle={`เลือกจากคลังหรือเพิ่มพัสดุใหม่ · ${items.length} รายการ`}
+            icon={<Package size={18} />}
+            columns={1}
+          >
+          <div>
             {/* Inventory picker dropdown */}
             <div ref={pickerRef} style={{ position: 'relative', marginBottom: '8px' }}>
               <div
@@ -643,12 +508,29 @@ const NewPurchaseOrderModal: React.FC<NewPurchaseOrderModalProps> = ({ isOpen, o
                             <Package size={14} color="var(--text-muted)" />
                             <div>
                               <div style={{ fontWeight: 700 }}>{it.name}</div>
-                              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                                {it.model || '-'}
-                                {it.is_new && (
-                                  <span style={{ marginLeft: '6px', padding: '1px 6px', background: 'rgba(41, 182, 246, 0.12)', color: 'var(--primary)', borderRadius: '4px', fontSize: '0.65rem', fontWeight: 800 }}>
+                              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
+                                <span>รุ่น: {it.model || '-'}</span>
+                                {it.is_new ? (
+                                  <span style={{ padding: '1px 6px', background: 'rgba(41, 182, 246, 0.12)', color: 'var(--primary)', borderRadius: '4px', fontSize: '0.65rem', fontWeight: 800 }}>
                                     ✨ ใหม่
                                   </span>
+                                ) : (
+                                  (() => {
+                                    const invItem = inventory.find(inv => inv.id === it.inventory_id);
+                                    if (!invItem) return null;
+                                    const isLow = invItem.quantity < invItem.min_stock;
+                                    const isOut = invItem.quantity === 0;
+                                    
+                                    return (
+                                      <span style={{ 
+                                        color: isOut ? 'var(--danger)' : isLow ? 'var(--warning)' : 'var(--success)',
+                                        fontWeight: 600,
+                                        fontSize: '0.7rem'
+                                      }}>
+                                        (คงคลัง: {invItem.quantity} / ขั้นต่ำ: {invItem.min_stock})
+                                      </span>
+                                    );
+                                  })()
                                 )}
                               </div>
                             </div>
@@ -687,8 +569,9 @@ const NewPurchaseOrderModal: React.FC<NewPurchaseOrderModalProps> = ({ isOpen, o
               </div>
             )}
           </div>
+          </FormSection>
 
-          <div style={{ marginTop: '1.25rem' }}>
+          <FormSection title="หมายเหตุ" icon={<FileText size={18} />} columns={1}>
             <TextArea
               label="หมายเหตุ"
               rows={3}
@@ -698,12 +581,15 @@ const NewPurchaseOrderModal: React.FC<NewPurchaseOrderModalProps> = ({ isOpen, o
               onChange={e => setNote(e.target.value)}
               disabled={submitting}
             />
-          </div>
+          </FormSection>
 
           <div className="modal-actions" style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
             <Button type="button" variant="outline" onClick={handleClose} disabled={submitting}>ยกเลิก</Button>
-            <Button type="submit" variant="primary" loading={submitting} icon={<CheckCircle2 size={16} />}>
-              บันทึกใบสั่งซื้อ (Pending)
+            <Button type="button" variant="outline" loading={submitting} onClick={() => handleSave('Draft')}>
+              บันทึกเป็นแบบร่าง
+            </Button>
+            <Button type="button" variant="primary" loading={submitting} icon={<CheckCircle2 size={16} />} onClick={() => handleSave('Pending')}>
+              บันทึกและส่งขออนุมัติ
             </Button>
           </div>
         </form>

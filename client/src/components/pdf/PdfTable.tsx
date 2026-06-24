@@ -130,6 +130,7 @@ export function PdfTable<T>({ docType, title, columns, rows, emptyMessage = 'ไ
                       textAlign: col.align || 'left',
                       verticalAlign: 'top',
                       lineHeight: 1.3,
+                      overflowWrap: 'anywhere', // wrap long unspaced tokens so the table stays within the page width
                     }}
                   >
                     {col.render(row, rowIdx)}

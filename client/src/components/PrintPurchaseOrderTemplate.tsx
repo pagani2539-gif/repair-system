@@ -38,10 +38,74 @@ const statusInfo = (status: string): { label: string; tone: 'success' | 'warning
     case 'Draft':     return { label: 'แบบร่าง', tone: 'neutral' };
     case 'Pending':   return { label: 'รออนุมัติ', tone: 'warning' };
     case 'Approved':  return { label: 'อนุมัติแล้ว', tone: 'success' };
+    case 'Ordered':   return { label: 'สั่งซื้อแล้ว', tone: 'success' };
     case 'Received':  return { label: 'รับของเข้าคลังแล้ว', tone: 'success' };
     case 'Cancelled': return { label: 'ยกเลิก', tone: 'danger' };
     default:          return { label: status || '-', tone: 'neutral' };
   }
+};
+
+const getItemWeight = (item: PurchaseOrderItem): number => {
+  let weight = 1.0;
+  
+  // Estimate lines based on name length (assuming ~30 characters per line in the column)
+  const nameLines = Math.ceil((item.item_name?.length || 1) / 30);
+  if (nameLines > 1) {
+    weight += (nameLines - 1) * 0.35;
+  }
+  
+  return weight;
+};
+
+const chunkItems = (items: PurchaseOrderItem[]): PurchaseOrderItem[][] => {
+  const pages: PurchaseOrderItem[][] = [];
+  const itemsWithWeights = items.map(item => ({
+    item,
+    weight: getItemWeight(item)
+  }));
+
+  const totalWeight = itemsWithWeights.reduce((sum, x) => sum + x.weight, 0);
+
+  // If all items fit on a single page with the signature block
+  if (totalWeight <= 11.0) {
+    pages.push(items);
+    return pages;
+  }
+
+  let index = 0;
+  let isFirstPage = true;
+
+  while (index < items.length) {
+    const remaining = itemsWithWeights.slice(index);
+    const remainingWeight = remaining.reduce((sum, x) => sum + x.weight, 0);
+
+    // If we are on subsequent pages, and all remaining items can fit on the last page with the signature block
+    if (!isFirstPage && remainingWeight <= 14.5) {
+      pages.push(remaining.map(x => x.item));
+      break;
+    }
+
+    // Otherwise, we need to fill the current page up to its limit
+    const pageLimit = isFirstPage ? 13.5 : 16.5;
+    const pageItems: PurchaseOrderItem[] = [];
+    let pageWeight = 0;
+
+    while (index < items.length) {
+      const nextItem = itemsWithWeights[index];
+      // If adding the next item exceeds the page limit, and we already have at least 1 item on this page, we stop
+      if (pageWeight + nextItem.weight > pageLimit && pageItems.length > 0) {
+        break;
+      }
+      pageItems.push(nextItem.item);
+      pageWeight += nextItem.weight;
+      index++;
+    }
+
+    pages.push(pageItems);
+    isFirstPage = false;
+  }
+
+  return pages;
 };
 
 const PrintPurchaseOrderTemplate: React.FC<Props> = ({ po, isPreview, companyId, logoId }) => {
@@ -51,6 +115,17 @@ const PrintPurchaseOrderTemplate: React.FC<Props> = ({ po, isPreview, companyId,
   const docDate = formatDateThai(parseDate(po.created_at));
   const printedAt = formatDateTimeThai(new Date());
   const status = statusInfo(po.status);
+
+  let titleTh = 'ใบสั่งซื้อ';
+  let titleEn = 'Purchase Order';
+
+  if (po.status === 'Draft') {
+    titleTh = 'ใบขอเสนอซื้อ (ร่างใบสั่งซื้อ)';
+    titleEn = 'Purchase Requisition (Draft)';
+  } else if (po.status === 'Pending') {
+    titleTh = 'ใบขอเสนอซื้อ (รออนุมัติ)';
+    titleEn = 'Purchase Requisition (Pending Approval)';
+  }
 
   const items: PurchaseOrderItem[] = po.items || [];
 
@@ -101,7 +176,7 @@ const PrintPurchaseOrderTemplate: React.FC<Props> = ({ po, isPreview, companyId,
     },
   ];
 
-  const hasVendor = po.company_name || po.vendor_address || po.vendor_phone;
+  const pages = chunkItems(items);
 
   return (
     <div
@@ -112,98 +187,78 @@ const PrintPurchaseOrderTemplate: React.FC<Props> = ({ po, isPreview, companyId,
         top: isPreview ? 'auto' : 0,
       }}
     >
-      <PdfPage isPreview={isPreview}>
-        <PdfHeader
-          docType="purchase"
-          docNumber={docNumber}
-          docDate={docDate}
-          company={company}
-          logo={logo}
-          statusBadge={status}
-        />
+      {pages.map((pageRows, pageIdx) => {
+        // Calculate the cumulative start index for row numbering
+        let startIndex = 0;
+        for (let i = 0; i < pageIdx; i++) {
+          startIndex += pages[i].length;
+        }
 
-        {/* Side-by-side Buyer & Vendor info */}
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: '1fr 1.2fr',
-          gap: '12px',
-          margin: 0,
-        }}>
-          {/* Buyer Info */}
-          <PdfInfoGrid
-            title="ข้อมูลการสั่งซื้อ"
-            columns={1}
-            docType="purchase"
-            fields={[
-              { label: 'ผู้สั่งซื้อ', value: po.ordered_by || po.created_by || '-' },
-              { label: 'แผนก / หน่วยงาน', value: po.buyer_department || '-' },
-              { label: 'เบอร์ติดต่อ / อีเมล', value: `${po.buyer_phone || '-'} / ${po.buyer_email || '-'}` },
-              { label: 'ชื่อโครงการ / งาน', value: po.project_name || '-' },
-            ]}
-          />
-
-          {/* Vendor Info */}
-          {hasVendor ? (
-            <PdfInfoGrid
-              title="ผู้ขาย"
-              columns={1}
+        return (
+          <PdfPage key={pageIdx} isPreview={isPreview}>
+            <PdfHeader
               docType="purchase"
-              fields={[
-                { label: 'ชื่อบริษัท / ผู้ขาย', value: `${po.company_name || '-'} (${po.vendor_contact_person || '-'})` },
-                { label: 'ที่อยู่', value: po.vendor_address || '-' },
-                { label: 'เบอร์โทร / เลขประจำตัวผู้เสียภาษี', value: `${po.vendor_phone || '-'} / ${po.vendor_tax_id || '-'}` },
-                { label: 'หมายเหตุ', value: po.note || '-' },
-              ]}
+              docNumber={docNumber}
+              docDate={docDate}
+              company={company}
+              logo={logo}
+              statusBadge={status}
+              titleTh={titleTh}
+              titleEn={titleEn}
             />
-          ) : (
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              border: pdfTheme.border.light,
-              borderRadius: pdfTheme.radius.md,
-              padding: '12px',
-              background: pdfTheme.colors.bgSubtle,
-              color: pdfTheme.colors.textMuted,
-              fontSize: pdfTheme.size.body,
-              height: '100%',
-            }}>
-              — ไม่มีข้อมูลผู้ขาย —
-            </div>
-          )}
-        </div>
 
-        <PdfTable
-          docType="purchase"
-          title="รายการสินค้าที่สั่งซื้อ"
-          columns={itemColumns}
-          rows={items}
-          emptyMessage="ไม่มีรายการสั่งซื้อ"
-        />
+            {pageIdx === 0 && (
+              <PdfInfoGrid
+                title="ข้อมูลการสั่งซื้อ"
+                columns={2}
+                docType="purchase"
+                fields={[
+                  { label: 'ผู้สั่งซื้อ', value: po.ordered_by || po.created_by || '-' },
+                  { label: 'แผนก / หน่วยงาน', value: po.buyer_department || '-' },
+                  { label: 'เบอร์ติดต่อ / อีเมล', value: `${po.buyer_phone || '-'} / ${po.buyer_email || '-'}` },
+                  { label: 'ชื่อโครงการ / งาน', value: po.project_name || '-' },
+                  { label: 'หมายเหตุ', value: po.note || '-', span: 2 },
+                ]}
+              />
+            )}
 
-        <div style={{ marginTop: 'auto' }} />
+            <PdfTable
+              docType="purchase"
+              title={pageIdx === 0 ? "รายการสินค้าที่สั่งซื้อ" : "รายการสินค้าที่สั่งซื้อ (ต่อ)"}
+              columns={itemColumns}
+              rows={pageRows}
+              emptyMessage="ไม่มีรายการสั่งซื้อ"
+              startIndex={startIndex}
+            />
 
-        <PdfSignatureBlock
-          slots={[
-            { role: 'ผู้สั่งซื้อ', name: po.ordered_by || po.created_by || undefined },
-            { 
-              role: 'ผู้อนุมัติสั่งซื้อ', 
-              name: po.approved_by || undefined, 
-              date: po.approved_at ? formatDateThai(parseDate(po.approved_at)) : undefined 
-            },
-            { role: 'ผู้รับสินค้า' },
-          ]}
-        />
+            {pageIdx === pages.length - 1 && (
+              <>
+                <div style={{ marginTop: 'auto' }} />
+                <PdfSignatureBlock
+                  slots={[
+                    { role: 'ผู้สั่งซื้อ', name: po.ordered_by || po.created_by || undefined },
+                    { 
+                      role: 'ผู้อนุมัติสั่งซื้อ', 
+                      name: po.approved_by || undefined, 
+                      date: po.approved_at ? formatDateThai(parseDate(po.approved_at)) : undefined 
+                    },
+                    { role: 'ผู้รับสินค้า' },
+                  ]}
+                />
+              </>
+            )}
 
-        <PdfFooter
-          docType="purchase"
-          docNumber={docNumber}
-          company={company}
-          pageNumber={1}
-          totalPages={1}
-          printedAt={printedAt}
-        />
-      </PdfPage>
+            <PdfFooter
+              docType="purchase"
+              docNumber={docNumber}
+              company={company}
+              pageNumber={pageIdx + 1}
+              totalPages={pages.length}
+              printedAt={printedAt}
+            />
+          </PdfPage>
+        );
+      })}
     </div>
   );
 };

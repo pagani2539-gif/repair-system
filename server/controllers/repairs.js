@@ -2,6 +2,8 @@ const db = require('../database/init');
 const { validateStationExists, validateStationAreaBelongsToStation, getStationSnapshotName } = require('../utils/stationValidation');
 const { logAudit } = require('../utils/auditLogger');
 const { sendLineNotify } = require('../utils/lineNotify');
+const { generateDocNo } = require('../utils/docNumber');
+const { REPAIR_STATUS, INSTANCE_STATUS } = require('../utils/constants');
 
 // SQLite Query Helpers for Async/Await
 const queryAll = (sql, params = []) => new Promise((resolve, reject) => {
@@ -12,12 +14,9 @@ const queryGet = (sql, params = []) => new Promise((resolve, reject) => {
   db.get(sql, params, (err, row) => err ? reject(err) : resolve(row));
 });
 
-// Helper to generate Ticket Number
-const generateTicketNo = () => {
-  const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  const random = Math.floor(1000 + Math.random() * 9000);
-  return `RE-${date}-${random}`;
-};
+// Repair tickets use "RP-", claims use "CL-" — both stored in repairs.ticket_no
+const generateRepairNo = () => generateDocNo('RP', { table: 'repairs', column: 'ticket_no' });
+const generateClaimNo = () => generateDocNo('CL', { table: 'repairs', column: 'ticket_no' });
 
 exports.getDashboardStats = async (req, res) => {
   const { startDate, endDate } = req.query;
@@ -483,7 +482,7 @@ exports.getRepairById = (req, res) => {
 };
 
 exports.createRepair = async (req, res) => {
-  const { location, station_id, station_area_id, device_name, problem, priority, received_at, project_name } = req.body;
+  const { location, station_id, station_area_id, device_name, problem, priority, received_at, project_name, instance_id, inventory_id } = req.body;
   const reporter = req.user.full_name;
   
   try {
@@ -494,16 +493,21 @@ exports.createRepair = async (req, res) => {
       officialLocation = location;
     }
     
-    const ticket_no = generateTicketNo();
+    const ticket_no = await generateRepairNo();
 
     db.run(`
-      INSERT INTO repairs (ticket_no, reporter, location, station_id, station_area_id, device_name, problem, priority, status, is_read, type, received_at, project_name)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'รอดำเนินการ', 0, 'repair', ?, ?)
-    `, [ticket_no, reporter, officialLocation, station_id || null, station_area_id || null, device_name, problem, priority || 'ปกติ', received_at || new Date().toISOString(), project_name], function(err) {
+      INSERT INTO repairs (ticket_no, reporter, location, station_id, station_area_id, device_name, problem, priority, status, is_read, type, received_at, project_name, instance_id, inventory_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'repair', ?, ?, ?, ?)
+    `, [ticket_no, reporter, officialLocation, station_id || null, station_area_id || null, device_name, problem, priority || 'ปกติ', REPAIR_STATUS.PENDING, received_at || new Date().toISOString(), project_name, instance_id || null, inventory_id || null], function(err) {
       if (err) return res.status(500).json({ error: err.message });
       
       const repairId = this.lastID;
       
+      // Update inventory instance status if provided
+      if (instance_id) {
+        db.run('UPDATE inventory_instances SET status = ? WHERE id = ?', [INSTANCE_STATUS.UNDER_REPAIR, instance_id]);
+      }
+
       // Log creation
       db.run('INSERT INTO repair_logs (repair_id, action, user, note) VALUES (?, ?, ?, ?)', 
         [repairId, 'เปิดตั๋วแจ้งซ่อม', reporter, 'ส่งข้อมูลแจ้งซ่อมใหม่เข้าสู่ระบบ']);
@@ -518,7 +522,7 @@ exports.createRepair = async (req, res) => {
       }
 
       // Send LINE Notify Alert
-      const lineMsg = `\n🔧 *แจ้งซ่อมใหม่*\nเลขใบสั่งงาน: ${ticket_no}\nอุปกรณ์: ${device_name}\nอาการเสีย: ${problem}\nระดับความสำคัญ: ${priority || 'ปกติ'}\nสถานที่: ${officialLocation || 'ไม่ได้ระบุ'}\nผู้แจ้ง: ${reporter}`;
+      const lineMsg = `\n🔧 *แจ้งซ่อมใหม่*\n🔢 เลขใบงาน: ${ticket_no}\n💻 อุปกรณ์: ${device_name}\n⚠️ อาการเสีย: ${problem}\n⚡ ระดับความสำคัญ: ${priority || 'ปกติ'}\n📍 สถานที่: ${officialLocation || 'ไม่ได้ระบุ'}\n👤 ผู้แจ้ง: ${reporter}`;
       sendLineNotify('repair', lineMsg);
 
       res.status(201).json({ id: repairId, ticket_no });
@@ -530,7 +534,7 @@ exports.createRepair = async (req, res) => {
 };
 
 exports.createClaim = async (req, res) => {
-  const { location, station_id, station_area_id, device_name, problem, priority, received_at, project_name } = req.body;
+  const { location, station_id, station_area_id, device_name, problem, priority, received_at, project_name, instance_id, inventory_id } = req.body;
   const reporter = req.user.full_name;
   
   try {
@@ -541,16 +545,21 @@ exports.createClaim = async (req, res) => {
       officialLocation = location;
     }
     
-    const ticket_no = generateTicketNo();
+    const ticket_no = await generateClaimNo();
 
     db.run(`
-      INSERT INTO repairs (ticket_no, reporter, location, station_id, station_area_id, device_name, problem, priority, status, is_read, type, received_at, project_name)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'รอดำเนินการ', 0, 'claim', ?, ?)
-    `, [ticket_no, reporter, officialLocation, station_id || null, station_area_id || null, device_name, problem, priority || 'ปกติ', received_at || new Date().toISOString(), project_name], function(err) {
+      INSERT INTO repairs (ticket_no, reporter, location, station_id, station_area_id, device_name, problem, priority, status, is_read, type, received_at, project_name, instance_id, inventory_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'claim', ?, ?, ?, ?)
+    `, [ticket_no, reporter, officialLocation, station_id || null, station_area_id || null, device_name, problem, priority || 'ปกติ', REPAIR_STATUS.PENDING, received_at || new Date().toISOString(), project_name, instance_id || null, inventory_id || null], function(err) {
       if (err) return res.status(500).json({ error: err.message });
       
       const repairId = this.lastID;
       
+      // Update inventory instance status if provided
+      if (instance_id) {
+        db.run('UPDATE inventory_instances SET status = ? WHERE id = ?', [INSTANCE_STATUS.CLAIMING, instance_id]);
+      }
+
       // Log creation
       db.run('INSERT INTO repair_logs (repair_id, action, user, note) VALUES (?, ?, ?, ?)', 
         [repairId, 'เปิดตั๋วแจ้งเคลม', reporter, 'ส่งข้อมูลแจ้งเคลมใหม่เข้าสู่ระบบ']);
@@ -565,7 +574,7 @@ exports.createClaim = async (req, res) => {
       }
 
       // Send LINE Notify Alert
-      const lineMsg = `\n🛡️ *แจ้งเคลมใหม่*\nเลขใบสั่งงาน: ${ticket_no}\nอุปกรณ์: ${device_name}\nอาการเสีย/ปัญหา: ${problem}\nระดับความสำคัญ: ${priority || 'ปกติ'}\nสถานที่: ${officialLocation || 'ไม่ได้ระบุ'}\nผู้แจ้ง: ${reporter}`;
+      const lineMsg = `\n🛡️ *แจ้งเคลมใหม่*\n🔢 เลขใบงาน: ${ticket_no}\n💻 อุปกรณ์: ${device_name}\n⚠️ อาการเสีย/ปัญหา: ${problem}\n⚡ ระดับความสำคัญ: ${priority || 'ปกติ'}\n📍 สถานที่: ${officialLocation || 'ไม่ได้ระบุ'}\n👤 ผู้แจ้ง: ${reporter}`;
       sendLineNotify('repair', lineMsg);
 
       res.status(201).json({ id: repairId, ticket_no });
@@ -588,6 +597,7 @@ exports.updateStatus = (req, res) => {
   const { id } = req.params;
   const { status, note, repair_note } = req.body;
   const actor = req.user.full_name;
+  const normalizedStatus = String(status || '').trim();
 
   db.get('SELECT * FROM repairs WHERE id = ?', [id], (err, oldRepair) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -595,7 +605,7 @@ exports.updateStatus = (req, res) => {
 
     // Technician is the logged-in user performing the work
     let query = 'UPDATE repairs SET status = ?, technician = ?, updated_at = CURRENT_TIMESTAMP';
-    const params = [status, actor];
+    const params = [normalizedStatus, actor];
 
     if (repair_note) {
       query += ', repair_note = ?';
@@ -611,21 +621,39 @@ exports.updateStatus = (req, res) => {
       const logNote = repair_note || note || '';
 
       db.run('INSERT INTO repair_logs (repair_id, action, user, note) VALUES (?, ?, ?, ?)',
-        [id, `เปลี่ยนสถานะเป็น ${status}`, actor, logNote]);
+        [id, `เปลี่ยนสถานะเป็น ${normalizedStatus}`, actor, logNote]);
 
-      db.get('SELECT * FROM repairs WHERE id = ?', [id], (getErr, row) => {
-        if (!getErr && row) {
-          const actionType = row.type === 'claim' ? 'claim update' : 'repair update';
-          logAudit(row.type || 'repair', id, actionType, oldRepair, row, actor).catch(e => console.error(e));
-        }
-      });
+      const proceed = () => {
+        db.get('SELECT * FROM repairs WHERE id = ?', [id], (getErr, row) => {
+          if (!getErr && row) {
+            const actionType = row.type === 'claim' ? 'claim update' : 'repair update';
+            logAudit(row.type || 'repair', id, actionType, oldRepair, row, actor).catch(e => console.error(e));
+          }
+        });
 
-      // Send LINE Notify Alert
-      const typeLabel = oldRepair.type === 'claim' ? 'งานเคลม' : 'งานซ่อม';
-      const lineMsg = `\n🔧 *อัปเดตสถานะ${typeLabel}*\nเลขใบสั่งงาน: ${oldRepair.ticket_no}\nอุปกรณ์: ${oldRepair.device_name}\nสถานะใหม่: ${status}\nผู้รับผิดชอบ: ${actor}\nหมายเหตุ: ${repair_note || note || 'ไม่มี'}`;
-      sendLineNotify('repair', lineMsg);
+        // Send LINE Notify Alert
+        const typeLabel = oldRepair.type === 'claim' ? 'งานเคลม' : 'งานซ่อม';
+        const lineMsg = `\n🔧 *อัปเดตสถานะ${typeLabel}*\n🔢 เลขใบงาน: ${oldRepair.ticket_no}\n💻 อุปกรณ์: ${oldRepair.device_name}\n📈 สถานะใหม่: ${status}\n👤 ผู้รับผิดชอบ: ${actor}\n💬 หมายเหตุ: ${repair_note || note || 'ไม่มี'}`;
+        sendLineNotify('repair', lineMsg);
 
-      res.json({ message: 'อัปเดตสถานะเรียบร้อย' });
+        res.json({ message: 'อัปเดตสถานะเรียบร้อย' });
+      };
+
+      // If status is completed ('เสร็จสิ้น'), update instance statuses if no swap happened
+      if (normalizedStatus === REPAIR_STATUS.COMPLETED) {
+        db.all('SELECT * FROM device_changes WHERE repair_id = ?', [id], (errChanges, changes) => {
+          if (!errChanges && (!changes || changes.length === 0) && oldRepair.instance_id) {
+            db.run("UPDATE inventory_instances SET status = ? WHERE id = ?", [INSTANCE_STATUS.WITHDRAWN, oldRepair.instance_id], (errUpd) => {
+              if (errUpd) console.error('Failed to update instance status on complete:', errUpd.message);
+              proceed();
+            });
+          } else {
+            proceed();
+          }
+        });
+      } else {
+        proceed();
+      }
     });
   });
 };
@@ -683,6 +711,24 @@ exports.replaceDevice = (req, res) => {
   `, [id, old_serial, old_model, new_serial, new_model, actor], function(err) {
     if (err) return res.status(500).json({ error: err.message });
 
+    // Update old and new device status immediately
+    db.get('SELECT * FROM repairs WHERE id = ?', [id], (errRep, repair) => {
+      if (!errRep && repair) {
+        if (old_serial) {
+          db.run(
+            "UPDATE inventory_instances SET status = ?, station_id = NULL, current_location = 'Warehouse' WHERE serial_number = ?",
+            [INSTANCE_STATUS.DAMAGED, old_serial]
+          );
+        }
+        if (new_serial) {
+          db.run(
+            "UPDATE inventory_instances SET status = ?, station_id = ?, current_location = ? WHERE serial_number = ?",
+            [INSTANCE_STATUS.WITHDRAWN, repair.station_id, repair.location, new_serial]
+          );
+        }
+      }
+    });
+
     db.run('INSERT INTO repair_logs (repair_id, action, user, note) VALUES (?, ?, ?, ?)',
       [id, 'เปลี่ยนอะไหล่/อุปกรณ์', actor, `เปลี่ยน ${old_model} (${old_serial}) เป็น ${new_model} (${new_serial})`]);
 
@@ -692,8 +738,26 @@ exports.replaceDevice = (req, res) => {
 
 exports.deleteRepair = (req, res) => {
   const { id } = req.params;
-  db.run('DELETE FROM repairs WHERE id = ?', [id], (err) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json({ message: 'ลบรายการแจ้งซ่อมสำเร็จ' });
+  db.get('SELECT * FROM repairs WHERE id = ?', [id], (err, repair) => {
+    if (!err && repair && repair.instance_id && String(repair.status || '').trim() !== REPAIR_STATUS.COMPLETED) {
+      db.run("UPDATE inventory_instances SET status = ? WHERE id = ?", [INSTANCE_STATUS.WITHDRAWN, repair.instance_id]);
+    }
+    db.run('DELETE FROM repairs WHERE id = ?', [id], (err) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ message: 'ลบรายการแจ้งซ่อมสำเร็จ' });
+    });
   });
+};
+
+exports.updateRepairCompany = (req, res) => {
+  const { id } = req.params;
+  const { company_id } = req.body;
+  db.run(
+    'UPDATE repairs SET company_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+    [company_id || null, id],
+    function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ message: 'อัปเดตข้อมูลบริษัทของใบแจ้งซ่อมสำเร็จ' });
+    }
+  );
 };

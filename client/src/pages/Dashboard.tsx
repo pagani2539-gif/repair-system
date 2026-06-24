@@ -5,7 +5,6 @@ import { useApi } from '../hooks/useApi';
 import { Skeleton } from '../components/ui/Skeleton';
 import {
   Check,
-  AlertTriangle,
   Wrench,
   Inbox,
   ShoppingBag,
@@ -18,12 +17,18 @@ import {
   Calendar,
   Package,
   Clock,
-  RotateCcw,
   RefreshCw,
   Crown,
   Shield,
   MapPin,
-  ChevronRight
+  ChevronRight,
+  // New Icons for Consistency
+  Sliders,
+  Boxes,
+  PackageCheck,
+  Hourglass,
+  FileSignature,
+  ShieldAlert
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import Card from '../components/ui/Card';
@@ -242,12 +247,12 @@ const Dashboard: React.FC = () => {
 
   // KPI strip (compact, 6 ตัว)
   const kpiCards = [
-    { label: 'งานแจ้งซ่อม', value: kpis.total, icon: Inbox, color: 'var(--primary)', bg: 'var(--primary-light)', to: '/repairs', alert: false },
-    { label: 'กำลังซ่อม', value: kpis.in_progress, icon: Wrench, color: 'var(--warning)', bg: 'var(--warning-light)', to: '/repairs?status=กำลังซ่อม', alert: kpis.in_progress > 0 },
-    { label: 'พัสดุวิกฤต', value: kpis.critical_stock, icon: AlertTriangle, color: 'var(--danger)', bg: 'var(--danger-light)', to: '/inventory', alert: kpis.critical_stock > 0 },
-    { label: 'ใบเบิกทั้งหมด', value: totalWithdrawals, icon: ArrowUpRight, color: 'var(--success)', bg: 'var(--success-light)', to: '/withdrawal', alert: false },
-    { label: 'ค้างคืน', value: people.pendingReturnsCount, icon: RotateCcw, color: '#d97706', bg: 'rgba(217,119,6,0.1)', to: '/pending-returns', alert: people.pendingReturnsCount > 0 },
-    { label: 'PO รอรับ', value: purchaseOrders.pending_po || 0, icon: ShoppingBag, color: 'var(--primary)', bg: 'var(--primary-light)', to: '/purchase-orders', alert: false },
+    { label: 'งานแจ้งซ่อม', value: kpis.total, icon: Sliders, color: 'var(--primary)', bg: 'var(--primary-light)', to: '/repairs', alert: false },
+    { label: 'กำลังซ่อม', value: kpis.in_progress, icon: Sliders, color: 'var(--warning)', bg: 'var(--warning-light)', to: '/repairs?status=กำลังซ่อม', alert: kpis.in_progress > 0 },
+    { label: 'พัสดุวิกฤต', value: kpis.critical_stock, icon: ShieldAlert, color: 'var(--danger)', bg: 'var(--danger-light)', to: '/inventory', alert: kpis.critical_stock > 0 },
+    { label: 'ใบเบิกทั้งหมด', value: totalWithdrawals, icon: PackageCheck, color: 'var(--success)', bg: 'var(--success-light)', to: '/withdrawal', alert: false },
+    { label: 'ค้างคืน', value: people.pendingReturnsCount, icon: Hourglass, color: '#d97706', bg: 'rgba(217,119,6,0.1)', to: '/pending-returns', alert: people.pendingReturnsCount > 0 },
+    { label: 'PO รอรับ', value: purchaseOrders.pending_po || 0, icon: FileSignature, color: 'var(--primary)', bg: 'var(--primary-light)', to: '/purchase-orders', alert: false },
   ];
 
   return (
@@ -449,7 +454,7 @@ const Dashboard: React.FC = () => {
           ))}
 
           {/* ============ Zone: งานซ่อมและการเคลม ============ */}
-          <SectionHeader icon={<Wrench size={17} />} title="งานซ่อมและการเคลม" subtitle="สถานะงานซ่อม ตั๋วเคลม และงานค้างเกินกำหนด" />
+          <SectionHeader icon={<Sliders size={17} />} title="งานซ่อมและการเคลม" subtitle="สถานะงานซ่อม ตั๋วเคลม และงานค้างเกินกำหนด" />
 
           {/* Status pie */}
           <Card className="glass-card boot-animate stagger-2 dash-span-4" style={{ padding: '1.5rem' }}>
@@ -634,7 +639,7 @@ const Dashboard: React.FC = () => {
           </Card>
 
           {/* ============ Zone: คลังพัสดุ ============ */}
-          <SectionHeader icon={<Package size={17} />} title="คลังพัสดุ" subtitle="ความเคลื่อนไหวสต็อก สภาพอุปกรณ์ และรายการที่ต้องจับตา" />
+          <SectionHeader icon={<Boxes size={17} />} title="คลังพัสดุ" subtitle="ความเคลื่อนไหวสต็อก สภาพอุปกรณ์ และรายการที่ต้องจับตา" />
 
           {/* Stock movement chart */}
           <Card className="glass-card boot-animate stagger-2 dash-span-8" style={{ padding: '1.5rem' }}>

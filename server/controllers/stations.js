@@ -10,6 +10,13 @@ const queryGet = (sql, params = []) => new Promise((resolve, reject) => {
   db.get(sql, params, (err, row) => err ? reject(err) : resolve(row));
 });
 
+const runQuery = (sql, params = []) => new Promise((resolve, reject) => {
+  db.run(sql, params, function (err) { err ? reject(err) : resolve(this); });
+});
+
+// สภาพอุปกรณ์ (manual) ที่ตั้งได้เองต่อ (สถานี × ชนิดอุปกรณ์)
+const VALID_ASSET_STATUSES = ['ปกติ', 'ชำรุด', 'ชำรุดรอเปลี่ยน', 'ปลดระวาง'];
+
 exports.getUniqueStations = async (req, res) => {
   try {
     const { status } = req.query;
@@ -104,7 +111,7 @@ exports.getStationDetails = async (req, res) => {
     if (withdrawalIds.length > 0) {
       const placeholders = withdrawalIds.map(() => '?').join(',');
       const items = await queryAll(`
-        SELECT wi.*, i.name as item_name, i.model as item_model, i.description as item_description, i.image_path as item_image
+        SELECT wi.*, i.name as item_name, i.model as item_model, i.description as item_description, i.image_path as item_image, i.requires_sn
         FROM withdrawal_items wi
         JOIN inventory i ON wi.inventory_id = i.id
         WHERE wi.withdrawal_id IN (${placeholders})
@@ -125,6 +132,24 @@ exports.getStationDetails = async (req, res) => {
       items: withdrawalItemsMap[w.id] || []
     }));
 
+    // Manual asset condition statuses for this station (keyed by inventory_id on the client)
+    const assetStatuses = station.id
+      ? await queryAll(
+          `SELECT inventory_id, status, note, updated_by, updated_at
+           FROM station_asset_status WHERE station_id = ?`,
+          [station.id]
+        )
+      : [];
+
+    // Fetch individual inventory instances deployed at this station
+    const instances = station.id
+      ? await queryAll(
+          `SELECT id, inventory_id, serial_number, condition, status, updated_at
+           FROM inventory_instances WHERE station_id = ?`,
+          [station.id]
+        )
+      : [];
+
     res.json({
       station: station,
       stats: {
@@ -139,10 +164,52 @@ exports.getStationDetails = async (req, res) => {
       repairs,
       claims,
       withdrawals: withdrawalsWithItems,
-      transactions
+      transactions,
+      asset_statuses: assetStatuses,
+      instances
     });
   } catch (err) {
     console.error('Get Station Details Error:', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.upsertAssetStatus = async (req, res) => {
+  const { stationId, inventoryId } = req.params;
+  const { status, note } = req.body;
+
+  if (!status || !VALID_ASSET_STATUSES.includes(status)) {
+    return res.status(400).json({ error: `สภาพอุปกรณ์ไม่ถูกต้อง (ต้องเป็น ${VALID_ASSET_STATUSES.join(', ')})` });
+  }
+
+  const updatedBy = (req.user && req.user.full_name) || 'System/Admin';
+  const noteVal = note != null && String(note).trim() !== '' ? String(note).trim() : null;
+
+  try {
+    const old = await queryGet(
+      'SELECT * FROM station_asset_status WHERE station_id = ? AND inventory_id = ?',
+      [stationId, inventoryId]
+    );
+
+    await runQuery(`
+      INSERT INTO station_asset_status (station_id, inventory_id, status, note, updated_by, updated_at)
+      VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(station_id, inventory_id)
+      DO UPDATE SET status = excluded.status, note = excluded.note,
+                    updated_by = excluded.updated_by, updated_at = CURRENT_TIMESTAMP
+    `, [stationId, inventoryId, status, noteVal, updatedBy]);
+
+    const row = await queryGet(
+      'SELECT inventory_id, status, note, updated_by, updated_at FROM station_asset_status WHERE station_id = ? AND inventory_id = ?',
+      [stationId, inventoryId]
+    );
+
+    logAudit('asset_status', inventoryId, 'update', old, { station_id: Number(stationId), ...row }, updatedBy)
+      .catch(e => console.error(e));
+
+    res.json(row);
+  } catch (err) {
+    console.error('Upsert Asset Status Error:', err);
     res.status(500).json({ error: err.message });
   }
 };

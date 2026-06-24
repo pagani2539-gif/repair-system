@@ -1,3 +1,5 @@
+require('./utils/loadEnv')();
+
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
@@ -7,6 +9,11 @@ const db = require('./database/init'); // This will also ensure tables are creat
 
 const app = express();
 const PORT = process.env.PORT || 5221;
+const isProduction = process.env.NODE_ENV === 'production';
+const allowedOrigins = (process.env.CORS_ORIGIN || '')
+  .split(',')
+  .map(origin => origin.trim())
+  .filter(Boolean);
 
 // Ensure upload directory exists
 const uploadDir = path.join(__dirname, 'uploads');
@@ -15,18 +22,27 @@ if (!fs.existsSync(uploadDir)){
 }
 
 // Middleware
-app.use(cors());
-app.use(express.json());
-app.use(morgan('dev'));
+if (isProduction && allowedOrigins.length === 0) {
+  console.warn('CORS_ORIGIN not set; production API will allow same-origin requests only.');
+} else {
+  app.use(cors(isProduction ? { origin: allowedOrigins, credentials: true } : undefined));
+}
+app.disable('x-powered-by');
 app.use((req, res, next) => {
-  console.log(`${req.method} ${req.url}`);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   next();
 });
+app.use(express.json());
+app.use(morgan(isProduction ? 'combined' : 'dev'));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
   setHeaders: (res) => {
-    res.set('Access-Control-Allow-Origin', '*');
-    res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
-    res.set('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+    if (!isProduction) {
+      res.set('Access-Control-Allow-Origin', '*');
+      res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+      res.set('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+    }
   }
 }));
 
@@ -38,6 +54,7 @@ const transactionRoutes = require('./routes/transactions');
 const poRoutes = require('./routes/purchaseOrders');
 const searchRoutes = require('./routes/search');
 const stationRoutes = require('./routes/stations');
+const contractRoutes = require('./routes/contracts');
 const settingsRoutes = require('./routes/settings');
 const authRoutes = require('./routes/auth');
 const usersRoutes = require('./routes/users');
@@ -55,6 +72,7 @@ app.use('/api/transactions', requireAuth, transactionRoutes);
 app.use('/api/purchase-orders', requireAuth, poRoutes);
 app.use('/api/search', requireAuth, searchRoutes);
 app.use('/api/stations', requireAuth, stationRoutes);
+app.use('/api/contracts', requireAuth, contractRoutes);
 app.use('/api/settings', requireAuth, settingsRoutes);
 app.use('/api/users', requireAuth, usersRoutes);
 

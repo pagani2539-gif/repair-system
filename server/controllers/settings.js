@@ -430,7 +430,8 @@ exports.restoreBackup = (req, res) => {
       if (!ok) return res.status(401).json({ error: 'รหัสผ่านปัจจุบันไม่ถูกต้อง' });
       
       console.log(`Starting Database Restore from: ${backupPath}`);
-      const dbFile = path.join(__dirname, '..', 'database', 'repair_system.db');
+      const dbFileName = process.env.NODE_ENV === 'test' ? 'repair_system_test.db' : 'repair_system.db';
+      const dbFile = path.join(__dirname, '..', 'database', dbFileName);
       
       // Close active database before copying
       db.close((closeErr) => {

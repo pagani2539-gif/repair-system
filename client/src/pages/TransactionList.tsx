@@ -15,9 +15,7 @@ import {
   MapPin,
   Briefcase,
   Inbox,
-  Activity,
-  ArrowDownToLine,
-  Timer,
+  // Modern Icons
   Info,
   Trash2,
   ScanEye,
@@ -37,8 +35,9 @@ import BaseDataTable from '../components/tables/BaseDataTable';
 import TableToolbar from '../components/tables/TableToolbar';
 import TablePagination from '../components/tables/TablePagination';
 import { useTableUrlState } from '../hooks/useTableUrlState';
+import { exportToCsv } from '../utils/csvExporter';
 import PrintReturnTemplate from '../components/PrintReturnTemplate';
-import { printElement } from '../utils/pdfGenerator';
+import { PrintDialog } from '../components/PrintDialog';
 import { compressImage } from '../utils/imageCompressor';
 
 const TransactionList: React.FC = () => {
@@ -53,6 +52,8 @@ const TransactionList: React.FC = () => {
   const [returnCondition, setReturnCondition] = useState<string>('Good');
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [printReturnTx, setPrintReturnTx] = useState<InventoryTransaction | null>(null);
+  const [isPrintDialogOpen, setIsPrintDialogOpen] = useState(false);
+  const [activeLogTab, setActiveLogTab] = useState<'all' | 'inbound' | 'outbound'>('all');
 
   // สี + label สำหรับ condition badge
   const conditionStyle = (cond?: string): { label: string; bg: string; color: string } | null => {
@@ -94,7 +95,9 @@ const TransactionList: React.FC = () => {
       total: list.length,
       activeLoans: list.filter((t: InventoryTransaction) => (t.transaction_type === 'BORROW' || (t.transaction_type === 'WITHDRAW' && (t.withdrawal_type === 'ทดสอบ' || t.withdrawal_type === 'สำรองใช้งาน'))) && t.status !== 'RETURNED').length,
       totalOutbound: list.reduce((acc: number, t: InventoryTransaction) => acc + (t.quantity_withdrawn || 0) + (t.quantity_borrowed || 0), 0),
-      totalInbound: list.reduce((acc: number, t: InventoryTransaction) => acc + (t.quantity_added || 0) + (t.quantity_returned || 0), 0)
+      totalInbound: list.reduce((acc: number, t: InventoryTransaction) => acc + (t.quantity_added || 0) + (t.quantity_returned || 0), 0),
+      totalInboundCount: list.filter((t: InventoryTransaction) => t.transaction_type === 'ADD_STOCK' || t.transaction_type === 'RETURN').length,
+      totalOutboundCount: list.filter((t: InventoryTransaction) => t.transaction_type === 'WITHDRAW' || t.transaction_type === 'BORROW').length
     };
   }, [transactions]);
 
@@ -106,6 +109,11 @@ const TransactionList: React.FC = () => {
         const matches = t.product_name.toLowerCase().includes(s) || (t.project_name && t.project_name.toLowerCase().includes(s)) || (t.user_name && t.user_name.toLowerCase().includes(s)) || (t.serial_number && t.serial_number.toLowerCase().includes(s));
         if (!matches) return false;
       }
+      if (activeLogTab === 'inbound') {
+        if (t.transaction_type !== 'ADD_STOCK' && t.transaction_type !== 'RETURN') return false;
+      } else if (activeLogTab === 'outbound') {
+        if (t.transaction_type !== 'WITHDRAW' && t.transaction_type !== 'BORROW') return false;
+      }
       if (urlState.filters.type && urlState.filters.type !== 'All' && t.transaction_type !== urlState.filters.type) return false;
       if (urlState.filters.withdrawal_type && urlState.filters.withdrawal_type !== 'All' && t.withdrawal_type !== urlState.filters.withdrawal_type) return false;
       return true;
@@ -113,7 +121,7 @@ const TransactionList: React.FC = () => {
       const t = new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
       return t !== 0 ? t : b.id - a.id;
     });
-  }, [transactions, urlState]);
+  }, [transactions, urlState, activeLogTab]);
 
   // Dynamic withdrawal subtype options (auto-discovered from data)
   const withdrawalSubtypeOptions = useMemo(() => {
@@ -125,6 +133,22 @@ const TransactionList: React.FC = () => {
     defaults.forEach(d => set.add(d));
     return Array.from(set).sort().map(v => ({ label: v, value: v }));
   }, [transactions]);
+
+  const typeFilterOptions = useMemo(() => {
+    const allOptions = [
+      { label: 'นำเข้าสต็อก', value: 'ADD_STOCK' },
+      { label: 'เบิกอุปกรณ์', value: 'WITHDRAW' },
+      { label: 'คืนอุปกรณ์', value: 'RETURN' },
+      { label: 'ยืมอุปกรณ์', value: 'BORROW' }
+    ];
+    if (activeLogTab === 'inbound') {
+      return allOptions.filter(o => o.value === 'ADD_STOCK' || o.value === 'RETURN');
+    }
+    if (activeLogTab === 'outbound') {
+      return allOptions.filter(o => o.value === 'WITHDRAW' || o.value === 'BORROW');
+    }
+    return allOptions;
+  }, [activeLogTab]);
 
   const indexOfLastItem = urlState.page * urlState.pageSize;
   const indexOfFirstItem = indexOfLastItem - urlState.pageSize;
@@ -299,10 +323,7 @@ const TransactionList: React.FC = () => {
 
   const handlePrintReturn = (row: InventoryTransaction) => {
     setPrintReturnTx(row);
-    setTimeout(() => {
-      printElement("pdf-return-template", `ใบคืนอุปกรณ์ - RT-${String(row.id).padStart(6, '0')}`);
-      setPrintReturnTx(null);
-    }, 150);
+    setIsPrintDialogOpen(true);
   };
 
   const actions: TableAction<InventoryTransaction>[] = [
@@ -372,8 +393,8 @@ const TransactionList: React.FC = () => {
     const headers = [
       'วันเวลาทำรายการ', 'ประเภทธุรกรรม', 'ประเภทการเบิก', 'อุปกรณ์', 'รุ่น/Model', 'S/N', 'จำนวน', 'ผู้ทำรายการ', 'สถานที่/โครงการ', 'สถานะ/หมายเหตุ'
     ];
-    const rows = filteredData.map(tx => {
-      let typeText = tx.transaction_type;
+    const rows = filteredData.map((tx: InventoryTransaction) => {
+      let typeText: string = tx.transaction_type;
       if (tx.transaction_type === 'ADD_STOCK') typeText = 'นำเข้าสต็อก';
       else if (tx.transaction_type === 'WITHDRAW') typeText = 'เบิกออก';
       else if (tx.transaction_type === 'BORROW') typeText = 'ยืมใช้งาน';
@@ -384,7 +405,7 @@ const TransactionList: React.FC = () => {
         typeText,
         tx.withdrawal_type || '-',
         tx.product_name,
-        tx.model || '-',
+        tx.product_model || '-',
         tx.serial_number || '-',
         tx.quantity_added || tx.quantity_withdrawn || tx.quantity_borrowed || tx.quantity_returned || 0,
         tx.user_name || '-',
@@ -504,16 +525,26 @@ const TransactionList: React.FC = () => {
           <Button variant="outline" icon={<Download size={20} />} onClick={handleExportExcel}>ส่งออก Excel</Button>
         </div>
 
-      <div className="stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.25rem', marginBottom: '2rem' }}>
+      <div className="ledger-tabs-container">
         {[
-          { label: 'รายการทั้งหมด', val: stats.total, icon: Activity, tab: 'All' },
-          { label: 'เบิกค้างส่งคืน', val: stats.activeLoans, icon: Timer, tab: 'BORROW' },
-          { label: 'นำเข้าทั้งหมด', val: stats.totalInbound, icon: ArrowDownToLine, tab: 'ADD_STOCK' },
-          { label: 'เบิกออกทั้งหมด', val: stats.totalOutbound, icon: ArrowDownCircle, tab: 'WITHDRAW' }
-        ].map((s, i) => (
-          <Card key={i} onClick={() => setTableState({ filters: { type: s.tab === 'All' ? '' : s.tab }, page: 1 })} style={{ cursor: 'pointer' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}><div className="stat-icon-wrapper" style={{ color: i === 0 ? 'var(--primary)' : i === 1 ? 'var(--warning)' : i === 2 ? 'var(--success)' : 'var(--danger)' }}><s.icon size={22} /></div><div><div className="stat-value">{s.val}</div><div className="stat-label">{s.label}</div></div></div>
-          </Card>
+          { id: 'all', label: 'ธุรกรรมทั้งหมด', count: stats.total },
+          { id: 'inbound', label: 'สต็อกขาเข้า (Inbound)', count: stats.totalInboundCount },
+          { id: 'outbound', label: 'สต็อกขาออก (Outbound)', count: stats.totalOutboundCount }
+        ].map(tab => (
+          <button
+            type="button"
+            key={tab.id}
+            onClick={() => {
+              setActiveLogTab(tab.id as 'all' | 'inbound' | 'outbound');
+              setTableState({ filters: {}, page: 1 });
+            }}
+            className={`ledger-tab-button ${activeLogTab === tab.id ? 'active' : ''}`}
+          >
+            {tab.label}
+            <span className="ledger-tab-badge">
+              {tab.count}
+            </span>
+          </button>
         ))}
       </div>
 
@@ -525,11 +556,7 @@ const TransactionList: React.FC = () => {
             id: 'type',
             label: 'ประเภท',
             type: 'select',
-            options: [
-              { label: 'นำเข้าสต็อก', value: 'ADD_STOCK' },
-              { label: 'เบิกอุปกรณ์', value: 'WITHDRAW' },
-              { label: 'คืนอุปกรณ์', value: 'RETURN' }
-            ]
+            options: typeFilterOptions
           },
           {
             id: 'withdrawal_type',
@@ -707,9 +734,24 @@ const TransactionList: React.FC = () => {
       )}
 
       {/* Offscreen print template */}
-      <div style={{ position: 'absolute', left: '-99999px', top: 0, pointerEvents: 'none' }}>
-        {printReturnTx && <PrintReturnTemplate transaction={printReturnTx} />}
-      </div>
+      {printReturnTx && (
+        <PrintDialog
+          open={isPrintDialogOpen}
+          onClose={() => {
+            setIsPrintDialogOpen(false);
+            setPrintReturnTx(null);
+          }}
+          templateId="pdf-return-template"
+          docTitle={`ใบคืนอุปกรณ์ - RT-${String(printReturnTx.id).padStart(6, '0')}`}
+          renderTemplate={(companyId, logoId) => (
+            <PrintReturnTemplate
+              transaction={printReturnTx}
+              companyId={companyId}
+              logoId={logoId}
+            />
+          )}
+        />
+      )}
     </div>
   );
 };

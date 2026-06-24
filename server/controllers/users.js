@@ -49,8 +49,8 @@ exports.create = (req, res) => {
   if (!username || !password || !full_name) {
     return res.status(400).json({ error: 'กรุณาระบุ username, password และชื่อ-สกุล' });
   }
-  if (password.length < 6) {
-    return res.status(400).json({ error: 'รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร' });
+  if (password.length < 8) {
+    return res.status(400).json({ error: 'รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร' });
   }
 
   const trimmedUsername = String(username).trim();
@@ -140,8 +140,8 @@ exports.update = (req, res) => {
 
       const finalizePassword = (callback) => {
         if (!password) return callback();
-        if (password.length < 6) {
-          return res.status(400).json({ error: 'รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร' });
+        if (password.length < 8) {
+          return res.status(400).json({ error: 'รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร' });
         }
         bcrypt.hash(password, 10, (hashErr, hash) => {
           if (hashErr) return res.status(500).json({ error: hashErr.message });

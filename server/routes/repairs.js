@@ -23,6 +23,7 @@ router.get('/:id', repairController.getRepairById);
 router.patch('/:id', repairController.updateRepair);
 router.patch('/:id/status', repairController.updateStatus);
 router.patch('/:id/read', repairController.markAsRead);
+router.patch('/:id/company', repairController.updateRepairCompany);
 router.delete('/remove/:id', requireDeleteRepairOrClaim, repairController.deleteRepair);
 router.post('/:id/replace-device', repairController.replaceDevice);
 

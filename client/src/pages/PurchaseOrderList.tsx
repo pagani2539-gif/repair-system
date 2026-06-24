@@ -21,7 +21,9 @@ import {
   Printer,
   Send,
   Clock,
-  CheckSquare
+  CheckSquare,
+  FileSignature,
+  X
 } from 'lucide-react';
 import NewPurchaseOrderModal from '../components/NewPurchaseOrderModal';
 import PrintPurchaseOrderTemplate from '../components/PrintPurchaseOrderTemplate';
@@ -41,6 +43,7 @@ const PurchaseOrderList: React.FC = () => {
   const [isNewPoModalOpen, setIsNewPoModalOpen] = useState(false);
   const [printPo, setPrintPo] = useState<PurchaseOrder | null>(null);
   const [printingId, setPrintingId] = useState<number | string | null>(null);
+  const [editingPo, setEditingPo] = useState<PurchaseOrder | null>(null);
 
 
 
@@ -119,7 +122,7 @@ const PurchaseOrderList: React.FC = () => {
     }
   }, [fetchPOs, notify, confirm]);
 
-  const handleUpdateStatus = useCallback(async (id: number | string, newStatus: 'Draft' | 'Pending' | 'Approved' | 'Cancelled', successMsg: string) => {
+  const handleUpdateStatus = useCallback(async (id: number | string, newStatus: 'Draft' | 'Pending' | 'Approved' | 'Ordered' | 'Cancelled', successMsg: string) => {
     const isConfirmed = await confirm({
       title: 'ยืนยันการเปลี่ยนสถานะ',
       message: 'คุณต้องการเปลี่ยนสถานะของใบสั่งซื้อนี้ใช่หรือไม่?',
@@ -142,6 +145,7 @@ const PurchaseOrderList: React.FC = () => {
       case 'Draft': return 'var(--text-muted)';
       case 'Pending': return 'var(--warning)';
       case 'Approved': return 'var(--info)';
+      case 'Ordered': return 'var(--primary)';
       case 'Received': return 'var(--success)';
       case 'Cancelled': return 'var(--danger)';
       default: return 'transparent';
@@ -153,7 +157,7 @@ const PurchaseOrderList: React.FC = () => {
     return list.filter(p => {
       if (urlState.search) {
         const s = urlState.search.toLowerCase();
-        const matches = p.po_no.toLowerCase().includes(s) || (p.company_name && p.company_name.toLowerCase().includes(s)) || (p.ordered_by && p.ordered_by.toLowerCase().includes(s));
+        const matches = p.po_no.toLowerCase().includes(s) || (p.ordered_by && p.ordered_by.toLowerCase().includes(s));
         if (!matches) return false;
       }
       if (urlState.filters.status && urlState.filters.status !== 'All' && p.status !== urlState.filters.status) return false;
@@ -176,6 +180,7 @@ const PurchaseOrderList: React.FC = () => {
       case 'Draft': return <span style={badgeStyle('var(--bg-app)', 'var(--text-muted)', 'var(--border)')}>แบบร่าง</span>;
       case 'Pending': return <span style={badgeStyle('var(--warning-light)', 'var(--warning)', 'var(--warning-border)')}>รออนุมัติ</span>;
       case 'Approved': return <span style={badgeStyle('var(--info-light)', 'var(--info)', 'var(--info-border)')}>อนุมัติแล้ว</span>;
+      case 'Ordered': return <span style={badgeStyle('var(--primary-light)', 'var(--primary)', 'rgba(41, 182, 246, 0.4)')}>สั่งซื้อแล้ว</span>;
       case 'Received': return <span style={badgeStyle('var(--success-light)', 'var(--success)', 'var(--success-border)')}>รับของแล้ว</span>;
       case 'Cancelled': return <span style={badgeStyle('var(--danger-light)', 'var(--danger)', 'var(--danger-border)')}>ยกเลิก</span>;
       default: return null;
@@ -197,14 +202,6 @@ const PurchaseOrderList: React.FC = () => {
             </span>
           )}
         </div>
-      )
-    },
-    {
-      id: 'company', header: 'บริษัท / ผู้ขาย', accessor: 'company_name', priority: 1, width: 'auto',
-      render: (val) => (
-        val
-          ? <span style={{ fontWeight: 600 }}>{val}</span>
-          : <span className="cell-empty">— ไม่ระบุผู้ขาย —</span>
       )
     },
     {
@@ -276,6 +273,17 @@ const PurchaseOrderList: React.FC = () => {
   const actions: TableAction<PurchaseOrder>[] = [
     { id: 'view', label: 'ดูรายละเอียด', icon: <ScanEye size={14} />, onClick: () => {}, inline: true },
     {
+      id: 'edit',
+      label: 'แก้ไขใบสั่งซื้อ',
+      icon: <FileSignature size={14} />,
+      onClick: (row) => {
+        setEditingPo(row);
+        setIsNewPoModalOpen(true);
+      },
+      hidden: (row) => row.status !== 'Draft',
+      inline: true
+    },
+    {
       id: 'submit_approval',
       label: 'ส่งขออนุมัติ',
       icon: <Send size={14} />,
@@ -294,12 +302,21 @@ const PurchaseOrderList: React.FC = () => {
       inline: true
     },
     {
+      id: 'mark_ordered',
+      label: 'ยืนยันการส่งสั่งซื้อ',
+      icon: <Send size={14} />,
+      variant: 'primary',
+      onClick: (row) => handleUpdateStatus(row.id, 'Ordered', 'บันทึกสถานะสั่งซื้อเรียบร้อยแล้ว'),
+      hidden: (row) => row.status !== 'Approved',
+      inline: true
+    },
+    {
       id: 'receive',
       label: 'ตรวจรับของ',
       icon: <PackageCheck size={14} />,
       variant: 'primary',
       onClick: (row) => handleReceive(row.id),
-      hidden: (row) => row.status !== 'Approved',
+      hidden: (row) => row.status !== 'Ordered',
       inline: true
     },
     {
@@ -311,148 +328,16 @@ const PurchaseOrderList: React.FC = () => {
     { id: 'delete', label: 'ลบใบสั่งซื้อ', icon: <Trash2 size={14} />, variant: 'danger', onClick: (row) => handleDelete(row.id), hidden: () => !hasPermission('delete.purchase_orders') }
   ];
 
-const PurchaseOrderDetailDrawerContent: React.FC<{
-  po: PurchaseOrder;
-  handleReceive: (id: number | string) => void;
-  handleUpdateStatus: (id: number | string, newStatus: string, successMsg: string) => Promise<void>;
-  getStatusBadge: (status: string) => React.ReactNode;
-}> = ({ po, handleReceive, handleUpdateStatus, getStatusBadge }) => {
-  const [poDetail, setPoDetail] = useState<PurchaseOrder | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    let active = true;
-    const fetchDetail = async () => {
-      setLoading(true);
-      try {
-        const detail = await purchaseOrderApi.getById(po.id);
-        if (active) {
-          setPoDetail(detail);
-        }
-      } catch (err) {
-        console.error(err);
-      } finally {
-        if (active) {
-          setLoading(false);
-        }
-      }
-    };
-    fetchDetail();
-    return () => {
-      active = false;
-    };
-  }, [po.id]);
-
-  if (loading) {
-    return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '3rem', flexDirection: 'column', gap: '12px' }}>
-        <Loader2 className="animate-spin" size={24} color="var(--primary)" />
-        <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>กำลังโหลดรายการพัสดุ...</span>
-      </div>
-    );
-  }
-
-  const currentPo = poDetail || po;
-  const items = currentPo.items || [];
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }} className="reveal-up">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: 'var(--primary)' }}>{currentPo.po_no}</h3>
-        {getStatusBadge(currentPo.status)}
-      </div>
-
-      <section>
-        <h4 style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '1rem', color: 'var(--primary)' }}><Info size={18} /> ข้อมูลใบสั่งซื้อ</h4>
-        <Card style={{ padding: '1rem', backgroundColor: 'var(--bg-app)' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', fontSize: '0.9rem' }}>
-            <div><strong>บริษัทผู้ขาย:</strong> {currentPo.company_name || '-'}</div>
-            <div><strong>ผู้สั่งซื้อ:</strong> {currentPo.ordered_by || '-'}</div>
-            {currentPo.approved_by && (
-              <div><strong>ผู้อนุมัติ:</strong> {currentPo.approved_by} {currentPo.approved_at && `(เมื่อ ${formatDateTimeThai(currentPo.approved_at)})`}</div>
-            )}
-            <div><strong>วันที่สร้าง:</strong> {formatDateTimeThai(currentPo.created_at)}</div>
-            <div><strong>อัปเดตล่าสุด:</strong> {formatDateTimeThai(currentPo.updated_at)}</div>
-          </div>
-        </Card>
-      </section>
-
-      <section>
-        <h4 style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '1rem', color: 'var(--primary)' }}><Package size={18} /> รายการพัสดุ ({currentPo.item_count || items.length} รายการ)</h4>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-          {currentPo.status === 'Received' && (
-            <div style={{ padding: '1rem', backgroundColor: 'rgba(16, 185, 129, 0.05)', borderRadius: '12px', color: 'var(--success)', fontSize: '0.85rem', fontWeight: 700, textAlign: 'center', border: '1px dashed var(--success)', marginBottom: '0.5rem' }}>
-              ตรวจรับพัสดุเข้าคลังเรียบร้อยแล้ว
-            </div>
-          )}
-          
-          {items.length > 0 ? (
-            <div style={{ overflowX: 'auto', borderRadius: '8px', border: '1px solid var(--border)' }}>
-              <table className="table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid var(--border)', textAlign: 'left', backgroundColor: 'var(--bg-app)', color: 'var(--text-muted)' }}>
-                    <th style={{ padding: '10px 12px', fontWeight: 700 }}>รายการสินค้า</th>
-                    <th style={{ padding: '10px 12px', textAlign: 'center', width: '80px', fontWeight: 700 }}>จำนวน</th>
-                    <th style={{ padding: '10px 12px', textAlign: 'right', width: '110px', fontWeight: 700 }}>ราคาต่อหน่วย</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((item, idx) => (
-                    <tr key={idx} style={{ borderBottom: idx < items.length - 1 ? '1px solid var(--border)' : 'none' }}>
-                      <td style={{ padding: '10px 12px' }}>
-                        <div style={{ fontWeight: 700, color: 'var(--text-main)' }}>{item.item_name}</div>
-                        {item.item_model && <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2px' }}>รุ่น: {item.item_model}</div>}
-                      </td>
-                      <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 700, color: 'var(--text-main)' }}>
-                        {item.quantity}
-                      </td>
-                      <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600, color: 'var(--text-main)' }}>
-                        {item.unit_price ? `${item.unit_price.toLocaleString()} บาท` : '0 บาท'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div style={{ padding: '1rem', backgroundColor: 'var(--bg-app)', borderRadius: '12px', color: 'var(--text-muted)', fontSize: '0.85rem', textAlign: 'center' }}>
-              ไม่มีรายการพัสดุในใบสั่งซื้อนี้
-            </div>
-          )}
-        </div>
-      </section>
-
-      {currentPo.status === 'Draft' && (
-        <div style={{ marginTop: 'auto', paddingTop: '1rem' }}>
-          <Button variant="primary" style={{ width: '100%' }} icon={<Send size={18} />} onClick={() => handleUpdateStatus(currentPo.id, 'Pending', 'ส่งขออนุมัติจัดซื้อเรียบร้อยแล้ว')}>
-            ส่งขออนุมัติ
-          </Button>
-        </div>
-      )}
-      {currentPo.status === 'Pending' && (
-        <div style={{ marginTop: 'auto', paddingTop: '1rem' }}>
-          <Button variant="success" style={{ width: '100%' }} icon={<CheckSquare size={18} />} onClick={() => handleUpdateStatus(currentPo.id, 'Approved', 'อนุมัติใบสั่งซื้อเรียบร้อยแล้ว')}>
-            อนุมัติสั่งซื้อ
-          </Button>
-        </div>
-      )}
-      {currentPo.status === 'Approved' && (
-        <div style={{ marginTop: 'auto', paddingTop: '1rem' }}>
-          <Button variant="primary" style={{ width: '100%' }} icon={<PackageCheck size={18} />} onClick={() => handleReceive(currentPo.id)}>
-            ตรวจรับพัสดุเข้าคลัง
-          </Button>
-        </div>
-      )}
-    </div>
-  );
-};
-
   const renderDetailDrawer = useCallback((po: PurchaseOrder) => (
     <PurchaseOrderDetailDrawerContent
       po={po}
       handleReceive={handleReceive}
       handleUpdateStatus={handleUpdateStatus}
       getStatusBadge={getStatusBadge}
+      handleEdit={(selectedPo) => {
+        setEditingPo(selectedPo);
+        setIsNewPoModalOpen(true);
+      }}
     />
   ), [handleReceive, handleUpdateStatus, getStatusBadge]);
 
@@ -518,7 +403,7 @@ const PurchaseOrderDetailDrawerContent: React.FC<{
         getRowAccent={(r) => getAccentColor(r.status)}
         mobileConfig={{
           title: (r) => r.po_no,
-          subtitle: (r) => `${r.company_name || '-'} · ${r.ordered_by}`,
+          subtitle: (r) => r.ordered_by || '',
           statusBadge: (r) => getStatusBadge(r.status)
         }}
       />
@@ -535,8 +420,15 @@ const PurchaseOrderDetailDrawerContent: React.FC<{
       {/* Modal สร้าง PO ใหม่ด้วยตัวเอง */}
       <NewPurchaseOrderModal
         isOpen={isNewPoModalOpen}
-        onClose={() => setIsNewPoModalOpen(false)}
-        onSuccess={() => fetchPOs()}
+        onClose={() => {
+          setIsNewPoModalOpen(false);
+          setEditingPo(null);
+        }}
+        onSuccess={() => {
+          fetchPOs();
+          setEditingPo(null);
+        }}
+        editingPo={editingPo}
       />
 
       {/* Offscreen print template */}
@@ -550,3 +442,304 @@ const PurchaseOrderDetailDrawerContent: React.FC<{
 };
 
 export default PurchaseOrderList;
+
+function PurchaseOrderStepper({ status }: { status: string }) {
+  const steps = [
+    { key: 'Draft', label: 'ร่างใบขอซื้อ' },
+    { key: 'Pending', label: 'ส่งขออนุมัติ' },
+    { key: 'Approved', label: 'อนุมัติสั่งซื้อ' },
+    { key: 'Ordered', label: 'ส่งสั่งซื้อให้ผู้ขาย' },
+    { key: 'Received', label: 'รับพัสดุเข้าคลัง' }
+  ];
+
+  const currentIdx = steps.findIndex(s => s.key === status);
+  if (status === 'Cancelled') return null;
+
+  return (
+    <div style={{
+      background: 'var(--bg-card)',
+      border: '1px solid var(--border)',
+      borderRadius: '16px',
+      padding: '1.25rem 1rem',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '12px',
+      marginBottom: '1rem'
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'relative', overflowX: 'auto' }}>
+        {steps.map((step, idx) => {
+          const isCompleted = idx < currentIdx;
+          const isActive = idx === currentIdx;
+          
+          let color = 'var(--text-muted)';
+          let bg = 'var(--bg-app)';
+          let borderColor = 'var(--border)';
+          
+          if (isCompleted) {
+            color = 'var(--success)';
+            bg = 'var(--success-light)';
+            borderColor = 'var(--success)';
+          } else if (isActive) {
+            if (status === 'Draft') { color = 'var(--text-main)'; bg = 'var(--bg-app)'; borderColor = 'var(--text-muted)'; }
+            else if (status === 'Pending') { color = 'var(--warning)'; bg = 'var(--warning-light)'; borderColor = 'var(--warning)'; }
+            else if (status === 'Approved') { color = 'var(--info)'; bg = 'var(--info-light)'; borderColor = 'var(--info)'; }
+            else if (status === 'Ordered') { color = 'var(--primary)'; bg = 'var(--primary-light)'; borderColor = 'var(--primary)'; }
+            else if (status === 'Received') { color = 'var(--success)'; bg = 'var(--success-light)'; borderColor = 'var(--success)'; }
+          }
+
+          return (
+            <div key={idx} style={{ 
+              display: 'flex', 
+              flexDirection: 'column', 
+              alignItems: 'center', 
+              flex: 1, 
+              position: 'relative',
+              zIndex: 2,
+              minWidth: '70px'
+            }}>
+              {idx > 0 && (
+                <div style={{
+                  position: 'absolute',
+                  right: '50%',
+                  top: '15px',
+                  width: '100%',
+                  height: '2px',
+                  background: idx <= currentIdx ? 'var(--success)' : 'var(--border)',
+                  zIndex: -1
+                }} />
+              )}
+
+              <div style={{
+                width: '30px',
+                height: '30px',
+                borderRadius: '50%',
+                background: bg,
+                border: `2px solid ${borderColor}`,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '0.8rem',
+                fontWeight: 800,
+                color: color
+              }}>
+                {isCompleted ? '✓' : idx + 1}
+              </div>
+              <span style={{ 
+                fontSize: '0.7rem', 
+                fontWeight: isActive ? 800 : 600, 
+                color: isActive ? 'var(--primary)' : 'var(--text-muted)',
+                marginTop: '6px',
+                textAlign: 'center',
+                whiteSpace: 'nowrap'
+              }}>
+                {step.label}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {currentIdx !== -1 && (
+        <div style={{ 
+          padding: '10px 14px', 
+          background: 'var(--bg-app)', 
+          borderLeft: `3px solid ${
+            status === 'Draft' ? 'var(--text-muted)' :
+            status === 'Pending' ? 'var(--warning)' :
+            status === 'Approved' ? 'var(--info)' :
+            status === 'Ordered' ? 'var(--primary)' : 'var(--success)'
+          }`, 
+          borderRadius: '4px 8px 8px 4px',
+          fontSize: '0.78rem',
+          color: 'var(--text-muted)',
+          lineHeight: '1.4'
+        }}>
+          💡 <strong>คำแนะนำ:</strong> {
+            status === 'Draft' ? 'อยู่ระหว่างเตรียมข้อมูลพัสดุและผู้ขาย สามารถกดแก้ไขปรับจำนวนสั่งซื้อด้านล่างได้' :
+            status === 'Pending' ? 'ส่งเสนอผู้บริหารตรวจสอบ อยู่ระหว่างรอการลงนามอนุมัติสั่งซื้อ' :
+            status === 'Approved' ? 'อนุมัติเรียบร้อยแล้ว กรุณาพิมพ์ใบสั่งซื้อส่งให้ผู้ขาย (ร้านค้า) และกดยืนยันการส่งสั่งซื้อด้านล่าง' :
+            status === 'Ordered' ? 'สั่งซื้อสินค้าเรียบร้อยแล้ว อยู่ระหว่างรอคู่ค้าจัดส่งสินค้า เมื่อได้รับสินค้าให้กดตรวจรับเข้าคลัง' :
+            'ตรวจรับสินค้าเรียบร้อย สต็อกพัสดุได้รับการอัปเดตอัตโนมัติแล้ว'
+          }
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PurchaseOrderDetailDrawerContent({
+  po,
+  handleReceive,
+  handleUpdateStatus,
+  getStatusBadge,
+  handleEdit
+}: {
+  po: PurchaseOrder;
+  handleReceive: (id: number | string) => void;
+  handleUpdateStatus: (id: number | string, newStatus: 'Draft' | 'Pending' | 'Approved' | 'Ordered' | 'Cancelled', successMsg: string) => Promise<void>;
+  getStatusBadge: (status: string) => React.ReactNode;
+  handleEdit: (po: PurchaseOrder) => void;
+}) {
+  const [poDetail, setPoDetail] = useState<PurchaseOrder | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const fetchDetail = async () => {
+      setLoading(true);
+      try {
+        const detail = await purchaseOrderApi.getById(po.id);
+        if (active) {
+          setPoDetail(detail);
+        }
+      } catch (err) {
+        console.error(err);
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    };
+    fetchDetail();
+    return () => {
+      active = false;
+    };
+  }, [po.id]);
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '3rem', flexDirection: 'column', gap: '12px' }}>
+        <Loader2 className="animate-spin" size={24} color="var(--primary)" />
+        <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>กำลังโหลดรายการพัสดุ...</span>
+      </div>
+    );
+  }
+
+  const currentPo = poDetail || po;
+  const items = currentPo.items || [];
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }} className="reveal-up">
+      <PurchaseOrderStepper status={currentPo.status} />
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: 'var(--primary)' }}>{currentPo.po_no}</h3>
+        {getStatusBadge(currentPo.status)}
+      </div>
+
+      <section>
+        <h4 style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '1rem', color: 'var(--primary)' }}><Info size={18} /> ข้อมูลใบสั่งซื้อ</h4>
+        <Card style={{ padding: '1rem', backgroundColor: 'var(--bg-app)' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', fontSize: '0.9rem' }}>
+            <div><strong>ผู้สั่งซื้อ:</strong> {currentPo.ordered_by || '-'}</div>
+            {currentPo.approved_by && (
+              <div><strong>ผู้อนุมัติ:</strong> {currentPo.approved_by} {currentPo.approved_at && `(เมื่อ ${formatDateTimeThai(currentPo.approved_at)})`}</div>
+            )}
+            <div><strong>วันที่สร้าง:</strong> {formatDateTimeThai(currentPo.created_at)}</div>
+            <div><strong>อัปเดตล่าสุด:</strong> {formatDateTimeThai(currentPo.updated_at)}</div>
+          </div>
+        </Card>
+      </section>
+
+      <section>
+        <h4 style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '1rem', color: 'var(--primary)' }}><Package size={18} /> รายการพัสดุ ({currentPo.item_count || items.length} รายการ)</h4>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          {currentPo.status === 'Received' && (
+            <div style={{ padding: '1rem', backgroundColor: 'rgba(16, 185, 129, 0.05)', borderRadius: '12px', color: 'var(--success)', fontSize: '0.85rem', fontWeight: 700, textAlign: 'center', border: '1px dashed var(--success)', marginBottom: '0.5rem' }}>
+              ตรวจรับพัสดุเข้าคลังเรียบร้อยแล้ว
+            </div>
+          )}
+          
+          {items.length > 0 ? (
+            <div style={{ overflowX: 'auto', borderRadius: '8px', border: '1px solid var(--border)' }}>
+              <table className="table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--border)', textAlign: 'left', backgroundColor: 'var(--bg-app)', color: 'var(--text-muted)' }}>
+                    <th style={{ padding: '10px 12px', fontWeight: 700 }}>รายการสินค้า</th>
+                    <th style={{ padding: '10px 12px', textAlign: 'center', width: '80px', fontWeight: 700 }}>จำนวน</th>
+                    <th style={{ padding: '10px 12px', textAlign: 'right', width: '110px', fontWeight: 700 }}>ราคาต่อหน่วย</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((item, idx) => (
+                    <tr key={idx} style={{ borderBottom: idx < items.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                      <td style={{ padding: '10px 12px' }}>
+                        <div style={{ fontWeight: 700, color: 'var(--text-main)' }}>{item.item_name}</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px', flexWrap: 'wrap' }}>
+                          {item.item_model && <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>รุ่น: {item.item_model}</span>}
+                          {item.current_stock !== undefined && item.min_stock !== undefined && (
+                            (() => {
+                              const isLow = item.current_stock < item.min_stock;
+                              const isOut = item.current_stock === 0;
+                              return (
+                                <span style={{
+                                  fontSize: '0.7rem',
+                                  fontWeight: 700,
+                                  color: isOut ? 'var(--danger)' : isLow ? 'var(--warning)' : 'var(--success)',
+                                  backgroundColor: isOut ? 'var(--danger-light)' : isLow ? 'var(--warning-light)' : 'var(--success-light)',
+                                  padding: '1px 6px',
+                                  borderRadius: '4px'
+                                }}>
+                                  คงคลัง: {item.current_stock} / เกณฑ์ขั้นต่ำ: {item.min_stock}
+                                </span>
+                              );
+                            })()
+                          )}
+                        </div>
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 700, color: 'var(--text-main)' }}>
+                        {item.quantity}
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600, color: 'var(--text-main)' }}>
+                        {item.unit_price ? `${item.unit_price.toLocaleString()} บาท` : '0 บาท'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div style={{ padding: '1rem', backgroundColor: 'var(--bg-app)', borderRadius: '12px', color: 'var(--text-muted)', fontSize: '0.85rem', textAlign: 'center' }}>
+              ไม่มีรายการพัสดุในใบสั่งซื้อนี้
+            </div>
+          )}
+        </div>
+      </section>
+
+      {currentPo.status === 'Draft' && (
+        <div style={{ marginTop: 'auto', paddingTop: '1rem', paddingBottom: '1.5rem', display: 'flex', justifyContent: 'center', gap: '10px' }}>
+          <Button variant="outline" size="sm" icon={<FileSignature size={16} />} onClick={() => handleEdit(currentPo)}>
+            แก้ไข
+          </Button>
+          <Button variant="primary" size="sm" icon={<Send size={16} />} onClick={() => handleUpdateStatus(currentPo.id, 'Pending', 'ส่งขออนุมัติจัดซื้อเรียบร้อยแล้ว')}>
+            ส่งขออนุมัติ
+          </Button>
+        </div>
+      )}
+      {currentPo.status === 'Pending' && (
+        <div style={{ marginTop: 'auto', paddingTop: '1rem', paddingBottom: '1.5rem', display: 'flex', justifyContent: 'center', gap: '10px' }}>
+          <Button variant="danger" size="sm" icon={<X size={16} />} onClick={() => handleUpdateStatus(currentPo.id, 'Draft', 'ส่งกลับไปเป็นแบบร่างเรียบร้อยแล้ว')}>
+            ส่งกลับเพื่อแก้ไข
+          </Button>
+          <Button variant="success" size="sm" icon={<CheckSquare size={16} />} onClick={() => handleUpdateStatus(currentPo.id, 'Approved', 'อนุมัติใบสั่งซื้อเรียบร้อยแล้ว')}>
+            อนุมัติสั่งซื้อ
+          </Button>
+        </div>
+      )}
+      {currentPo.status === 'Approved' && (
+        <div style={{ marginTop: 'auto', paddingTop: '1rem', paddingBottom: '1.5rem', display: 'flex', justifyContent: 'center' }}>
+          <Button variant="primary" size="sm" icon={<Send size={16} />} onClick={() => handleUpdateStatus(currentPo.id, 'Ordered', 'บันทึกสถานะสั่งซื้อเรียบร้อยแล้ว (รอส่งของ)')}>
+            ยืนยันการส่งสั่งซื้อ (สั่งซื้อแล้ว)
+          </Button>
+        </div>
+      )}
+      {currentPo.status === 'Ordered' && (
+        <div style={{ marginTop: 'auto', paddingTop: '1rem', paddingBottom: '1.5rem', display: 'flex', justifyContent: 'center' }}>
+          <Button variant="success" size="sm" icon={<PackageCheck size={16} />} onClick={() => handleReceive(currentPo.id)}>
+            ตรวจรับพัสดุเข้าคลัง
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -20,10 +20,11 @@ import {
   Settings
 } from 'lucide-react';
 import PrintTemplate from '../components/PrintTemplate';
-import { printElement } from '../utils/pdfGenerator';
+import { PrintDialog } from '../components/PrintDialog';
 import PermissionGate from '../components/PermissionGate';
 import { Select } from '../components/ui/Input';
 import StationSelector from '../components/ui/StationSelector';
+import FormSection from '../components/ui/FormSection';
 import Lightbox from '../components/ui/Lightbox';
 
 const RepairDetail: React.FC = () => {
@@ -32,6 +33,7 @@ const RepairDetail: React.FC = () => {
   const { notify, confirm } = useNotification();
   const [repair, setRepair] = useState<IRepairDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isPrintDialogOpen, setIsPrintDialogOpen] = useState(false);
   const [showStatusModal, setShowStatusModal] = useState(false);
   const [showDeviceModal, setShowDeviceModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -268,7 +270,17 @@ const RepairDetail: React.FC = () => {
 
   const handlePrint = () => {
     if (!repair) return;
-    printElement("pdf-print-template", `${repair.type === 'claim' ? 'ใบเคลม' : 'ใบซ่อม'} - ${repair.ticket_no || repair.id}`);
+    setIsPrintDialogOpen(true);
+  };
+
+  const handleBeforePrint = async (companyId: number) => {
+    if (!repair) return;
+    try {
+      await repairApi.updateCompany(repair.id, companyId);
+      setRepair(prev => prev ? { ...prev, company_id: companyId } : null);
+    } catch (err) {
+      console.error('Failed to update company_id:', err);
+    }
   };
 
   if (loading) return (
@@ -284,9 +296,20 @@ const RepairDetail: React.FC = () => {
 
   return (
     <div className="repair-detail-page" style={{ padding: '0 0 4rem 0' }}>
-      <div style={{ position: 'absolute', left: '-99999px', top: 0, pointerEvents: 'none' }}>
-        <PrintTemplate repair={repair} />
-      </div>
+      <PrintDialog
+        open={isPrintDialogOpen}
+        onClose={() => setIsPrintDialogOpen(false)}
+        templateId="pdf-print-template"
+        docTitle={`${repair.type === 'claim' ? 'ใบเคลม' : 'ใบซ่อม'} - ${repair.ticket_no || repair.id}`}
+        onBeforePrint={handleBeforePrint}
+        renderTemplate={(companyId, logoId) => (
+          <PrintTemplate
+            repair={repair}
+            companyId={companyId}
+            logoId={logoId}
+          />
+        )}
+      />
 
       {/* Sticky Glass Header */}
       <div className="glass-card" style={{ 
@@ -544,68 +567,74 @@ const RepairDetail: React.FC = () => {
           <div className="modal-content">
             <h3><Settings size={20} color="var(--primary)" /> แก้ไขข้อมูลใบแจ้ง{repair.type === 'claim' ? 'เคลม' : 'ซ่อม'}</h3>
             <form onSubmit={handleEditUpdate}>
-              <div className="form-group" style={{ marginBottom: '1.25rem' }}>
-                <label>ชื่อผู้เบิก / หน่วยงาน</label>
-                <input type="text" required maxLength={100} value={editForm.reporter} onChange={e => setEditForm({...editForm, reporter: e.target.value})} disabled={updatingEdit} />
-              </div>
-              <div className="form-group" style={{ marginBottom: '1.25rem' }}>
-                <label>โครงการ / งาน</label>
-                <input type="text" required maxLength={100} value={editForm.project_name} onChange={e => setEditForm({...editForm, project_name: e.target.value})} disabled={updatingEdit} />
-              </div>
-              <div className="form-group" style={{ marginBottom: '1.25rem' }}>
-                <label style={{ display: 'block', marginBottom: '8px', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-main)' }}>สถานที่ / ด่านชั่ง</label>
-                <StationSelector
-                  selectedStationId={editForm.station_id || undefined}
-                  showArea={false}
-                  onChange={(data) => {
-                    setEditForm({
-                      ...editForm,
-                      station_id: data.stationId || null,
-                      location: data.stationName || ''
-                    });
-                  }}
-                />
-              </div>
-
-              <div className="form-group" style={{ marginBottom: '1.25rem' }}>
-                <label>จุดติดตั้ง / บริเวณพื้นที่ย่อย</label>
-                <input
-                  type="text"
-                  maxLength={100}
-                  placeholder="ระบุตำแหน่งติดตั้งย่อยอย่างอิสระ เช่น ข้างเลนชั่ง, กล่องควบคุมฝั่งขาออก..."
-                  value={subLocation}
-                  onChange={(e) => setSubLocation(e.target.value)}
+              <FormSection title="ข้อมูลการแจ้ง" icon={<FileText size={18} />} columns={1}>
+                <div className="form-group">
+                  <label>ชื่อผู้เบิก / หน่วยงาน</label>
+                  <input type="text" required maxLength={100} value={editForm.reporter} onChange={e => setEditForm({...editForm, reporter: e.target.value})} disabled={updatingEdit} />
+                </div>
+                <div className="form-group">
+                  <label>โครงการ / งาน</label>
+                  <input type="text" required maxLength={100} value={editForm.project_name} onChange={e => setEditForm({...editForm, project_name: e.target.value})} disabled={updatingEdit} />
+                </div>
+                <Select
+                  label="ความสำคัญ"
+                  value={editForm.priority}
+                  onChange={e => setEditForm({...editForm, priority: e.target.value})}
                   disabled={updatingEdit}
-                />
-              </div>
-              <div className="form-group" style={{ marginBottom: '1.25rem' }}>
-                <label>อุปกรณ์ / รุ่น</label>
-                <input type="text" required maxLength={100} value={editForm.device_name} onChange={e => setEditForm({...editForm, device_name: e.target.value})} disabled={updatingEdit} />
-              </div>
-              <Select 
-                label="ความสำคัญ"
-                value={editForm.priority} 
-                onChange={e => setEditForm({...editForm, priority: e.target.value})} 
-                disabled={updatingEdit}
-                style={{ marginBottom: '1.25rem' }}
-                triggerStyle={{
-                  padding: '12px 16px',
-                  borderRadius: '12px',
-                  border: '1px solid var(--border)',
-                  fontSize: '0.95rem',
-                  color: 'var(--text-main)',
-                  backgroundColor: 'var(--bg-card)'
-                }}
-              >
-                <option value="ปกติ">ปกติ</option>
-                <option value="ด่วน">ด่วน</option>
-                <option value="ด่วนมาก">ด่วนมาก</option>
-                <option value="วิกฤต">วิกฤต</option>
-              </Select>
-              <div className="form-group" style={{ marginBottom: '1.25rem' }}>
-                <label>อาการเสีย/ปัญหา</label>
-                <textarea rows={3} required maxLength={1000} value={editForm.problem} onChange={e => setEditForm({...editForm, problem: e.target.value})} disabled={updatingEdit}></textarea>
-              </div>
+                  triggerStyle={{
+                    padding: '12px 16px',
+                    borderRadius: '12px',
+                    border: '1px solid var(--border)',
+                    fontSize: '0.95rem',
+                    color: 'var(--text-main)',
+                    backgroundColor: 'var(--bg-card)'
+                  }}
+                >
+                  <option value="ปกติ">ปกติ</option>
+                  <option value="ด่วน">ด่วน</option>
+                  <option value="ด่วนมาก">ด่วนมาก</option>
+                  <option value="วิกฤต">วิกฤต</option>
+                </Select>
+              </FormSection>
+
+              <FormSection title="สถานที่ / ด่าน" icon={<MapPin size={18} />} columns={1}>
+                <div className="form-group">
+                  <label style={{ display: 'block', marginBottom: '8px', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-main)' }}>สถานที่ / ด่านชั่ง</label>
+                  <StationSelector
+                    selectedStationId={editForm.station_id || undefined}
+                    showArea={false}
+                    onChange={(data) => {
+                      setEditForm({
+                        ...editForm,
+                        station_id: data.stationId || null,
+                        location: data.stationName || ''
+                      });
+                    }}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>จุดติดตั้ง / บริเวณพื้นที่ย่อย</label>
+                  <input
+                    type="text"
+                    maxLength={100}
+                    placeholder="ระบุตำแหน่งติดตั้งย่อยอย่างอิสระ เช่น ข้างเลนชั่ง, กล่องควบคุมฝั่งขาออก..."
+                    value={subLocation}
+                    onChange={(e) => setSubLocation(e.target.value)}
+                    disabled={updatingEdit}
+                  />
+                </div>
+              </FormSection>
+
+              <FormSection title="อุปกรณ์และอาการ" icon={<Wrench size={18} />} columns={1}>
+                <div className="form-group">
+                  <label>อุปกรณ์ / รุ่น</label>
+                  <input type="text" required maxLength={100} value={editForm.device_name} onChange={e => setEditForm({...editForm, device_name: e.target.value})} disabled={updatingEdit} />
+                </div>
+                <div className="form-group">
+                  <label>อาการเสีย/ปัญหา</label>
+                  <textarea rows={3} required maxLength={1000} value={editForm.problem} onChange={e => setEditForm({...editForm, problem: e.target.value})} disabled={updatingEdit}></textarea>
+                </div>
+              </FormSection>
               <div className="modal-actions" style={{ marginTop: '1.5rem' }}>
                 <button type="button" className="btn btn-outline" onClick={() => setShowEditModal(false)} disabled={updatingEdit}>ยกเลิก</button>
                 <button type="submit" className="btn btn-primary" disabled={updatingEdit}>บันทึกการแก้ไข</button>

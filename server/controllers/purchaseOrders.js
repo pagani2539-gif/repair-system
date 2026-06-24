@@ -1,5 +1,6 @@
 const db = require('../database/init');
 const { checkAndGenerateAutoPOs } = require('../utils/autoPo');
+const { generateDocNo } = require('../utils/docNumber');
 
 exports.getAllPOs = (req, res) => {
   const { status, search } = req.query;
@@ -57,7 +58,7 @@ exports.getPOById = (req, res) => {
   });
 };
 
-exports.createPO = (req, res) => {
+exports.createPO = async (req, res) => {
   const {
     po_no, note, items, ordered_by, project_name, company_name, status, created_by,
     vendor_address, vendor_phone, vendor_contact_person, vendor_tax_id,
@@ -68,17 +69,20 @@ exports.createPO = (req, res) => {
     return res.status(400).json({ message: 'กรุณาเลือกรายการอุปกรณ์อย่างน้อย 1 รายการ' });
   }
 
-  // Validate status — รองรับเฉพาะค่าใน enum (Draft / Pending / Approved / Cancelled). Default = Draft (backward compat)
-  const validStatuses = ['Draft', 'Pending', 'Approved', 'Cancelled'];
+  // Validate status — รองรับเฉพาะค่าใน enum (Draft / Pending / Approved / Ordered / Cancelled). Default = Draft (backward compat)
+  const validStatuses = ['Draft', 'Pending', 'Approved', 'Ordered', 'Cancelled'];
   const poStatus = validStatuses.includes(status) ? status : 'Draft';
   const creator = (created_by && String(created_by).trim()) || 'User';
 
+  let poNo;
+  try {
+    poNo = po_no || await generateDocNo('PO', { table: 'purchase_orders', column: 'po_no' });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+
   db.serialize(() => {
     db.run('BEGIN TRANSACTION');
-
-    const now = new Date();
-    const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
-    const poNo = po_no || `PO-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
 
     db.run(`
       INSERT INTO purchase_orders (
@@ -335,12 +339,17 @@ exports.receivePO = (req, res) => {
         return res.status(400).json({ message: 'ใบสั่งซื้อนี้เคยรับสินค้าเข้าระบบไปแล้ว' });
       }
 
-      if (po.status !== 'Approved') {
+      if (po.status !== 'Approved' && po.status !== 'Ordered') {
         db.run('ROLLBACK');
-        return res.status(400).json({ message: 'สามารถตรวจรับสินค้าได้เฉพาะใบสั่งซื้อที่ได้รับการอนุมัติแล้วเท่านั้น' });
+        return res.status(400).json({ message: 'สามารถตรวจรับสินค้าได้เฉพาะใบสั่งซื้อที่ได้รับการอนุมัติหรือสั่งซื้อแล้วเท่านั้น' });
       }
 
-      db.all('SELECT * FROM purchase_order_items WHERE po_id = ?', [id], (err, poItems) => {
+      db.all(`
+        SELECT poi.*, i.name, i.model 
+        FROM purchase_order_items poi 
+        JOIN inventory i ON poi.inventory_id = i.id 
+        WHERE poi.po_id = ?
+      `, [id], (err, poItems) => {
         if (err || !poItems || poItems.length === 0) {
           db.run('ROLLBACK');
           return res.status(400).json({ message: 'ไม่พบรายการสินค้าในใบสั่งซื้อ' });
@@ -353,6 +362,7 @@ exports.receivePO = (req, res) => {
           });
         }
 
+        const receivedSummaries = [];
         let updatedItems = 0;
         let errorOccurred = false;
 
@@ -370,6 +380,8 @@ exports.receivePO = (req, res) => {
             }
             return;
           }
+
+          receivedSummaries.push(`• ${poItem.name} ${poItem.model ? `(${poItem.model})` : ''} x${receivedQty}`);
 
           db.run('UPDATE purchase_order_items SET received_quantity = ? WHERE id = ?', [receivedQty, poItem.id], (err) => {
             if (err) {
@@ -412,6 +424,15 @@ exports.receivePO = (req, res) => {
             }
 
             db.run('COMMIT');
+
+            // Send LINE Notify Alert
+            const itemsList = receivedSummaries.join('\n');
+            if (itemsList) {
+              const { sendLineNotify } = require('../utils/lineNotify');
+              const lineMsg = `\n📥 *ตรวจรับสินค้าเข้าคลัง (PO)*\n🔢 เลขที่ใบสั่งซื้อ: #${po.po_no}\n🏢 โครงการ/บริษัท: ${po.project_name || po.company_name || '-'}\n📋 รายการที่ตรวจรับ:\n${itemsList}`;
+              sendLineNotify('stock', lineMsg);
+            }
+
             res.json({ message: 'รับสินค้าเข้าระบบและอัปเดตสต็อกเรียบร้อยแล้ว' });
           });
         }
@@ -442,4 +463,17 @@ exports.getVendors = (req, res) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(rows);
   });
+};
+
+exports.updatePOCompany = (req, res) => {
+  const { id } = req.params;
+  const { company_id } = req.body;
+  db.run(
+    'UPDATE purchase_orders SET company_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+    [company_id || null, id],
+    function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ message: 'อัปเดตข้อมูลบริษัทของใบสั่งซื้อสำเร็จ' });
+    }
+  );
 };

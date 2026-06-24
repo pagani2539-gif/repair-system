@@ -1,4 +1,7 @@
+const isProduction = process.env.NODE_ENV === 'production';
+
 module.exports = (err, req, res, next) => {
+  // Always log the full error server-side for diagnostics.
   console.error('API Error:', err);
 
   // Multer file limit errors
@@ -11,7 +14,15 @@ module.exports = (err, req, res, next) => {
   }
 
   const statusCode = err.statusCode || 500;
-  const message = err.message || 'เกิดข้อผิดพลาดภายในเซิร์ฟเวอร์ (Internal Server Error)';
+
+  // For client errors (4xx) the message is meaningful to the caller and safe
+  // to return. For server errors (5xx) the message may contain SQL, file
+  // paths, or other internals — in production return a generic message and
+  // keep the detail in the server log only.
+  let message = err.message || 'เกิดข้อผิดพลาดภายในเซิร์ฟเวอร์ (Internal Server Error)';
+  if (statusCode >= 500 && isProduction) {
+    message = 'เกิดข้อผิดพลาดภายในเซิร์ฟเวอร์ (Internal Server Error)';
+  }
 
   res.status(statusCode).json({
     status: 'error',

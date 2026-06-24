@@ -25,7 +25,7 @@ import {
 import { Link } from 'react-router-dom';
 import { exportToCsv } from '../utils/csvExporter';
 import PrintWithdrawalTemplate from '../components/PrintWithdrawalTemplate';
-import { printElement } from '../utils/pdfGenerator';
+import { PrintDialog } from '../components/PrintDialog';
 import { ProvideSnModal } from '../components/ProvideSnModal';
 import type { Withdrawal, WithdrawalItem } from '../types';
 import type { TableColumn, TableAction, TableFilter } from '../types/table.types';
@@ -42,6 +42,7 @@ const WithdrawalList: React.FC = () => {
   
   const [printingWithdrawal, setPrintingWithdrawal] = useState<Withdrawal | null>(null);
   const [isPrintLoading, setIsPrintLoading] = useState<number | null>(null);
+  const [isPrintDialogOpen, setIsPrintDialogOpen] = useState(false);
 
   // === S/N Provision Flow ===
   // 1) picker: เลือกรายการอุปกรณ์ที่ขาด S/N (กรณีในใบเบิกมีหลายรายการ)
@@ -138,7 +139,7 @@ const WithdrawalList: React.FC = () => {
     try {
       const detail = await withdrawalApi.getById(wId);
       setPrintingWithdrawal(detail);
-      notify('กำลังดาวน์โหลดเอกสาร PDF...');
+      setIsPrintDialogOpen(true);
     } catch {
       notify('ไม่สามารถดึงข้อมูลเพื่อพิมพ์ใบเบิกได้', 'error');
     } finally {
@@ -146,15 +147,14 @@ const WithdrawalList: React.FC = () => {
     }
   }, [notify]);
 
-  useEffect(() => {
-    if (printingWithdrawal) {
-      const timer = setTimeout(() => {
-        printElement('pdf-withdrawal-template', `ใบเบิกอุปกรณ์ - WD-${printingWithdrawal.id.toString().padStart(6, '0')}`);
-        setPrintingWithdrawal(null);
-      }, 300);
-      return () => clearTimeout(timer);
+  const handleBeforePrint = async (companyId: number) => {
+    if (!printingWithdrawal) return;
+    try {
+      await withdrawalApi.updateCompany(printingWithdrawal.id, companyId);
+    } catch (err) {
+      console.error('Failed to update company_id:', err);
     }
-  }, [printingWithdrawal]);
+  };
 
   const handleDelete = async (id: number) => {
     const isConfirmed = await confirm({
@@ -283,6 +283,23 @@ const WithdrawalList: React.FC = () => {
       render: (val) => (
         val
           ? <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>{val}</span>
+          : <span className="cell-empty">—</span>
+      )
+    },
+    {
+      id: 'contract',
+      header: 'สัญญา / ปี',
+      accessor: 'contract_no',
+      priority: 3,
+      width: 'auto',
+      render: (_, row) => (
+        row.contract_no
+          ? (
+            <span style={{ fontSize: '0.82rem', fontWeight: 600 }}>
+              {row.contract_no}
+              <span style={{ color: 'var(--text-muted)', fontWeight: 500 }}> · ปี {row.contract_year}</span>
+            </span>
+          )
           : <span className="cell-empty">—</span>
       )
     },
@@ -610,7 +627,23 @@ const WithdrawalList: React.FC = () => {
       </div>
 
       {printingWithdrawal && (
-        <PrintWithdrawalTemplate withdrawal={printingWithdrawal} />
+        <PrintDialog
+          open={isPrintDialogOpen}
+          onClose={() => {
+            setIsPrintDialogOpen(false);
+            setPrintingWithdrawal(null);
+          }}
+          templateId="pdf-withdrawal-template"
+          docTitle={`ใบเบิกอุปกรณ์ - WD-${printingWithdrawal.id.toString().padStart(6, '0')}`}
+          onBeforePrint={handleBeforePrint}
+          renderTemplate={(companyId, logoId) => (
+            <PrintWithdrawalTemplate
+              withdrawal={printingWithdrawal}
+              companyId={companyId}
+              logoId={logoId}
+            />
+          )}
+        />
       )}
 
       {/* Picker Modal: เลือก item ที่ขาด S/N (กรณีในใบเบิกมีหลายรายการ) */}

@@ -160,7 +160,6 @@ const PrintTemplate: React.FC<Props> = ({ repair, isPreview, companyId, logoId }
           docDate={docDate}
           company={company}
           logo={logo}
-          showCompany={false}
           statusBadge={{ label: repair.status, tone: statusToTone(repair.status) }}
         />
 

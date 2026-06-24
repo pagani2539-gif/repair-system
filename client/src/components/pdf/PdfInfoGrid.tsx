@@ -56,6 +56,7 @@ export const PdfInfoGrid: React.FC<Props> = ({ title, fields, columns = 2, docTy
               display: 'flex',
               flexDirection: 'column',
               padding: '2px 0',
+              minWidth: 0, // allow grid track to shrink so long values wrap instead of overflowing
             }}
           >
             <span style={{
@@ -73,6 +74,7 @@ export const PdfInfoGrid: React.FC<Props> = ({ title, fields, columns = 2, docTy
               color: pdfTheme.colors.text,
               marginTop: '1px',
               lineHeight: 1.3,
+              overflowWrap: 'anywhere', // break long unspaced tokens (S/N, URLs) instead of overflowing the edge
             }}>
               {field.value || <span style={{ color: pdfTheme.colors.textLight }}>—</span>}
             </span>

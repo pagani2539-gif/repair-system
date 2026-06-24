@@ -25,7 +25,7 @@ export interface TableAction<T> {
   label: string;
   icon?: React.ReactNode;
   onClick: (row: T) => void;
-  variant?: 'primary' | 'outline' | 'danger' | 'ghost';
+  variant?: 'primary' | 'outline' | 'danger' | 'ghost' | 'success';
   permission?: string;
   disabled?: boolean | ((row: T) => boolean);
   hidden?: boolean | ((row: T) => boolean);

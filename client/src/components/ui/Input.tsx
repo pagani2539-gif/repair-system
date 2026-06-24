@@ -182,9 +182,9 @@ export const Select: React.FC<SelectProps> = ({
   }, [parsedOptions, searchText, isOpen, isSearchable]);
 
   return (
-    <div className="form-group" style={{ marginBottom: '1rem', ...style }}>
+    <div className="form-group" style={{ ...style }}>
       {label && (
-        <label htmlFor={inputId} style={{ display: 'block', marginBottom: '8px', fontSize: '0.9rem', fontWeight: 600 }}>
+        <label htmlFor={inputId}>
           {label} {required && <span style={{ color: 'var(--danger)' }}>*</span>}
         </label>
       )}
@@ -218,10 +218,11 @@ export const Select: React.FC<SelectProps> = ({
                 border: '1px solid var(--border)',
                 borderRadius: '12px',
                 cursor: disabled ? 'not-allowed' : 'text',
-                fontSize: '0.85rem',
+                fontSize: '0.95rem',
+                lineHeight: 1.2,
                 color: 'var(--text-main)',
                 opacity: disabled ? 0.6 : 1,
-                minHeight: '44px',
+                boxSizing: 'border-box',
                 outline: 'none',
                 transition: 'border-color 0.2s',
                 ...triggerStyle
@@ -229,6 +230,7 @@ export const Select: React.FC<SelectProps> = ({
             />
           ) : (
             <div
+              id={inputId}
               onClick={() => !disabled && setIsOpen(!isOpen)}
               style={{
                 padding: '12px 16px',
@@ -239,11 +241,12 @@ export const Select: React.FC<SelectProps> = ({
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
-                fontSize: '0.85rem',
+                fontSize: '0.95rem',
+                lineHeight: 1.2,
                 color: 'var(--text-main)',
                 opacity: disabled ? 0.6 : 1,
-                minHeight: '44px',
                 width: '100%',
+                boxSizing: 'border-box',
                 ...triggerStyle
               }}
             >

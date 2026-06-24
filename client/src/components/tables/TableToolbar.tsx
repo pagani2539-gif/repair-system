@@ -55,7 +55,9 @@ const TableToolbar: React.FC<TableToolbarProps> = ({
       backgroundColor: 'var(--bg-card)',
       borderRadius: 'var(--table-radius)',
       border: '1px solid var(--border)',
-      boxShadow: 'var(--shadow-sm)'
+      boxShadow: 'var(--shadow-sm)',
+      position: 'relative',
+      zIndex: 30
     }}>
       <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
         {searchEnabled && (

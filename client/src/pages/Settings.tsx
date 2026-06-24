@@ -2,11 +2,13 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input, TextArea } from '../components/ui/Input';
+import FormSection from '../components/ui/FormSection';
 import { useNotification } from '../components/Layout';
 import { settingsApi, UPLOAD_URL } from '../api';
 import type { Company, CompanyLogo, SystemSettings } from '../types';
 import {
   Building2,
+  MapPin,
   Save,
   Image as ImageIcon,
   Upload,
@@ -61,6 +63,7 @@ const Settings: React.FC = () => {
   const [systemSettings, setSystemSettings] = useState<SystemSettings>({
     line_token_repair: '',
     line_token_stock: '',
+    line_channel_access_token: '',
   });
   const [showTokens, setShowTokens] = useState<Record<string, boolean>>({});
   const [savingSettings, setSavingSettings] = useState(false);
@@ -107,6 +110,7 @@ const Settings: React.FC = () => {
       setSystemSettings({
         line_token_repair: data.line_token_repair || '',
         line_token_stock: data.line_token_stock || '',
+        line_channel_access_token: data.line_channel_access_token || '',
       });
     } catch {
       notify('ไม่สามารถโหลดข้อมูลตั้งค่าระบบได้', 'error');
@@ -594,7 +598,7 @@ const Settings: React.FC = () => {
                   </div>
 
                   <form onSubmit={handleSaveCompany}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                    <FormSection title="ชื่อบริษัท" icon={<Building2 size={18} />} columns={1}>
                       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1rem' }}>
                         <Input
                           label="ชื่อบริษัท (ไทย)"
@@ -616,6 +620,9 @@ const Settings: React.FC = () => {
                         onChange={(e) => setForm({ ...form, name_en: e.target.value })}
                         placeholder="Example Co., Ltd."
                       />
+                    </FormSection>
+
+                    <FormSection title="ที่อยู่ & ติดต่อ" icon={<MapPin size={18} />} columns={1}>
                       <TextArea
                         label="ที่อยู่"
                         rows={3}
@@ -652,7 +659,7 @@ const Settings: React.FC = () => {
                           placeholder="www.example.com"
                         />
                       </div>
-                    </div>
+                    </FormSection>
 
                     <div style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
                       {isCreating && (
@@ -824,11 +831,11 @@ const Settings: React.FC = () => {
           <Card style={{ padding: '2rem' }}>
             <h3 style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: 0, marginBottom: '1.5rem', fontSize: '1.1rem' }}>
               <SettingsIcon size={22} color="var(--primary)" />
-              ตั้งค่าการเชื่อมต่อ API & LINE Notify
+              ตั้งค่าการเชื่อมต่อ API & LINE Messaging API
             </h3>
 
             <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '2rem' }}>
-              ระบุรหัส Token ของ LINE Notify เพื่อเปิดใช้งานระบบแจ้งเตือนเข้าแอปพลิเคชัน LINE ตามกลุ่มงานขององค์กร
+              ระบุข้อมูลสำหรับ LINE Messaging API เพื่อเปิดใช้งานระบบแจ้งเตือนเข้าแอปพลิเคชัน LINE (กลุ่ม หรือ บัญชีรายคน)
             </p>
 
             <form onSubmit={handleSaveSystemSettings}>
@@ -836,50 +843,55 @@ const Settings: React.FC = () => {
                 <div style={{ border: '1px solid var(--border)', borderRadius: '12px', padding: '1.25rem', background: 'var(--bg-app)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
                     <label style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-main)' }}>
-                      LINE Notify Token สำหรับงานซ่อมบำรุง / งานเคลม
+                      LINE Channel Access Token
                     </label>
                     <button
                       type="button"
-                      onClick={() => toggleTokenVisibility('line_token_repair')}
+                      onClick={() => toggleTokenVisibility('line_channel_access_token')}
                       style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--primary)', fontSize: '0.75rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}
                     >
-                      {showTokens['line_token_repair'] ? <EyeOff size={14} /> : <Eye size={14} />}
-                      {showTokens['line_token_repair'] ? 'ซ่อนรหัส' : 'แสดงรหัส'}
+                      {showTokens['line_channel_access_token'] ? <EyeOff size={14} /> : <Eye size={14} />}
+                      {showTokens['line_channel_access_token'] ? 'ซ่อนรหัส' : 'แสดงรหัส'}
                     </button>
                   </div>
                   <Input
-                    type={showTokens['line_token_repair'] ? 'text' : 'password'}
-                    value={systemSettings.line_token_repair || ''}
-                    onChange={(e) => setSystemSettings({ ...systemSettings, line_token_repair: e.target.value })}
-                    placeholder="กรอก LINE Token สำหรับรับเรื่องแจ้งซ่อม (เช่น RE-10-IN...)"
+                    type={showTokens['line_channel_access_token'] ? 'text' : 'password'}
+                    value={systemSettings.line_channel_access_token || ''}
+                    onChange={(e) => setSystemSettings({ ...systemSettings, line_channel_access_token: e.target.value })}
+                    placeholder="กรอก LINE Channel Access Token"
                   />
                   <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '6px', marginBottom: 0 }}>
-                    ระบบจะยิงแจ้งเตือนทันทีเมื่อมีการกด "เปิดตั๋วแจ้งซ่อม" หรือ "เปิดตั๋วแจ้งเคลม" ใหม่เข้ามา
+                    รหัสผ่านช่องสัญญาณของ LINE Bot ที่ได้จาก LINE Developers Console
                   </p>
                 </div>
 
                 <div style={{ border: '1px solid var(--border)', borderRadius: '12px', padding: '1.25rem', background: 'var(--bg-app)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-                    <label style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-main)' }}>
-                      LINE Notify Token สำหรับคลังพัสดุ / สต็อกสินค้า
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => toggleTokenVisibility('line_token_stock')}
-                      style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--primary)', fontSize: '0.75rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}
-                    >
-                      {showTokens['line_token_stock'] ? <EyeOff size={14} /> : <Eye size={14} />}
-                      {showTokens['line_token_stock'] ? 'ซ่อนรหัส' : 'แสดงรหัส'}
-                    </button>
-                  </div>
+                  <label style={{ display: 'block', fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-main)', marginBottom: '0.75rem' }}>
+                    LINE Target ID (Group ID / User ID) สำหรับงานซ่อมบำรุง / งานเคลม
+                  </label>
                   <Input
-                    type={showTokens['line_token_stock'] ? 'text' : 'password'}
-                    value={systemSettings.line_token_stock || ''}
-                    onChange={(e) => setSystemSettings({ ...systemSettings, line_token_stock: e.target.value })}
-                    placeholder="กรอก LINE Token สำหรับคลังสินค้าและงานจัดซื้อ"
+                    type="text"
+                    value={systemSettings.line_token_repair || ''}
+                    onChange={(e) => setSystemSettings({ ...systemSettings, line_token_repair: e.target.value })}
+                    placeholder="กรอก Target ID ของกลุ่มหรือบัญชีผู้รับแจ้งซ่อม (เช่น C123456... หรือ U123456...)"
                   />
                   <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '6px', marginBottom: 0 }}>
-                    ระบบจะยิงแจ้งเตือนเมื่อเกิดกรณี "ปริมาณของคงเหลือในคลัง ต่ำกว่าระดับความปลอดภัย (Min Stock)"
+                    ระบบจะส่งข้อความไปยัง Target ID นี้ทันทีเมื่อมีการกด "เปิดใบแจ้งซ่อม" หรือ "เปิดใบแจ้งเคลม"
+                  </p>
+                </div>
+
+                <div style={{ border: '1px solid var(--border)', borderRadius: '12px', padding: '1.25rem', background: 'var(--bg-app)' }}>
+                  <label style={{ display: 'block', fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-main)', marginBottom: '0.75rem' }}>
+                    LINE Target ID (Group ID / User ID) สำหรับคลังพัสดุ / สต็อกสินค้า
+                  </label>
+                  <Input
+                    type="text"
+                    value={systemSettings.line_token_stock || ''}
+                    onChange={(e) => setSystemSettings({ ...systemSettings, line_token_stock: e.target.value })}
+                    placeholder="กรอก Target ID ของกลุ่มหรือบัญชีผู้รับแจ้งสต็อก (เช่น C123456... หรือ U123456...)"
+                  />
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '6px', marginBottom: 0 }}>
+                    ระบบจะส่งข้อความเมื่อมีการ "เบิกอุปกรณ์", "รับเข้า/นำเข้าพัสดุเข้าคลัง", หรือกรณี "ปริมาณคงเหลือต่ำกว่าเกณฑ์ความปลอดภัย (Min Stock)"
                   </p>
                 </div>
 

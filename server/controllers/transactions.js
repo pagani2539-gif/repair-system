@@ -14,6 +14,7 @@ const logTransaction = (data, callback) => {
     project_name = null,
     location = null,
     station_id = null,
+    contract_id = null,
     user_name = null,
     note = null,
     withdrawal_id = null,
@@ -23,14 +24,14 @@ const logTransaction = (data, callback) => {
   const insertTx = (resolvedLocation) => {
     db.run(`
       INSERT INTO inventory_transactions (
-        inventory_id, instance_id, transaction_type, 
+        inventory_id, instance_id, transaction_type,
         quantity_added, quantity_withdrawn, quantity_borrowed, quantity_returned,
-        project_name, location, station_id, user_name, note, withdrawal_id, return_image
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        project_name, location, station_id, contract_id, user_name, note, withdrawal_id, return_image
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       inventory_id, instance_id, transaction_type,
       quantity_added, quantity_withdrawn, quantity_borrowed, quantity_returned,
-      project_name, resolvedLocation, station_id, user_name, note, withdrawal_id, return_image
+      project_name, resolvedLocation, station_id, contract_id, user_name, note, withdrawal_id, return_image
     ], function(err) {
       if (!err) {
         logAudit('inventory_transaction', this.lastID, 'inventory movement', null, data, user_name || 'System').catch(e => console.error(e));

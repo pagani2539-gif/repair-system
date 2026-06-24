@@ -28,7 +28,7 @@ import {
   X
 } from 'lucide-react';
 import PrintWithdrawalTemplate from '../components/PrintWithdrawalTemplate';
-import { printElement } from '../utils/pdfGenerator';
+import { PrintDialog } from '../components/PrintDialog';
 import PermissionGate from '../components/PermissionGate';
 import { ProvideSnModal } from '../components/ProvideSnModal';
 import type { InventoryTransaction } from '../types';
@@ -66,8 +66,9 @@ const WithdrawalDetail: React.FC = () => {
   const [returnCondition, setReturnCondition] = useState<string>('Good');
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [returnImageFile, setReturnImageFile] = useState<File | null>(null);
+  const [isPrintDialogOpen, setIsPrintDialogOpen] = useState(false);
 
-  const { data: withdrawal, loading, request: fetchWithdrawal } = useApi(
+  const { data: withdrawal, loading, request: fetchWithdrawal, setData: setWithdrawal } = useApi(
     async (idVal: string | number) => await withdrawalApi.getById(idVal)
   );
 
@@ -187,7 +188,17 @@ const WithdrawalDetail: React.FC = () => {
   };
 
   const handlePrint = () => {
-    printElement("pdf-withdrawal-template", `ใบเบิก - WD-${String(withdrawal?.id).padStart(6, '0')}`);
+    setIsPrintDialogOpen(true);
+  };
+
+  const handleBeforePrint = async (companyId: number) => {
+    if (!withdrawal) return;
+    try {
+      await withdrawalApi.updateCompany(withdrawal.id, companyId);
+      setWithdrawal(prev => prev ? { ...prev, company_id: companyId } : null);
+    } catch (err) {
+      console.error('Failed to update company_id:', err);
+    }
   };
 
   if (loading) return (
@@ -223,9 +234,20 @@ const WithdrawalDetail: React.FC = () => {
 
   return (
     <div className="withdrawal-detail-page" style={{ padding: '0 0 4rem 0', minHeight: '100vh' }}>
-      <div style={{ position: 'absolute', left: '-99999px', top: 0, pointerEvents: 'none' }}>
-        <PrintWithdrawalTemplate withdrawal={withdrawal} />
-      </div>
+      <PrintDialog
+        open={isPrintDialogOpen}
+        onClose={() => setIsPrintDialogOpen(false)}
+        templateId="pdf-withdrawal-template"
+        docTitle={`ใบเบิก - WD-${String(withdrawal.id).padStart(6, '0')}`}
+        onBeforePrint={handleBeforePrint}
+        renderTemplate={(companyId, logoId) => (
+          <PrintWithdrawalTemplate
+            withdrawal={withdrawal}
+            companyId={companyId}
+            logoId={logoId}
+          />
+        )}
+      />
 
       {/* Sticky Glass Header */}
       <div className="glass-card" style={{ 
@@ -288,6 +310,14 @@ const WithdrawalDetail: React.FC = () => {
                 <MapPin size={16} color="var(--danger)"/> {withdrawal.location || '-'}
               </div>
             </div>
+            {withdrawal.contract_no && (
+              <div className="hide-on-tablet">
+                <label style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>สัญญา / ปี</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, fontSize: '0.95rem' }}>
+                  <FileText size={16} color="var(--info)"/> {withdrawal.contract_no} <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>(ปี {withdrawal.contract_year})</span>
+                </div>
+              </div>
+            )}
           </div>
           <div style={{ textAlign: 'right' }}>
             <div style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--success)', marginBottom: '4px' }}>สถานะ</div>

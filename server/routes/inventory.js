@@ -11,6 +11,7 @@ router.get('/:id', inventoryController.getItemById);
 router.get('/:id/instances', inventoryController.getInstancesInStock);
 router.patch('/instances/:instanceId/condition', inventoryController.updateInstanceCondition);
 router.post('/:id/serial-numbers', inventoryController.addInventorySerialNumbers);
+router.post('/import', inventoryController.bulkImport);
 router.post('/', uploadInventoryImage, inventoryController.createItem);
 router.patch('/:id', uploadInventoryImage, inventoryController.updateItem);
 router.delete('/:id', requirePermission('delete.inventory'), inventoryController.deleteItem);

@@ -9,6 +9,44 @@ This file tracks the progress of features, bug fixes, and maintenance tasks for 
 - 🔴 **Blocked**: Waiting on external factors or decisions.
 
 
+## ✅ Completed (2026-06-18)
+- [x] **Production Readiness & Core Business Flow Validation**: Implemented comprehensive integration and unit test coverage to prepare the system for deployment:
+  - Created backend tests `comprehensiveFlows.test.js` validating:
+    - Automated Station Code prefix syntax (`STN-{id}-{shortDir}`) matching directions (BOTH/INBOUND/OUTBOUND/NONE).
+    - Automatic PO creation/updating when inventory transactions or withdrawals decrease stock below minimum levels.
+    - Custom return due date configuration, pending borrow statuses, and stock replenishment on returned items.
+  - Created client-side unit tests `excelImporter.test.ts` validating:
+    - Mapping of Thai and English excel column aliases (e.g. `ชื่ออุปกรณ์` or `name`, `ราคาต่อหน่วย` or `price`).
+    - Robust numeric/float/boolean parsing and error handling for invalid or empty names.
+  - Confirmed 100% test success across backend and frontend (18 tests passing).
+  - Validated clean production builds and zero ESLint compilation warnings. 🟢
+
+## ✅ Completed (2026-06-16)
+- [x] **Complete Removal of Asset Pricing & Warranty Features**: Completely removed asset price and warranty tracking, along with the "รายงานวิเคราะห์รอบอายุและค่าใช้จ่ายสะสม" (Asset Cost & Lifecycle Analysis) report card and all associated frontend input forms:
+  - Removed the Lifecycle Analysis card, Excel export buttons, and PDF print handlers from the Reports page.
+  - Reverted the `/lifecycle-report` endpoint to a simplified version that returns deployed station equipment instances (required by the `StationAssetPicker` component when creating repair or claim tickets) without carrying any pricing, warranty, or replacement suggestion calculations.
+  - Cleaned up unused imports/variables and resolved strict TypeScript type errors to enable successful production builds.
+  - Kept DB schema columns `unit_price` and `warranty_months` intact but set default fallback values (0 and 36) in all backend create/update logic to ensure database stability and backward compatibility. 🟢
+- [x] **Print Dialog & Header Alignment**: Reverted the automatic print bypass so the `PrintDialog` always opens first, and updated the document headers (in Repairs, Claims, and Withdrawals templates) to display the selected company name, address, phone number, and logo at the top of the page rather than showing generic system branding. Added support for a "ไม่ระบุบริษัท" (Do not specify company) option in the print dialog to fall back dynamically to generic system branding headers. 🟢
+- [x] **Inventory Price & Warranty Configuration UI**: Integrated `ราคาต่อหน่วย (Unit Price)` and `ระยะรับประกัน (Warranty Months)` input fields inside the Add/Edit Inventory modal with detailed explanation helpers to guide users on how they are used for lifecycle and cost analysis. 🟢
+- [x] **High-Fidelity Inventory Seeding**: Populated the database with 50 realistic, high-fidelity IT and network equipment items:
+  - Seeded 50 devices under 5 categories (Network Devices, Computing & Workstations, CCTV & Security, Peripherals & Office, Cables & Accessories) with complete details: model numbers, Thai descriptions, quantities, min-stock levels, locations, unit prices, and warranties.
+  - Auto-generated 330 unique serial numbers for items requiring tracking and registered them in the `inventory_instances` table.
+  - Documented initial stocking transactions in the `inventory_transactions` log table. 🟢
+- [x] **Core System Enhancements & Global Modern Icon Redesign**: Completed system upgrades and modernized all icons across the application:
+  - Fixed client-side compilation error in `StationAssetPicker.tsx` (blurTimeout useRef initial value definition) and resolved the Vite PWA cache limit build issue in `vite.config.ts` (increased maximum size limit to 4MB).
+  - Executed a document renumbering database migration script `renumber_documents.js` to standardize all legacy repairs (RP), claims (CL), and purchase orders (PO) numbers to the unified daily sequence `PREFIX-YYMMDD-NNN`.
+  - Migrated the application to a modern, minimalist icon theme (Gauge, Milestone, Sliders, FilePlus2, ShieldAlert, FileWarning, Boxes, PackageCheck, FileClock, Hourglass, Receipt, FileSignature, TrendingUp) across the Sidebar navigation menu, Bento Dashboard, Reports list, and operational tracking pages (Repairs, Claims, Ledger, POs).
+  - Cleaned up unused imports to satisfy strict TypeScript unused locals constraints. 🟢
+
+## ✅ Completed (2026-06-15)
+- [x] **Interactive SVG Thailand Map**: Integrated a high-fidelity interactive map of Thailand on the Station and Checkpoint Management page, allowing users to filter by region and view stats.
+  - Parsed 78 province SVG paths and mapped them to region definitions.
+  - Implemented the `ThailandMap` component with interactive hover states, glassmorphic tooltips, and real-time station and repair metrics.
+  - Redesigned `StationSearch.tsx` as a Bento Grid to place the map sidebar side-by-side with filters and data table.
+  - Fixed map colors and stroke contrast boundaries for light/dark themes, and added regional fading.
+  - Conducted a comprehensive audit of the province-to-region mapping, aligning the database seeding scripts (`seed_wim_stations.js`, `seed_77_provinces.js`), frontend utilities (`thaiProvinces.ts`), and map coordinates (`thailandProvincesPaths.ts`) to the standard 6-region classification model. Corrected translations and resolved overlays (such as Nong Bua Lam Phu and Songkhla Lake). 🟢
+
 ## ✅ Completed (2026-06-14)
 - [x] **System Enhancements (Image Compression, LINE Notify, User Roles & CSV Export)**: Completed four major system enhancements:
   - Created a client-side canvas-based image compression utility that reduces uploaded image file sizes by 75-90% (down to ~200-500 KB) before uploading, optimizing network bandwidth and server disk space.

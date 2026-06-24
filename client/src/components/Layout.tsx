@@ -1,37 +1,39 @@
 import React, { useState, useEffect, createContext, useContext, useCallback, useRef } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { 
-  Wrench, 
-  PlusCircle, 
-  ShieldPlus,
-  ShieldCheck,
-  ShieldAlert, 
+  Wrench,
   Check, 
   Info,
   X,
-  Boxes,
-  ArrowUpRight,
-  ShoppingBag,
-  PieChart,
   Search,
   PanelLeftClose,
   PanelLeft,
   Menu,
   Download,
-  MapPin,
   Settings as SettingsIcon,
   LogOut,
   UserCog,
   Users,
-  LayoutDashboard,
-  Warehouse,
-  History,
-  BookOpen,
   Fingerprint,
   Sun,
   Moon,
-  Timer,
-  AlertTriangle
+  AlertTriangle,
+  ChevronDown,
+  User as UserIcon,
+  // New Modern Icons
+  Gauge,
+  Milestone,
+  Sliders,
+  FilePlus2,
+  ShieldAlert,
+  FileWarning,
+  Boxes,
+  PackageCheck,
+  FileClock,
+  Hourglass,
+  Receipt,
+  FileSignature,
+  TrendingUp
 } from 'lucide-react';
 import { repairApi, transactionApi, searchApi } from '../api';
 import type { GlobalSearchResults } from '../types';
@@ -127,6 +129,7 @@ const Layout: React.FC = () => {
   });
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isMobileView, setIsMobileView] = useState(false);
+  const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
 
   useEffect(() => {
     localStorage.setItem('sidebarCollapsed', String(isSidebarCollapsed));
@@ -610,63 +613,67 @@ const Layout: React.FC = () => {
           
           <nav style={{ flexGrow: 1 }}>
             <NavLink to="/" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-              <LayoutDashboard size={18} /> <span className="nav-text">ภาพรวมระบบ</span>
+              <Gauge size={18} /> <span className="nav-text">ภาพรวมระบบ</span>
             </NavLink>
             <NavLink to="/stations" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-              <MapPin size={18} /> <span className="nav-text">ค้นหาข้อมูลสถานี</span>
+              <Milestone size={18} /> <span className="nav-text">ค้นหาข้อมูลสถานี</span>
             </NavLink>
             
             <div className="nav-label">งานซ่อมบำรุง</div>
             <NavLink to="/repairs" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-              <Wrench size={18} /> <span className="nav-text">ทะเบียนงานซ่อม</span>
+              <Sliders size={18} /> <span className="nav-text">ทะเบียนงานซ่อม</span>
               {unreadRepairCount > 0 && (
                 <span className="pulse-dot">{unreadRepairCount}</span>
               )}
             </NavLink>
             <NavLink to="/new" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-              <PlusCircle size={18} /> <span className="nav-text">บันทึกแจ้งซ่อม</span>
+              <FilePlus2 size={18} /> <span className="nav-text">บันทึกแจ้งซ่อม</span>
             </NavLink>
             
             <div className="nav-label">การเคลมพัสดุ</div>
             <NavLink to="/claim-history" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-              <ShieldCheck size={18} /> <span className="nav-text">ทะเบียนงานเคลม</span>
+              <ShieldAlert size={18} /> <span className="nav-text">ทะเบียนงานเคลม</span>
               {unreadClaimCount > 0 && (
                 <span className="pulse-dot">{unreadClaimCount}</span>
               )}
             </NavLink>
             <NavLink to="/claim" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-              <ShieldPlus size={18} /> <span className="nav-text">บันทึกแจ้งเคลม</span>
+              <FileWarning size={18} /> <span className="nav-text">บันทึกแจ้งเคลม</span>
             </NavLink>
             
-            <div className="nav-label">การจัดการคลังวัสดุ</div>
+            <div className="nav-label">คลังสินค้าและประวัติ</div>
             <NavLink to="/inventory" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>  
-              <Warehouse size={18} /> <span className="nav-text">รายการพัสดุคงคลัง</span>
+              <Boxes size={18} /> <span className="nav-text">รายการพัสดุคงคลัง</span>
               {lowStockCount > 0 && (
                 <span className="pulse-dot">{lowStockCount}</span>
               )}
             </NavLink>
-            <NavLink to="/withdrawal" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}> 
-              <ArrowUpRight size={18} /> <span className="nav-text">เบิกจ่ายพัสดุอุปกรณ์</span>
+            <NavLink to="/transactions" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}> 
+              <Receipt size={18} /> <span className="nav-text">บัญชีคุมยอดพัสดุ</span>
             </NavLink>
-            <NavLink to="/withdrawal-history" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}> 
-              <History size={18} /> <span className="nav-text">ประวัติการเบิกจ่าย</span>
+
+            <div className="nav-label">สต็อกขาเข้า (Inbound)</div>
+            <NavLink to="/purchase-orders" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}> 
+              <FileSignature size={18} /> <span className="nav-text">ใบจัดสั่งซื้อ (PO)</span>
             </NavLink>
             <NavLink to="/pending-returns" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}> 
-              <Timer size={18} /> <span className="nav-text">อุปกรณ์ค้างส่งคืน</span>
+              <Hourglass size={18} /> <span className="nav-text">ตรวจรับของคืนคลัง</span>
               {pendingReturnsCount > 0 && (
                 <span className="pulse-dot">{pendingReturnsCount}</span>
               )}
             </NavLink>
-            <NavLink to="/transactions" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}> 
-              <BookOpen size={18} /> <span className="nav-text">บัญชีคุมยอดพัสดุ</span>
+
+            <div className="nav-label">สต็อกขาออก (Outbound)</div>
+            <NavLink to="/withdrawal" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}> 
+              <PackageCheck size={18} /> <span className="nav-text">ใบเบิกจ่ายพัสดุอุปกรณ์</span>
             </NavLink>
-            
-            <div className="nav-label">งานจัดซื้อและรายงาน</div>
-            <NavLink to="/purchase-orders" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}> 
-              <ShoppingBag size={18} /> <span className="nav-text">ใบสั่งซื้อพัสดุ (PO)</span>
+            <NavLink to="/withdrawal-history" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}> 
+              <FileClock size={18} /> <span className="nav-text">ประวัติการเบิกจ่าย</span>
             </NavLink>
+
+            <div className="nav-label">รายงานวิเคราะห์</div>
             <NavLink to="/reports" onClick={handleNavLinkClick} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
-              <PieChart size={18} /> <span className="nav-text">รายงานและสถิติ</span>
+              <TrendingUp size={18} /> <span className="nav-text">รายงานและสถิติ</span>
             </NavLink>
  
             {user?.is_full && (
@@ -775,7 +782,7 @@ const Layout: React.FC = () => {
           </div>
 
           {/* User profile + logout */}
-          {user && (
+          {user && isMobileView && (
             <div style={{
               padding: isSidebarCollapsed ? '12px 8px' : '12px 16px',
               borderTop: '1px solid var(--border)',
@@ -806,7 +813,7 @@ const Layout: React.FC = () => {
                   fontSize: '0.85rem',
                   flexShrink: 0,
                 }}>
-                  {(user.full_name || user.username).charAt(0).toUpperCase()}
+                  <UserIcon size={16} />
                 </div>
                 {!isSidebarCollapsed && (
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -911,11 +918,140 @@ const Layout: React.FC = () => {
           )}
         </aside>
 
-        <main className="main-content">
-          <ErrorBoundary>
-            <Outlet />
-          </ErrorBoundary>
-        </main>
+        <div className="main-layout-container">
+          {user && !isMobileView && (
+            <header className="desktop-header">
+              <div style={{ position: 'relative' }}>
+                {/* Trigger Button */}
+                <button
+                  onClick={() => setIsProfileDropdownOpen(!isProfileDropdownOpen)}
+                  className="profile-trigger-btn"
+                >
+                  <div style={{
+                    width: '28px',
+                    height: '28px',
+                    borderRadius: '50%',
+                    background: user.is_full ? 'linear-gradient(135deg, var(--primary), #1e3a8a)' : 'var(--bg-card)',
+                    border: user.is_full ? 'none' : '1px solid var(--border)',
+                    color: user.is_full ? '#fff' : 'var(--text-main)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontWeight: 800,
+                    fontSize: '0.8rem',
+                    flexShrink: 0,
+                  }}>
+                    <UserIcon size={14} />
+                  </div>
+                  <div style={{ textAlign: 'left' }}>
+                    <div style={{ fontSize: '0.8rem', fontWeight: 700, lineHeight: 1.2 }}>
+                      {user.full_name}
+                    </div>
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 600 }}>
+                      {user.is_full ? 'ผู้ดูแลระบบ' : 'ผู้ใช้งาน'}
+                    </div>
+                  </div>
+                  <ChevronDown size={14} style={{
+                    transform: isProfileDropdownOpen ? 'rotate(180deg)' : 'none',
+                    transition: 'transform 0.2s',
+                    color: 'var(--text-muted)'
+                  }} />
+                </button>
+
+                {/* Dropdown Menu */}
+                {isProfileDropdownOpen && (
+                  <>
+                    {/* Backdrop to close when clicking outside */}
+                    <div 
+                      style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        zIndex: 998,
+                      }}
+                      onClick={() => setIsProfileDropdownOpen(false)}
+                    />
+                    
+                    <div 
+                      className="glass-card profile-dropdown-animate"
+                      style={{
+                        position: 'absolute',
+                        top: '100%',
+                        right: 0,
+                        marginTop: '8px',
+                        width: '240px',
+                        padding: '12px',
+                        borderRadius: '12px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '10px',
+                        zIndex: 999,
+                        boxShadow: 'var(--shadow-lg)',
+                      }}
+                    >
+                      {/* User Info Details */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', paddingBottom: '8px', borderBottom: '1px solid var(--border)' }}>
+                        <div style={{
+                          width: '36px',
+                          height: '36px',
+                          borderRadius: '50%',
+                          background: user.is_full ? 'linear-gradient(135deg, var(--primary), #1e3a8a)' : 'var(--bg-card)',
+                          color: user.is_full ? '#fff' : 'var(--text-main)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontWeight: 800,
+                          fontSize: '0.9rem',
+                        }}>
+                          <UserIcon size={18} />
+                        </div>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-main)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {user.full_name}
+                          </div>
+                          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600 }}>
+                            @{user.username}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Menu Actions */}
+                      <button
+                        onClick={() => {
+                          setIsProfileDropdownOpen(false);
+                          navigate('/change-password');
+                        }}
+                        className="dropdown-item-btn"
+                      >
+                        <UserCog size={16} />
+                        <span>เปลี่ยนรหัสผ่าน</span>
+                      </button>
+                      
+                      <button
+                        onClick={() => {
+                          setIsProfileDropdownOpen(false);
+                          logout();
+                        }}
+                        className="dropdown-item-btn danger"
+                      >
+                        <LogOut size={16} />
+                        <span>ออกจากระบบ</span>
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </header>
+          )}
+
+          <main className="main-content">
+            <ErrorBoundary>
+              <Outlet />
+            </ErrorBoundary>
+          </main>
+        </div>
       </div>
 
       {/* Global Command Palette Search Modal */}

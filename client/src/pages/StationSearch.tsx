@@ -1,12 +1,13 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { stationApi, UPLOAD_URL } from '../api';
+import { stationApi, repairApi, UPLOAD_URL, inventoryApi } from '../api';
 import { useApi } from '../hooks/useApi';
 import { useNotification } from '../components/Layout';
 import { Button } from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import Select from '../components/ui/Select';
-import type { Station, InventoryTransaction } from '../types';
+import type { Station, InventoryTransaction, Repair } from '../types';
+import ThailandMap from '../components/ui/ThailandMap';
 import type { TableColumn, TableAction } from '../types/table.types';
 import {
   MapPin,
@@ -51,17 +52,79 @@ const EMPTY_FORM: StationFormData = {
   highway_no: '', direction: 'INBOUND', region: '', province: '', responsible_person: ''
 };
 
-const REGIONS = ['ภาคเหนือ', 'ภาคตะวันออกเฉียงเหนือ', 'ภาคกลาง', 'ภาคตะวันออก', 'ภาคตะวันตก', 'ภาคใต้', 'กรุงเทพและปริมณฑล'];
+const REGIONS = ['ภาคเหนือ', 'ภาคตะวันออกเฉียงเหนือ', 'ภาคกลาง', 'ภาคตะวันออก', 'ภาคตะวันตก', 'ภาคใต้'];
 const STATION_TYPE_OPTIONS = [
-  { value: 'WEIGH_STATION', label: 'ด่านชั่งหลัก (WIM)' },
+  { value: 'WEIGH_STATION', label: 'สถานีตรวจสอบน้ำหนัก' },
   { value: 'CHECK_POINT', label: 'จุดตรวจน้ำหนัก (Check Point)' },
-  { value: 'SPOT_CHECK', label: 'จุดจอดพักรถ (Spot Check)' },
+  { value: 'SPOT_CHECK', label: 'จุดสุ่มตรวจ (Spot Check)' },
+  { value: 'REST_AREA', label: 'จุดจอดพักรถบรรทุก (Rest Area)' },
   { value: 'OTHER', label: 'อื่นๆ (ระบุเอง)' }
 ];
+import StationQrLabels from '../components/StationQrLabels';
 import BaseDataTable from '../components/tables/BaseDataTable';
 import TablePagination from '../components/tables/TablePagination';
 import { useTableUrlState } from '../hooks/useTableUrlState';
 import { useAuth } from '../contexts/AuthContext';
+
+type AssetStatusKey = 'normal' | 'pending' | 'in_progress' | 'waiting_parts' | 'claiming';
+
+const ASSET_STATUS_META: Record<AssetStatusKey, { label: string; icon: string; color: string; bg: string }> = {
+  normal: { label: 'ปกติ', icon: '✓', color: 'var(--success)', bg: 'var(--success-light)' },
+  pending: { label: 'รอดำเนินการซ่อม', icon: '⏳', color: 'var(--warning)', bg: 'var(--warning-light)' },
+  in_progress: { label: 'กำลังซ่อม', icon: '🔧', color: 'var(--info)', bg: 'var(--info-light)' },
+  waiting_parts: { label: 'รออะไหล่', icon: '📦', color: 'var(--warning)', bg: 'var(--warning-light)' },
+  claiming: { label: 'กำลังเคลม', icon: '🛡️', color: 'var(--danger)', bg: 'var(--danger-light)' },
+};
+
+// สภาพอุปกรณ์ (manual) — ตั้งได้เองต่อการ์ด แยกจาก badge งานซ่อมอัตโนมัติ
+const CONDITION_OPTIONS = ['ปกติ', 'ชำรุด', 'ชำรุดรอเปลี่ยน', 'ปลดระวาง'] as const;
+
+const CONDITION_META: Record<string, { icon: string; color: string; bg: string }> = {
+  'ปกติ':          { icon: '✓', color: 'var(--success)', bg: 'var(--success-light)' },   // เขียว
+  'ชำรุด':         { icon: '⚠', color: 'var(--warning)', bg: 'var(--warning-light)' },   // เหลือง
+  'ชำรุดรอเปลี่ยน': { icon: '🔁', color: '#ea580c', bg: 'rgba(234, 88, 12, 0.08)' },      // ส้ม
+  'ปลดระวาง':      { icon: '⊘', color: 'var(--danger)', bg: 'var(--danger-light)' },     // แดง
+};
+
+// สภาพรายชิ้นงาน (S/N) จากคลังพัสดุ
+const INSTANCE_CONDITION_OPTIONS = ['New', 'Good', 'Fair', 'Broken'] as const;
+
+const INSTANCE_CONDITION_META: Record<string, { label: string; color: string; bg: string; icon: string }> = {
+  'New':    { label: 'ใหม่', color: 'var(--primary)', bg: 'var(--primary-light)', icon: '✨' },
+  'Good':   { label: 'ดี', color: 'var(--success)', bg: 'var(--success-light)', icon: '✓' },
+  'Fair':   { label: 'พอใช้', color: 'var(--warning)', bg: 'var(--warning-light)', icon: '⚠' },
+  'Broken': { label: 'ชำรุด', color: 'var(--danger)', bg: 'var(--danger-light)', icon: '❌' }
+};
+
+const INSTANCE_STATUS_META: Record<string, { label: string; color: string; bg: string }> = {
+  'Under Repair': { label: 'ส่งซ่อม',   color: '#b45309', bg: '#fef3c7' },
+  'Claiming':     { label: 'กำลังเคลม', color: '#1d4ed8', bg: '#dbeafe' },
+  'Damaged':      { label: 'เสียหาย',   color: '#b91c1c', bg: '#fee2e2' },
+  'In Stock':     { label: 'ในคลัง',    color: '#475569', bg: '#f1f5f9' },
+};
+
+interface DeployedInstance {
+  id: number;
+  serial_number: string;
+  condition: string;
+  status?: string;
+  updated_at?: string;
+}
+
+interface ActiveAsset {
+  id: number;
+  name: string;
+  model: string;
+  quantity: number;
+  image?: string;
+  status: AssetStatusKey;
+  activeTickets: Repair[];
+  condition: string;
+  conditionNote?: string;
+  conditionBy?: string;
+  conditionAt?: string;
+  instances?: DeployedInstance[];
+}
 
 const StationSearch: React.FC = () => {
   const { notify, confirm } = useNotification();
@@ -84,10 +147,15 @@ const StationSearch: React.FC = () => {
   const selectedStationId = searchParams.get('id') ? parseInt(searchParams.get('id')!, 10) : undefined;
 
   const [stations, setStations] = useState<Station[]>([]);
+  const [activeRepairs, setActiveRepairs] = useState<Repair[]>([]);
   const [stationModal, setStationModal] = useState<{ open: boolean; mode: 'create' | 'edit'; station: Station | null }>({ open: false, mode: 'create', station: null });
   const [formData, setFormData] = useState<StationFormData>(EMPTY_FORM);
   const [isSaving, setIsSaving] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [assetStatusFilter, setAssetStatusFilter] = useState<AssetStatusKey | null>(null);
+  const [expandedAssetId, setExpandedAssetId] = useState<number | null>(null);
+  const [conditionDraft, setConditionDraft] = useState<{ status: string; note: string }>({ status: 'ปกติ', note: '' });
+  const [savingCondition, setSavingCondition] = useState(false);
 
   // ลบ error เมื่อผู้ใช้แก้ค่า
   const clearFieldError = (field: string) => {
@@ -121,24 +189,55 @@ const StationSearch: React.FC = () => {
   const [dateRange, setDateRange] = useState<'7d' | '30d' | '90d' | 'all'>('30d');
   const [qrModalOpen, setQrModalOpen] = useState(false);
   const [qrStation, setQrStation] = useState<Station | null>(null);
+  const [isMapOpen, setIsMapOpen] = useState<boolean>(() => {
+    const saved = localStorage.getItem('station-map-open');
+    return saved === null ? true : saved === '1';
+  });
+  const toggleMap = useCallback(() => {
+    setIsMapOpen(prev => {
+      const next = !prev;
+      localStorage.setItem('station-map-open', next ? '1' : '0');
+      return next;
+    });
+  }, []);
 
   const { data: details, loading: detailsLoading, request: fetchDetails } = useApi(stationApi.getDetails);
 
-  const loadStations = useCallback(async () => {
+  const [updatingInstanceId, setUpdatingInstanceId] = useState<number | null>(null);
+
+  const handleInstanceConditionChange = useCallback(async (instanceId: number, newCondition: string) => {
+    if (!details?.station?.id) return;
+    setUpdatingInstanceId(instanceId);
     try {
-      const list = await stationApi.getUniqueList();
-      setStations(list);
+      await inventoryApi.updateInstanceCondition(instanceId, newCondition);
+      notify('อัปเดตสภาพอุปกรณ์ย่อยสำเร็จ', 'success');
+      await fetchDetails({ station_id: details.station.id });
     } catch {
-      notify('ไม่สามารถโหลดรายชื่อสถานีได้', 'error');
+      notify('อัปเดตสภาพอุปกรณ์ย่อยไม่สำเร็จ', 'error');
+    } finally {
+      setUpdatingInstanceId(null);
+    }
+  }, [details, fetchDetails, notify]);
+
+  const loadInitialData = useCallback(async () => {
+    try {
+      const [stList, repList] = await Promise.all([
+        stationApi.getUniqueList(),
+        repairApi.getAll({})
+      ]);
+      setStations(stList);
+      setActiveRepairs(repList.filter(r => r.status !== 'เสร็จสิ้น'));
+    } catch {
+      notify('ไม่สามารถโหลดข้อมูลเริ่มต้นได้', 'error');
     }
   }, [notify]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      loadStations();
+      loadInitialData();
     }, 0);
     return () => clearTimeout(timer);
-  }, [loadStations]);
+  }, [loadInitialData]);
 
   useEffect(() => {
     if (selectedStationId) {
@@ -230,7 +329,7 @@ const StationSearch: React.FC = () => {
       }
 
       closeStationModal();
-      loadStations();
+      loadInitialData();
       if (selectedStationId) fetchDetails({ station_id: selectedStationId });
     } catch (err) {
       const error = err as { response?: { data?: { error?: string } }; message?: string };
@@ -251,6 +350,11 @@ const StationSearch: React.FC = () => {
                           st.province.toLowerCase().includes(s);
         if (!matchText) return false;
       }
+
+      // Region Filter
+      if (urlState.filters.region && urlState.filters.region !== 'All') {
+        if (st.region !== urlState.filters.region) return false;
+      }
       
       // Province Filter
       if (urlState.filters.province && urlState.filters.province !== 'All') {
@@ -266,13 +370,64 @@ const StationSearch: React.FC = () => {
     }).sort((a, b) => b.id - a.id);
   }, [stations, urlState.search, urlState.filters]);
 
-  // Derived filter options
-  const provinces = useMemo(() => ['All', ...new Set(stations.map(s => s.province))].sort(), [stations]);
+  // Derived filter options (filtered by selected region dynamically)
+  const provinces = useMemo(() => {
+    let list = stations.map(s => s.province);
+    if (urlState.filters.region && urlState.filters.region !== 'All') {
+      const regionProvinces = provincesByRegion[urlState.filters.region] || [];
+      list = list.filter(p => regionProvinces.includes(p));
+    }
+    return ['All', ...new Set(list)].sort();
+  }, [stations, urlState.filters.region]);
+
+  const stationCountsByRegion = useMemo(() => {
+    const counts: Record<string, number> = {};
+    stations.forEach(st => {
+      if (st.region) {
+        counts[st.region] = (counts[st.region] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [stations]);
+
+  const activeRepairsByRegion = useMemo(() => {
+    const counts: Record<string, number> = {};
+    activeRepairs.forEach(rep => {
+      const st = stations.find(s => s.id === rep.station_id || (rep.station_name && s.name === rep.station_name));
+      if (st && st.region) {
+        counts[st.region] = (counts[st.region] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [activeRepairs, stations]);
+
+  const stationCountsByProvince = useMemo(() => {
+    const counts: Record<string, number> = {};
+    stations.forEach(st => {
+      if (st.province) {
+        counts[st.province] = (counts[st.province] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [stations]);
+
+  const activeRepairsByProvince = useMemo(() => {
+    const counts: Record<string, number> = {};
+    activeRepairs.forEach(rep => {
+      const st = stations.find(s => s.id === rep.station_id || (rep.station_name && s.name === rep.station_name));
+      if (st && st.province) {
+        counts[st.province] = (counts[st.province] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [activeRepairs, stations]);
+
   const stationTypes = [
     { label: 'ทั้งหมด', value: 'All' },
-    { label: 'ด่านชั่งหลัก (WIM)', value: 'WEIGH_STATION' },
+    { label: 'สถานีตรวจสอบน้ำหนัก', value: 'WEIGH_STATION' },
     { label: 'จุดตรวจน้ำหนัก (Check Point)', value: 'CHECK_POINT' },
-    { label: 'จุดจอดพักรถ (Spot Check)', value: 'SPOT_CHECK' }
+    { label: 'จุดสุ่มตรวจ (Spot Check)', value: 'SPOT_CHECK' },
+    { label: 'จุดจอดพักรถบรรทุก (Rest Area)', value: 'REST_AREA' }
   ];
 
   const handleDeleteStation = async (st: Station) => {
@@ -285,7 +440,7 @@ const StationSearch: React.FC = () => {
       try {
         await stationApi.delete(st.id);
         notify('ลบสถานีสำเร็จ', 'success');
-        loadStations();
+        loadInitialData();
       } catch (err) {
         const error = err as Error;
         notify(error.message || 'ไม่สามารถลบสถานีได้', 'error');
@@ -345,7 +500,7 @@ const StationSearch: React.FC = () => {
 
   const activeAssets = useMemo(() => {
     if (!details || !details.withdrawals) return [];
-    const assetsMap = new Map<number, { id: number; name: string; model: string; quantity: number; image?: string; status: 'NORMAL' | 'REPAIRING' }>();
+    const assetsMap = new Map<number, ActiveAsset>();
     details.withdrawals.forEach(w => {
       if (w.items) {
         w.items.forEach(item => {
@@ -360,28 +515,110 @@ const StationSearch: React.FC = () => {
               model: item.item_model || '—',
               quantity: item.quantity,
               image: item.item_image,
-              status: 'NORMAL'
+              status: 'normal',
+              activeTickets: [],
+              condition: 'ปกติ'
             });
           }
         });
       }
     });
-    const activeRepairs = (details.repairs || []).filter(r => r.status !== 'เสร็จสิ้น');
+
+    const activeTickets = [...(details.repairs || []), ...(details.claims || [])]
+      .filter(r => r.status !== 'เสร็จสิ้น');
+
     assetsMap.forEach(asset => {
-      const isUnderRepair = activeRepairs.some(r => 
-        r.device_name.toLowerCase().includes(asset.name.toLowerCase()) || 
-        asset.name.toLowerCase().includes(r.device_name.toLowerCase())
+      const tickets = activeTickets.filter(r =>
+        r.inventory_id != null
+          ? r.inventory_id === asset.id
+          : (r.device_name.toLowerCase().includes(asset.name.toLowerCase()) || asset.name.toLowerCase().includes(r.device_name.toLowerCase()))
       );
-      if (isUnderRepair) {
-        asset.status = 'REPAIRING';
+      asset.activeTickets = tickets;
+      if (tickets.length > 0) {
+        const hasClaim = tickets.some(t => t.type === 'claim');
+        const hasWaitingParts = tickets.some(t => t.status === 'รออะไหล่');
+        const hasInProgress = tickets.some(t => t.status === 'กำลังซ่อม');
+        if (hasClaim) asset.status = 'claiming';
+        else if (hasWaitingParts) asset.status = 'waiting_parts';
+        else if (hasInProgress) asset.status = 'in_progress';
+        else asset.status = 'pending';
       }
     });
+
+    // ผสานสภาพอุปกรณ์ (manual) ตาม inventory_id
+    (details.asset_statuses || []).forEach(s => {
+      const asset = assetsMap.get(s.inventory_id);
+      if (asset) {
+        asset.condition = s.status || 'ปกติ';
+        asset.conditionNote = s.note;
+        asset.conditionBy = s.updated_by;
+        asset.conditionAt = s.updated_at;
+      }
+    });
+
+    // ผสานรายการชิ้นงานที่มี Serial Number (instances)
+    if (details.instances) {
+      details.instances.forEach(inst => {
+        const asset = assetsMap.get(inst.inventory_id);
+        if (asset) {
+          if (!asset.instances) {
+            asset.instances = [];
+          }
+          asset.instances.push({
+            id: inst.id,
+            serial_number: inst.serial_number,
+            condition: inst.condition || 'New',
+            status: inst.status || 'Withdrawn',
+            updated_at: inst.updated_at
+          });
+        }
+      });
+    }
+
     return Array.from(assetsMap.values());
   }, [details]);
 
+  const assetStatusCounts = useMemo(() => {
+    const counts: Record<AssetStatusKey, number> = { normal: 0, pending: 0, in_progress: 0, waiting_parts: 0, claiming: 0 };
+    activeAssets.forEach(asset => { counts[asset.status]++; });
+    return counts;
+  }, [activeAssets]);
+
+  const visibleAssets = useMemo(() => {
+    if (!assetStatusFilter) return activeAssets;
+    return activeAssets.filter(asset => asset.status === assetStatusFilter);
+  }, [activeAssets, assetStatusFilter]);
+
+  // เปิด/ปิดการ์ด + เซ็ตค่าตั้งต้นของ editor สภาพอุปกรณ์
+  const toggleAsset = useCallback((asset: ActiveAsset) => {
+    setExpandedAssetId(prev => {
+      if (prev === asset.id) return null;
+      setConditionDraft({ status: asset.condition || 'ปกติ', note: asset.conditionNote || '' });
+      return asset.id;
+    });
+  }, []);
+
+  // บันทึกสภาพอุปกรณ์ (manual) แล้วรีเฟรชรายละเอียดสถานี
+  const saveCondition = useCallback(async (asset: ActiveAsset) => {
+    if (!details?.station?.id) return;
+    setSavingCondition(true);
+    try {
+      await stationApi.setAssetStatus(details.station.id, asset.id, {
+        status: conditionDraft.status,
+        note: conditionDraft.note,
+      });
+      notify('บันทึกสภาพอุปกรณ์เรียบร้อยแล้ว', 'success');
+      await fetchDetails({ station_id: details.station.id });
+    } catch {
+      notify('บันทึกสภาพอุปกรณ์ไม่สำเร็จ', 'error');
+    } finally {
+      setSavingCondition(false);
+    }
+  }, [details, conditionDraft, notify, fetchDetails]);
+
   const columns: TableColumn<Station>[] = [
     { 
-      id: 'code', header: 'รหัสสถานี', accessor: 'code', priority: 1, width: '140px',
+      id: 'code', header: 'รหัสสถานี', accessor: 'code', priority: 1, width: '150px',
       render: (val) => <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 800, color: 'var(--primary)', background: 'var(--primary-light)', padding: '6px 12px', borderRadius: '8px' }}><Tag size={14} />{val}</div>
     },
     { 
@@ -389,18 +626,18 @@ const StationSearch: React.FC = () => {
       render: (val) => <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700 }}><MapPin size={16} color="var(--danger)" />{val}</div>
     },
     { 
-      id: 'province', header: 'จังหวัด', accessor: 'province', priority: 2, width: '150px',
+      id: 'province', header: 'จังหวัด', accessor: 'province', priority: 2, width: '110px',
       render: (val) => <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600, color: 'var(--text-muted)' }}><Globe size={14} />{val}</div>
     },
     {
-      id: 'type', header: 'ประเภทหน่วยงาน', accessor: 'station_type', priority: 1, width: '220px',
+      id: 'type', header: 'ประเภทหน่วยงาน', accessor: 'station_type', priority: 1, width: '160px',
       render: (val) => {
         const typeLabel = stationTypes.find(t => t.value === val)?.label || val;
         return <span className="badge glass-card" style={{ border: '1px solid var(--primary-light)', color: 'var(--primary)', fontWeight: 800 }}>{typeLabel}</span>;
       }
     },
     {
-      id: 'responsible', header: 'ผู้รับผิดชอบ', accessor: 'responsible_person', priority: 2, width: '170px',
+      id: 'responsible', header: 'ผู้รับผิดชอบ', accessor: 'responsible_person', priority: 2, width: '140px',
       render: (val) => {
         if (val && String(val).trim() !== '') {
           return (
@@ -423,7 +660,7 @@ const StationSearch: React.FC = () => {
         );
       }
     },
-    { id: 'status', header: 'สถานะระบบ', accessor: () => 'ปกติ', priority: 1, width: '120px', align: 'center', render: () => <span className="badge badge-success" style={{ width: '100px', textAlign: 'center', fontWeight: 800 }}>พร้อมใช้งาน</span> }
+    { id: 'status', header: 'สถานะระบบ', accessor: () => 'ปกติ', priority: 1, width: '100px', align: 'center', render: () => <span className="badge badge-success" style={{ width: '80px', textAlign: 'center', fontWeight: 800 }}>พร้อมใช้งาน</span> }
   ];
 
   const actions: TableAction<Station>[] = [
@@ -544,67 +781,140 @@ const StationSearch: React.FC = () => {
               </p>
             </div>
             <div style={{ display: 'flex', gap: '12px' }}>
-               <button className="btn btn-outline" onClick={loadStations} title="รีเฟรชข้อมูล"><RefreshCw size={20} /></button>
+               <button className="btn btn-outline" onClick={toggleMap} title={isMapOpen ? 'ซ่อนแผนที่' : 'แสดงแผนที่'}>
+                 <MapIcon size={20} /> {isMapOpen ? 'ซ่อนแผนที่' : 'แสดงแผนที่'}
+               </button>
+               <button className="btn btn-outline" onClick={loadInitialData} title="รีเฟรชข้อมูล"><RefreshCw size={20} /></button>
                {hasPermission('manage.stations') && (
                  <button className="btn btn-primary" onClick={openCreateModal}><Plus size={20} /> เพิ่มหน่วยงานใหม่</button>
                )}
             </div>
           </div>
 
-          <Card className="glass-card" style={{ marginBottom: '2rem', padding: '1.5rem', borderRadius: '20px', overflow: 'visible' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 100px', gap: '1.5rem', alignItems: 'flex-end' }}>
-              <div className="form-group" style={{ marginBottom: 0 }}>
-                <label style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '8px', display: 'block' }}>ค้นหาอัจฉริยะ</label>
-                <div style={{ position: 'relative' }}>
-                  <Search size={18} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-                  <input 
-                    className="form-control" 
-                    style={{ paddingLeft: '44px', height: '48px', borderRadius: '12px' }} 
-                    placeholder="ชื่อสถานี, รหัสย่อ, หรือจังหวัด..."
-                    value={urlState.search}
-                    onChange={(e) => setTableState({ search: e.target.value, page: 1 })}
-                  />
-                </div>
-              </div>
-              <div className="form-group" style={{ marginBottom: 0 }}>
-                <label style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '8px', display: 'block' }}>กรองตามจังหวัด</label>
-                <Select
-                  value={urlState.filters.province || 'All'}
-                  options={provinces.map(p => ({ label: p === 'All' ? 'ทุกจังหวัด' : p, value: p }))}
-                  onChange={(val) => setTableState({ filters: { ...urlState.filters, province: String(val) }, page: 1 })}
-                  style={{ width: '100%' }}
-                />
-              </div>
-              <div className="form-group" style={{ marginBottom: 0 }}>
-                <label style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '8px', display: 'block' }}>ประเภทหน่วยงาน</label>
-                <Select
-                  value={urlState.filters.type || 'All'}
-                  options={stationTypes.map(t => ({ label: t.label, value: t.value }))}
-                  onChange={(val) => setTableState({ filters: { ...urlState.filters, type: String(val) }, page: 1 })}
-                  style={{ width: '100%' }}
-                />
-              </div>
-              <button 
-                className="btn btn-outline" 
-                style={{ height: '48px', borderRadius: '12px', width: '100%' }}
-                onClick={() => setTableState({ search: '', page: 1, filters: {} })}
-              >
-                ล้าง
-              </button>
-            </div>
-          </Card>
+          <div className={`station-layout ${isMapOpen ? 'map-open' : 'map-closed'}`} style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '2rem', alignItems: 'start', width: '100%' }}>
+            <style>{`
+              @media (min-width: 1280px) {
+                .station-layout.map-open {
+                  grid-template-columns: 300px 1fr !important;
+                }
+              }
+            `}</style>
 
-          <BaseDataTable
-            columns={columns}
-            data={paginatedData}
-            state={{ loading: false, error: null, empty: paginatedData.length === 0 }}
-            actions={actions}
-            onRowClick={(st) => navigate(`/stations?id=${st.id}&q=${encodeURIComponent(st.name)}`)}
-            drawerTitle={(st) => st.name}
-            renderDetailDrawer={renderDetailDrawer}
-            mobileConfig={{ title: (s) => s.name, subtitle: (s) => s.code, statusBadge: () => <span className="badge badge-success">ปกติ</span> }}
-          />
-          <TablePagination config={{ page: urlState.page, pageSize: urlState.pageSize, totalItems: filteredData.length }} onPageChange={(p) => setTableState({ page: p })} onPageSizeChange={(s) => setTableState({ pageSize: s, page: 1 })} />
+            {/* Left Column: Thailand Map Widget (collapsible) */}
+            {isMapOpen ? (
+            <Card className="glass-card" style={{ padding: '1.5rem', borderRadius: '20px', display: 'flex', flexDirection: 'column', gap: '1rem', alignItems: 'center', position: 'sticky', top: '1rem' }}>
+              <div style={{ alignSelf: 'stretch', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px' }}>
+                <div style={{ textAlign: 'left' }}>
+                  <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800 }}>แผนที่ภูมิภาค</h3>
+                  <p style={{ margin: '2px 0 0 0', fontSize: '0.74rem', color: 'var(--text-muted)', fontWeight: 600 }}>คลิกเลือกภาคเพื่อกรองข้อมูลด่าน</p>
+                </div>
+                <button
+                  onClick={toggleMap}
+                  title="ซ่อนแผนที่"
+                  aria-label="ซ่อนแผนที่"
+                  style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, borderRadius: '8px', border: '1px solid var(--border)', background: 'var(--bg-app)', color: 'var(--text-muted)', cursor: 'pointer' }}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <ThailandMap
+                selectedRegion={urlState.filters.region}
+                onSelectRegion={(region) => {
+                  const currentRegion = urlState.filters.region;
+                  const nextRegion = currentRegion === region ? 'All' : region;
+                  setTableState({
+                    filters: {
+                      ...urlState.filters,
+                      region: nextRegion,
+                      province: 'All' // Reset province when changing region
+                    },
+                    page: 1
+                  });
+                }}
+                stationCountsByRegion={stationCountsByRegion}
+                activeRepairsByRegion={activeRepairsByRegion}
+                stationCountsByProvince={stationCountsByProvince}
+                activeRepairsByProvince={activeRepairsByProvince}
+              />
+              
+              {urlState.filters.region && urlState.filters.region !== 'All' && (
+                <button 
+                  className="btn btn-outline btn-sm"
+                  style={{ width: '100%', borderRadius: '10px', fontSize: '0.78rem', padding: '6px 12px', border: '1px solid var(--primary-border)', color: 'var(--primary)', background: 'var(--primary-light)', fontWeight: 800 }}
+                  onClick={() => setTableState({ filters: { ...urlState.filters, region: 'All', province: 'All' }, page: 1 })}
+                >
+                  ล้างการเลือกภูมิภาค
+                </button>
+              )}
+            </Card>
+            ) : null}
+
+            {/* Right Column: Search + Filters + Table */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', minWidth: 0 }}>
+              <Card className="glass-card" style={{ padding: '1.5rem', borderRadius: '20px', overflow: 'visible', zIndex: 30 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem', alignItems: 'flex-end' }} className="filters-grid">
+                  <style>{`
+                    @media (min-width: 1200px) {
+                      .filters-grid {
+                        grid-template-columns: 2fr 1fr 1fr 100px !important;
+                      }
+                    }
+                  `}</style>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '8px', display: 'block' }}>ค้นหาอัจฉริยะ</label>
+                    <div style={{ position: 'relative' }}>
+                      <Search size={18} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                      <input 
+                        className="form-control" 
+                        style={{ paddingLeft: '44px', height: '48px', borderRadius: '12px' }} 
+                        placeholder="ชื่อสถานี, รหัสย่อ, หรือจังหวัด..."
+                        value={urlState.search}
+                        onChange={(e) => setTableState({ search: e.target.value, page: 1 })}
+                      />
+                    </div>
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '8px', display: 'block' }}>กรองตามจังหวัด</label>
+                    <Select
+                      value={urlState.filters.province || 'All'}
+                      options={provinces.map(p => ({ label: p === 'All' ? 'ทุกจังหวัด' : p, value: p }))}
+                      onChange={(val) => setTableState({ filters: { ...urlState.filters, province: String(val) }, page: 1 })}
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '8px', display: 'block' }}>ประเภทหน่วยงาน</label>
+                    <Select
+                      value={urlState.filters.type || 'All'}
+                      options={stationTypes.map(t => ({ label: t.label, value: t.value }))}
+                      onChange={(val) => setTableState({ filters: { ...urlState.filters, type: String(val) }, page: 1 })}
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                  <button 
+                    className="btn btn-outline" 
+                    style={{ height: '48px', borderRadius: '12px', width: '100%' }}
+                    onClick={() => setTableState({ search: '', page: 1, filters: {} })}
+                  >
+                    ล้าง
+                  </button>
+                </div>
+              </Card>
+
+              <BaseDataTable
+                columns={columns}
+                data={paginatedData}
+                state={{ loading: false, error: null, empty: paginatedData.length === 0 }}
+                actions={actions}
+                onRowClick={(st) => navigate(`/stations?id=${st.id}&q=${encodeURIComponent(st.name)}`)}
+                drawerTitle={(st) => st.name}
+                renderDetailDrawer={renderDetailDrawer}
+                mobileConfig={{ title: (s) => s.name, subtitle: (s) => s.code, statusBadge: () => <span className="badge badge-success">ปกติ</span> }}
+              />
+              <TablePagination config={{ page: urlState.page, pageSize: urlState.pageSize, totalItems: filteredData.length }} onPageChange={(p) => setTableState({ page: p })} onPageSizeChange={(s) => setTableState({ pageSize: s, page: 1 })} />
+            </div>
+          </div>
         </>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
@@ -1054,7 +1364,7 @@ const StationSearch: React.FC = () => {
                     background: 'linear-gradient(90deg, var(--bg-app), transparent)',
                     borderBottom: '1px solid var(--border)',
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    gap: '10px',
+                    gap: '10px', flexWrap: 'wrap',
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <Package size={13} color="var(--primary)" />
@@ -1064,14 +1374,45 @@ const StationSearch: React.FC = () => {
                         color: 'var(--text-main)',
                       }}>อุปกรณ์ประจำการ ณ สถานี (Active Assets)</span>
                     </div>
-                    <span style={{
-                      fontSize: '0.62rem', fontWeight: 700,
-                      color: 'var(--text-muted)',
-                      fontFamily: "'JetBrains Mono', 'Consolas', monospace",
-                      letterSpacing: '0.08em',
-                    }}>
-                      {activeAssets.length} รายการ
-                    </span>
+
+                    {activeAssets.length > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                        <button
+                          onClick={() => setAssetStatusFilter(null)}
+                          style={{
+                            display: 'inline-flex', alignItems: 'center', gap: '4px',
+                            fontSize: '0.66rem', fontWeight: 800,
+                            color: assetStatusFilter === null ? 'var(--bg-card)' : 'var(--text-muted)',
+                            background: assetStatusFilter === null ? 'var(--text-main)' : 'var(--bg-card)',
+                            border: '1px solid var(--border)',
+                            padding: '3px 9px', borderRadius: '20px', cursor: 'pointer',
+                          }}
+                        >
+                          ทั้งหมด {activeAssets.length}
+                        </button>
+                        {(Object.keys(ASSET_STATUS_META) as AssetStatusKey[])
+                          .filter(key => assetStatusCounts[key] > 0)
+                          .map(key => {
+                            const meta = ASSET_STATUS_META[key];
+                            const isActive = assetStatusFilter === key;
+                            return (
+                              <button
+                                key={key}
+                                onClick={() => setAssetStatusFilter(isActive ? null : key)}
+                                style={{
+                                  display: 'inline-flex', alignItems: 'center', gap: '4px',
+                                  fontSize: '0.66rem', fontWeight: 800,
+                                  color: meta.color, background: meta.bg,
+                                  border: isActive ? `1px solid ${meta.color}` : '1px solid transparent',
+                                  padding: '3px 9px', borderRadius: '20px', cursor: 'pointer',
+                                }}
+                              >
+                                {meta.icon} {meta.label} {assetStatusCounts[key]}
+                              </button>
+                            );
+                          })}
+                      </div>
+                    )}
                   </div>
 
                   <div style={{ padding: '1.5rem' }}>
@@ -1097,73 +1438,442 @@ const StationSearch: React.FC = () => {
                         </button>
                       </div>
                     ) : (
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
-                        {activeAssets.map((asset) => (
-                          <div key={asset.id} style={{
-                            display: 'flex', gap: '12px',
-                            padding: '12px',
-                            background: 'var(--bg-app)',
-                            border: '1px solid var(--border)',
-                            borderRadius: '12px',
-                            alignItems: 'center',
-                            transition: 'transform 0.15s, box-shadow 0.15s',
-                          }}>
-                            {/* Image Thumbnail */}
-                            <div style={{
-                              width: '54px', height: '54px',
-                              borderRadius: '8px',
-                              overflow: 'hidden',
-                              background: 'var(--bg-card)',
-                              border: '1px solid var(--border)',
-                              display: 'flex', alignItems: 'center', justifyContent: 'center',
-                              flexShrink: 0
-                            }}>
-                              {asset.image ? (
-                                <img src={`${UPLOAD_URL}/uploads/${asset.image}`} alt={asset.name} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-                              ) : (
-                                <Package size={22} style={{ color: 'var(--text-muted)', opacity: 0.5 }} />
-                              )}
-                            </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem', alignItems: 'start' }}>
+                        {visibleAssets.map((asset) => {
+                          const meta = ASSET_STATUS_META[asset.status];
+                          const isExpanded = expandedAssetId === asset.id;
+                          const displayedCondition = isExpanded ? conditionDraft.status : (asset.condition || 'ปกติ');
+                          const condMeta = CONDITION_META[displayedCondition] || CONDITION_META['ปกติ'];
 
-                            {/* Details */}
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <h4 style={{ margin: 0, fontSize: '0.85rem', fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={asset.name}>
-                                {asset.name}
-                              </h4>
-                              <p style={{ margin: '2px 0 4px', fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                รุ่น/โมเดล: {asset.model}
-                              </p>
-                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '4px' }}>
-                                <span style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--primary)', background: 'var(--primary-light)', padding: '2px 8px', borderRadius: '4px' }}>
-                                  จำนวน: {asset.quantity}
-                                </span>
-                                {asset.status === 'REPAIRING' ? (
-                                  <span style={{
-                                    display: 'inline-flex', alignItems: 'center', gap: '4px',
-                                    fontSize: '0.68rem', fontWeight: 800,
-                                    color: 'var(--danger)', background: 'var(--danger-light)',
-                                    padding: '2px 8px', borderRadius: '4px',
-                                  }}>
-                                    ⚠️ ส่งซ่อม
-                                  </span>
+                          const assetWithdrawals = isExpanded ? (() => {
+                            if (!details || !details.withdrawals) return [];
+                            const list: Array<{
+                              id: number;
+                              date: string;
+                              quantity: number;
+                              project: string;
+                              contract: string;
+                              sns: string[];
+                            }> = [];
+
+                            details.withdrawals.forEach(w => {
+                              if (w.items) {
+                                const match = w.items.find(item => item.inventory_id === asset.id);
+                                if (match) {
+                                  list.push({
+                                    id: w.id,
+                                    date: w.created_at,
+                                    quantity: match.quantity,
+                                    project: w.project_name || 'ไม่ระบุโครงการ',
+                                    contract: w.contract_no 
+                                      ? `${w.contract_no}${w.contract_year ? ` (ปี ${w.contract_year})` : ''}` 
+                                      : 'ไม่ระบุสัญญา',
+                                    sns: match.serial_numbers ? match.serial_numbers.split(', ').filter(s => s.trim()) : []
+                                  });
+                                }
+                              }
+                            });
+                            return list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+                          })() : [];
+
+                          return (
+                          <div
+                            key={asset.id}
+                            onClick={() => toggleAsset(asset)}
+                            style={{
+                              display: 'flex', flexDirection: 'column', gap: '10px',
+                              padding: '12px',
+                              background: 'var(--bg-app)',
+                              border: isExpanded ? `1px solid ${meta.color}` : '1px solid var(--border)',
+                              borderRadius: '12px',
+                              cursor: 'pointer',
+                              transition: 'transform 0.15s, box-shadow 0.15s',
+                            }}
+                          >
+                            <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                              {/* Image Thumbnail */}
+                              <div style={{
+                                width: '54px', height: '54px',
+                                borderRadius: '8px',
+                                overflow: 'hidden',
+                                background: 'var(--bg-card)',
+                                border: '1px solid var(--border)',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                flexShrink: 0
+                              }}>
+                                {asset.image ? (
+                                  <img src={`${UPLOAD_URL}/uploads/${asset.image}`} alt={asset.name} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                                 ) : (
-                                  <span style={{
-                                    display: 'inline-flex', alignItems: 'center', gap: '4px',
-                                    fontSize: '0.68rem', fontWeight: 800,
-                                    color: 'var(--success)', background: 'var(--success-light)',
-                                    padding: '2px 8px', borderRadius: '4px',
-                                  }}>
-                                    ✓ ปกติ
-                                  </span>
+                                  <Package size={22} style={{ color: 'var(--text-muted)', opacity: 0.5 }} />
                                 )}
                               </div>
+
+                              {/* Details */}
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <h4 style={{ margin: 0, fontSize: '0.85rem', fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={asset.name}>
+                                  {asset.name}
+                                </h4>
+                                <p style={{ margin: '2px 0 4px', fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  รุ่น/โมเดล: {asset.model}
+                                </p>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '4px' }}>
+                                  <span style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--primary)', background: 'var(--primary-light)', padding: '2px 8px', borderRadius: '4px' }}>
+                                    จำนวน: {asset.quantity}
+                                  </span>
+                                  <span style={{
+                                    display: 'inline-flex', alignItems: 'center', gap: '4px',
+                                    fontSize: '0.68rem', fontWeight: 800,
+                                    color: meta.color, background: meta.bg,
+                                    padding: '2px 8px', borderRadius: '4px', whiteSpace: 'nowrap'
+                                  }}>
+                                    {meta.icon} {meta.label}
+                                  </span>
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '6px', flexWrap: 'wrap' }}>
+                                  <span style={{ fontSize: '0.66rem', fontWeight: 700, color: 'var(--text-muted)' }}>สภาพ:</span>
+                                  {asset.instances && asset.instances.length > 0 ? (
+                                    <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                                      {Object.entries(
+                                        asset.instances.reduce((acc, inst) => {
+                                          const cond = inst.condition || 'New';
+                                          acc[cond] = (acc[cond] || 0) + 1;
+                                          return acc;
+                                        }, {} as Record<string, number>)
+                                      ).map(([cond, count]) => {
+                                        const meta = INSTANCE_CONDITION_META[cond] || INSTANCE_CONDITION_META['New'];
+                                        return (
+                                          <span key={cond} style={{
+                                            display: 'inline-flex', alignItems: 'center', gap: '3px',
+                                            fontSize: '0.65rem', fontWeight: 800,
+                                            color: meta.color, background: meta.bg,
+                                            padding: '2px 6px', borderRadius: '4px', whiteSpace: 'nowrap'
+                                          }}>
+                                            {meta.icon} {meta.label}: {count}
+                                          </span>
+                                        );
+                                      })}
+                                    </div>
+                                  ) : (
+                                    <>
+                                      <span style={{
+                                        display: 'inline-flex', alignItems: 'center', gap: '4px',
+                                        fontSize: '0.68rem', fontWeight: 800,
+                                        color: condMeta.color, background: condMeta.bg,
+                                        padding: '2px 8px', borderRadius: '4px', whiteSpace: 'nowrap',
+                                        transition: 'all 0.15s ease'
+                                      }}>
+                                        {condMeta.icon} {displayedCondition}
+                                      </span>
+                                      {isExpanded && conditionDraft.status !== asset.condition && (
+                                        <span style={{ fontSize: '0.62rem', fontWeight: 700, color: 'var(--warning)', fontStyle: 'italic', display: 'inline-flex', alignItems: 'center' }}>
+                                          (ยังไม่บันทึก)
+                                        </span>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
+                              </div>
                             </div>
+
+                            {isExpanded && (
+                              <div
+                                onClick={(e) => e.stopPropagation()}
+                                style={{
+                                  borderTop: '1px solid var(--border)', paddingTop: '10px',
+                                  display: 'flex', flexDirection: 'column', gap: '6px'
+                                }}
+                              >
+                                {asset.activeTickets.length > 0 ? (
+                                  asset.activeTickets.slice(0, 4).map(t => (
+                                    <div key={t.id} style={{
+                                      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px',
+                                      fontSize: '0.72rem', padding: '4px 8px', borderRadius: '6px',
+                                      background: 'var(--bg-card)', border: '1px solid var(--border)'
+                                    }}>
+                                      <span style={{ fontWeight: 700, color: 'var(--primary)' }}>{t.ticket_no}</span>
+                                      <span style={{ color: 'var(--text-muted)' }}>{t.type === 'claim' ? 'เคลม' : 'ซ่อม'} · {t.status}</span>
+                                    </div>
+                                  ))
+                                ) : (
+                                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>ไม่มีงานซ่อม/เคลมที่กำลังดำเนินการสำหรับอุปกรณ์นี้</span>
+                                )}
+                                {asset.instances && asset.instances.length > 0 ? (
+                                  /* ตั้งสภาพอุปกรณ์รายเครื่อง (แยกตาม S/N) */
+                                  <div style={{
+                                    marginTop: '6px', padding: '8px', borderRadius: '8px',
+                                    background: 'var(--bg-card)', border: '1px solid var(--border)',
+                                    display: 'flex', flexDirection: 'column', gap: '8px'
+                                  }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                      <span style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-main)' }}>
+                                        สภาพอุปกรณ์แต่ละเครื่อง (แยกราย S/N)
+                                      </span>
+                                      <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', fontWeight: 700 }}>
+                                        ทั้งหมด {asset.instances.length} ชิ้น
+                                      </span>
+                                    </div>
+                                    <div style={{
+                                      display: 'flex',
+                                      flexDirection: 'column',
+                                      gap: '6px',
+                                      maxHeight: '200px',
+                                      overflowY: 'auto',
+                                      paddingRight: '4px'
+                                    }}>
+                                      {asset.instances.map(inst => {
+                                        const instMeta = INSTANCE_CONDITION_META[inst.condition] || INSTANCE_CONDITION_META['New'];
+                                        const isUpdating = updatingInstanceId === inst.id;
+                                        return (
+                                          <div key={inst.id} style={{
+                                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                            padding: '6px 10px', borderRadius: '6px',
+                                            background: 'var(--bg-app)', border: '1px solid var(--border)',
+                                            gap: '8px'
+                                          }}>
+                                            <span style={{
+                                              fontSize: '0.72rem', fontWeight: 700,
+                                              fontFamily: "'JetBrains Mono', monospace",
+                                              color: 'var(--text-main)',
+                                              background: 'var(--bg-card)',
+                                              padding: '2px 6px', borderRadius: '4px',
+                                              border: '1px solid var(--border)'
+                                            }}>
+                                              S/N: {inst.serial_number || '—'}
+                                            </span>
+                                            
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                              {inst.status && inst.status !== 'Withdrawn' && (() => {
+                                                const sMeta = INSTANCE_STATUS_META[inst.status] ?? { label: inst.status, color: '#475569', bg: '#f1f5f9' };
+                                                return (
+                                                  <span style={{
+                                                    padding: '2px 7px', borderRadius: '20px', fontSize: '0.65rem',
+                                                    fontWeight: 700, color: sMeta.color, background: sMeta.bg,
+                                                    whiteSpace: 'nowrap', border: `1px solid ${sMeta.color}22`
+                                                  }}>
+                                                    {sMeta.label}
+                                                  </span>
+                                                );
+                                              })()}
+                                              <select
+                                                value={inst.condition || 'New'}
+                                                disabled={isUpdating}
+                                                onChange={(e) => handleInstanceConditionChange(inst.id, e.target.value)}
+                                                style={{
+                                                  fontSize: '0.7rem', fontWeight: 800,
+                                                  padding: '4px 8px', borderRadius: '4px',
+                                                  border: `1.2px solid ${instMeta.color}`,
+                                                  background: instMeta.bg,
+                                                  color: instMeta.color,
+                                                  cursor: isUpdating ? 'not-allowed' : 'pointer',
+                                                  outline: 'none',
+                                                  transition: 'all 0.15s ease'
+                                                }}
+                                              >
+                                                {INSTANCE_CONDITION_OPTIONS.map(opt => {
+                                                  const optMeta = INSTANCE_CONDITION_META[opt] || INSTANCE_CONDITION_META['New'];
+                                                  return (
+                                                    <option
+                                                      key={opt}
+                                                      value={opt}
+                                                      style={{
+                                                        background: 'var(--bg-app)',
+                                                        color: optMeta.color,
+                                                        fontWeight: 700
+                                                      }}
+                                                    >
+                                                      {optMeta.icon} {optMeta.label}
+                                                    </option>
+                                                  );
+                                                })}
+                                              </select>
+                                              {isUpdating && (
+                                                <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)' }}>...</span>
+                                              )}
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                    {asset.quantity > asset.instances.length && (
+                                      <div style={{
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                        padding: '6px 10px', borderRadius: '6px',
+                                        background: 'var(--bg-app)', border: '1px dashed var(--border)',
+                                        fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600,
+                                        fontStyle: 'italic', marginTop: '4px'
+                                      }}>
+                                        ℹ️ อีก {asset.quantity - asset.instances.length} เครื่อง (ยังไม่ได้ระบุ S/N ในระบบ)
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : (
+                                  /* ตั้งสภาพอุปกรณ์ (manual) สำหรับพัสดุไม่มี S/N */
+                                  <div style={{
+                                    marginTop: '6px', padding: '8px', borderRadius: '8px',
+                                    background: 'var(--bg-card)', border: '1px solid var(--border)',
+                                    display: 'flex', flexDirection: 'column', gap: '6px'
+                                  }}>
+                                    <span style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-main)' }}>ปรับสภาพอุปกรณ์</span>
+                                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                      <select
+                                        value={conditionDraft.status}
+                                        onChange={(e) => setConditionDraft(d => ({ ...d, status: e.target.value }))}
+                                        style={{
+                                          flex: '0 0 auto', fontSize: '0.72rem', fontWeight: 800,
+                                          padding: '5px 10px', borderRadius: '6px',
+                                          border: `1.5px solid ${condMeta.color}`,
+                                          background: condMeta.bg,
+                                          color: condMeta.color,
+                                          cursor: 'pointer',
+                                          outline: 'none',
+                                          transition: 'all 0.15s ease'
+                                        }}
+                                      >
+                                        {CONDITION_OPTIONS.map(opt => {
+                                          const optMeta = CONDITION_META[opt] || CONDITION_META['ปกติ'];
+                                          return (
+                                            <option
+                                              key={opt}
+                                              value={opt}
+                                              style={{
+                                                background: 'var(--bg-app)',
+                                                color: optMeta.color,
+                                                fontWeight: 700
+                                              }}
+                                            >
+                                              {optMeta.icon} {opt}
+                                            </option>
+                                          );
+                                        })}
+                                      </select>
+                                      <input
+                                        type="text"
+                                        value={conditionDraft.note}
+                                        onChange={(e) => setConditionDraft(d => ({ ...d, note: e.target.value }))}
+                                        placeholder="หมายเหตุ (ไม่บังคับ)"
+                                        style={{
+                                          flex: 1, minWidth: '120px', fontSize: '0.72rem',
+                                          padding: '5px 8px', borderRadius: '6px',
+                                          border: '1px solid var(--border)', background: 'var(--bg-app)', color: 'var(--text-main)'
+                                        }}
+                                      />
+                                      <button
+                                        onClick={() => saveCondition(asset)}
+                                        disabled={savingCondition}
+                                        style={{
+                                          fontSize: '0.72rem', fontWeight: 800, color: '#fff',
+                                          background: savingCondition ? 'var(--text-muted)' : 'var(--primary)',
+                                          border: 'none', borderRadius: '6px', padding: '5px 12px',
+                                          cursor: savingCondition ? 'not-allowed' : 'pointer'
+                                        }}
+                                      >
+                                        {savingCondition ? 'กำลังบันทึก...' : 'บันทึกสภาพ'}
+                                      </button>
+                                    </div>
+                                    {asset.conditionBy && (
+                                      <span style={{ fontSize: '0.66rem', color: 'var(--text-muted)' }}>
+                                        แก้ไขล่าสุดโดย {asset.conditionBy}
+                                        {asset.conditionAt ? ` · ${new Date(asset.conditionAt).toLocaleString('th-TH')}` : ''}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+
+                                {/* ประวัติการนำเข้าอุปกรณ์ */}
+                                <div style={{
+                                   marginTop: '6px', padding: '8px', borderRadius: '8px',
+                                   background: 'var(--bg-card)', border: '1px solid var(--border)',
+                                   display: 'flex', flexDirection: 'column', gap: '8px'
+                                 }}>
+                                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                       <HistoryIcon size={14} style={{ color: 'var(--primary)' }} />
+                                       <span style={{ fontSize: '0.72rem', fontWeight: 800, color: 'var(--text-main)' }}>
+                                         ประวัติการนำเข้าอุปกรณ์ (เบิกพัสดุ)
+                                       </span>
+                                     </div>
+                                     <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', fontWeight: 700 }}>
+                                       ทั้งหมด {assetWithdrawals.length} ครั้ง
+                                     </span>
+                                   </div>
+                                   
+                                   {assetWithdrawals.length > 0 ? (
+                                     <div style={{
+                                       display: 'flex',
+                                       flexDirection: 'column',
+                                       gap: '6px',
+                                       maxHeight: '180px',
+                                       overflowY: 'auto',
+                                       paddingRight: '4px'
+                                     }}>
+                                       {assetWithdrawals.map((item, idx) => (
+                                         <div key={idx} style={{
+                                           display: 'flex', flexDirection: 'column', gap: '4px',
+                                           padding: '8px', borderRadius: '6px',
+                                           background: 'var(--bg-app)', border: '1px solid var(--border)',
+                                           fontSize: '0.68rem'
+                                         }}>
+                                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 800 }}>
+                                             <span style={{ color: 'var(--primary)' }}>
+                                               นำเข้าเมื่อ: {new Date(item.date).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })}
+                                             </span>
+                                             <span style={{ background: 'var(--primary-light)', padding: '2px 6px', borderRadius: '4px', color: 'var(--primary)' }}>
+                                               {item.quantity} ชิ้น
+                                             </span>
+                                           </div>
+                                           <div style={{ color: 'var(--text-main)', marginTop: '2px', textAlign: 'left' }}>
+                                             <strong>โครงการ:</strong> {item.project}
+                                           </div>
+                                           <div style={{ color: 'var(--text-muted)', textAlign: 'left' }}>
+                                             <strong>สัญญา:</strong> {item.contract}
+                                           </div>
+                                           {item.sns && item.sns.length > 0 && (
+                                             <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '2px', alignItems: 'center' }}>
+                                               <strong style={{ color: 'var(--text-muted)', fontSize: '0.62rem' }}>S/N ในรอบนี้:</strong>
+                                               {item.sns.map((sn, snIdx) => (
+                                                 <span key={snIdx} style={{
+                                                   background: 'var(--bg-card)', border: '1px solid var(--border)',
+                                                   padding: '1px 5px', borderRadius: '4px', fontFamily: "'JetBrains Mono', monospace", fontSize: '0.62rem',
+                                                   color: 'var(--text-main)'
+                                                 }}>
+                                                   {sn}
+                                                 </span>
+                                               ))}
+                                             </div>
+                                           )}
+                                         </div>
+                                       ))}
+                                     </div>
+                                   ) : (
+                                     <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontStyle: 'italic', textAlign: 'center', padding: '4px' }}>
+                                       ไม่มีประวัติการนำเข้าในระบบ
+                                     </span>
+                                   )}
+                                 </div>
+
+                                 <button
+                                   onClick={() => navigate(`/new?station_id=${details.station.id}`)}
+                                   style={{
+                                    marginTop: '4px', fontSize: '0.72rem', fontWeight: 800,
+                                    color: 'var(--primary)', background: 'var(--primary-light)',
+                                    border: '1px solid var(--primary)', borderRadius: '8px',
+                                    padding: '6px 10px', cursor: 'pointer'
+                                  }}
+                                >
+                                  + แจ้งซ่อมอุปกรณ์นี้
+                                </button>
+                              </div>
+                            )}
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </div>
                 </div>
+
+                {/* === QR labels for field inspection (offline) === */}
+                <StationQrLabels stationId={details.station.id} stationName={details.station.name} withdrawals={details.withdrawals} />
 
                 {/* === ACTIVITY LOG — 4 channel feed === */}
                 {(() => {

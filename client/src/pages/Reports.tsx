@@ -8,18 +8,18 @@ import DatePicker from '../components/ui/DatePicker';
 import {
   Boxes,
   Zap,
-  ArrowUpRight,
-  ShoppingBag,
   Download,
   Printer,
   Loader2,
   Calendar,
-  TrendingUp
+  // New icons for consistency
+  PackageCheck,
+  FileSignature
 } from 'lucide-react';
 import { inventoryApi, withdrawalApi, purchaseOrderApi } from '../api';
-import type { InventoryItem, Withdrawal, PurchaseOrder, AssetLifecycleItem } from '../types';
+import type { InventoryItem, Withdrawal, PurchaseOrder } from '../types';
 
-type ReportType = 'inventory_summary' | 'low_stock' | 'withdrawals' | 'purchase_orders' | 'asset_lifecycle';
+type ReportType = 'inventory_summary' | 'low_stock' | 'withdrawals' | 'purchase_orders';
 
 const Reports: React.FC = () => {
   const { notify } = useNotification();
@@ -124,10 +124,8 @@ const Reports: React.FC = () => {
           });
         }
         return data;
-      } else if (type === 'asset_lifecycle') {
-        const data = await inventoryApi.getLifecycleReport();
-        return data;
       }
+
       return [];
     } catch {
       notify('ไม่สามารถดึงข้อมูลสำหรับออกรายงานได้', 'error');
@@ -239,25 +237,7 @@ const Reports: React.FC = () => {
       const csvStr = getCsvString(headers, rows);
       downloadCsv(csvStr, `purchase_orders${periodSuffix}`);
     }
-    else if (type === 'asset_lifecycle') {
-      const items = data as AssetLifecycleItem[];
-      const headers = ['Serial Number', 'ชื่ออุปกรณ์', 'รุ่น (Model)', 'ด่านติดตั้ง', 'ราคาอะไหล่/ชิ้น', 'ระยะรับประกัน (เดือน)', 'อายุการใช้งาน (เดือน)', 'ค่าซ่อมบำรุงสะสม', 'หมดประกันแล้ว', 'ค่าซ่อมบำรุงเกิน 70%', 'คำแนะนำ'];
-      const rows = items.map(i => [
-        i.serial_number,
-        i.device_name,
-        i.model || '-',
-        i.station_name ? `${i.station_code ? `[${i.station_code}] ` : ''}${i.station_name}` : i.current_location,
-        i.unit_price,
-        i.warranty_months,
-        i.age_months,
-        i.total_repair_cost,
-        i.is_expired_warranty ? 'หมดประกัน' : 'ยังไม่หมดประกัน',
-        i.cost_exceeds_threshold ? 'เกิน 70%' : 'ไม่เกิน 70%',
-        i.recommended_replacement ? 'แนะนำให้สับเปลี่ยน (Replace)' : 'ใช้งานต่อได้ (Keep)'
-      ]);
-      const csvStr = getCsvString(headers, rows);
-      downloadCsv(csvStr, `asset_lifecycle_analysis_${today}`);
-    }
+
 
     notify('ส่งออกข้อมูล Excel (CSV) สำเร็จ');
   };
@@ -355,31 +335,7 @@ const Reports: React.FC = () => {
         { label: 'จำนวนใบสั่งซื้อรวม:', value: `${items.length} ฉบับ` }
       ];
     }
-    else if (type === 'asset_lifecycle') {
-      const items = data as AssetLifecycleItem[];
-      title = 'รายงานวิเคราะห์รอบอายุและค่าใช้จ่ายสะสม (Asset Lifecycle & Maintenance Analysis)';
-      headers = ['Serial No.', 'อุปกรณ์', 'ด่าน/สถานที่', 'อายุใช้งาน', 'ค่าซ่อมสะสม', 'สถานะ/คำแนะนำ'];
-      rows = items.map(i => {
-        const expiredStr = i.is_expired_warranty ? 'หมดประกัน' : 'ในประกัน';
-        const costStr = i.cost_exceeds_threshold ? 'ค่าซ่อมเกิน 70%' : 'ปกติ';
-        const recStr = i.recommended_replacement 
-          ? `แนะนำสับเปลี่ยน (${costStr === 'ปกติ' ? expiredStr : costStr})` 
-          : 'ปกติ (Keep)';
-        return [
-          i.serial_number,
-          `${i.device_name} (${i.model || '-'})`,
-          i.station_name ? `${i.station_code || ''} ${i.station_name}` : i.current_location,
-          `${i.age_months} ด. (${expiredStr})`,
-          `${i.total_repair_cost.toLocaleString()} บ.`,
-          recStr
-        ];
-      });
-      const replacedCount = items.filter(i => i.recommended_replacement).length;
-      totals = [
-        { label: 'อุปกรณ์ในวิเคราะห์ทั้งหมด:', value: `${items.length} รายการ` },
-        { label: 'อุปกรณ์แนะนำสับเปลี่ยน (Replace):', value: `${replacedCount} รายการ` }
-      ];
-    }
+
 
     setPrintData({ type, title, dateStr, periodStr, headers, rows, totals });
 
@@ -564,7 +520,7 @@ const Reports: React.FC = () => {
         <Card style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem', borderTop: '4px solid #10b981' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
             <div style={{ backgroundColor: 'rgba(16, 185, 129, 0.06)', color: '#10b981', padding: '10px', borderRadius: '10px' }}>
-              <ArrowUpRight size={22} />
+              <PackageCheck size={22} />
             </div>
             <div>
               <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700 }}>รายงานประวัติเบิกจ่ายพัสดุ</h3>
@@ -606,7 +562,7 @@ const Reports: React.FC = () => {
         <Card style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem', borderTop: '4px solid #6366f1' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
             <div style={{ backgroundColor: 'rgba(99, 102, 241, 0.06)', color: '#6366f1', padding: '10px', borderRadius: '10px' }}>
-              <ShoppingBag size={22} />
+              <FileSignature size={22} />
             </div>
             <div>
               <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700 }}>รายงานประวัติจัดสั่งซื้อพัสดุ</h3>
@@ -644,47 +600,7 @@ const Reports: React.FC = () => {
           </div>
         </Card>
 
-        {/* Report 5: Asset Cost & Lifecycle Analytics */}
-        <Card style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem', borderTop: '4px solid #f43f5e' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <div style={{ backgroundColor: 'rgba(244, 63, 94, 0.06)', color: '#f43f5e', padding: '10px', borderRadius: '10px' }}>
-              <TrendingUp size={22} />
-            </div>
-            <div>
-              <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700 }}>รายงานวิเคราะห์รอบอายุและค่าใช้จ่าย</h3>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>วิเคราะห์รอบอายุหมดประกันและค่าใช้จ่ายสะสม</span>
-            </div>
-          </div>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', margin: 0, minHeight: '40px' }}>
-            แสดงรายการทรัพย์สินที่มีอายุใช้งานมากกว่าระยะรับประกัน หรือค่าซ่อมแซมสะสมที่จุดด่านซ่อมสูงเกินกว่า 70% ของมูลค่าเครื่องใหม่
-          </p>
 
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px', background: 'var(--bg-app)', padding: '6px 10px', borderRadius: '8px', marginTop: 'auto' }}>
-            <span style={{ display: 'inline-block', width: '6px', height: '6px', backgroundColor: '#f43f5e', borderRadius: '50%' }}></span>
-            วิเคราะห์คำแนะนำในการสับเปลี่ยนทรัพย์สิน (Keep/Replace)
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginTop: '0.5rem' }}>
-            <Button
-              variant="outline"
-              disabled={loadingReport !== null}
-              onClick={() => handleExportExcel('asset_lifecycle')}
-              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '0.8rem', fontWeight: 700 }}
-            >
-              {loadingReport === 'asset_lifecycle' ? <Loader2 className="animate-spin" size={14} /> : <Download size={14} />}
-              ส่งออกไฟล์ Excel
-            </Button>
-            <Button
-              disabled={loadingReport !== null}
-              onClick={() => handlePrintPDF('asset_lifecycle')}
-              className="btn-report-rose"
-              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '0.8rem', fontWeight: 700, backgroundColor: '#f43f5e', color: '#ffffff', border: 'none' }}
-            >
-              <Printer size={14} />
-              พิมพ์ PDF (A4)
-            </Button>
-          </div>
-        </Card>
       </div>
 
       {/* --- Hidden Print Templates --- */}
@@ -778,8 +694,7 @@ const Reports: React.FC = () => {
                         return ['10%', '15%', '15%', '30%', '20%', '10%'];
                       case 'purchase_orders':
                         return ['20%', '20%', '15%', '15%', '15%', '15%'];
-                      case 'asset_lifecycle':
-                        return ['15%', '30%', '20%', '15%', '10%', '10%'];
+
                       default:
                         return [];
                     }

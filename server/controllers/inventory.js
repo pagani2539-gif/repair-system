@@ -65,6 +65,12 @@ exports.createItem = (req, res) => {
           VALUES (?, "ADD_STOCK", ?, "เพิ่มอุปกรณ์ใหม่เข้าระบบพร้อม S/N")
         `, [inventoryId, qty], (err3) => {
           if (err3) console.error('Error logging transaction:', err3.message);
+          
+          // Send LINE Notify Alert
+          const { sendLineNotify } = require('../utils/lineNotify');
+          const lineMsg = `\n📥 *นำเข้าอุปกรณ์ใหม่*\n📦 ชื่ออุปกรณ์: ${name}\n🏷️ รุ่น/Model: ${model || '-'}\n🔢 จำนวน: ${qty} ชิ้น\n📍 สถานที่จัดเก็บ: ${storage_location || 'ไม่ระบุ'}\n💬 หมายเหตุ: เพิ่มอุปกรณ์ใหม่เข้าระบบพร้อม S/N`;
+          sendLineNotify('stock', lineMsg);
+
           res.status(201).json({ id: inventoryId, message: 'เพิ่มอุปกรณ์เรียบร้อยพร้อมหมายเลข Serial Number' });
         });
       });
@@ -75,6 +81,12 @@ exports.createItem = (req, res) => {
         VALUES (?, "ADD_STOCK", ?, "เพิ่มอุปกรณ์ใหม่เข้าระบบ")
       `, [inventoryId, qty], (err3) => {
         if (err3) console.error('Error logging transaction:', err3.message);
+
+        // Send LINE Notify Alert
+        const { sendLineNotify } = require('../utils/lineNotify');
+        const lineMsg = `\n📥 *นำเข้าอุปกรณ์ใหม่*\n📦 ชื่ออุปกรณ์: ${name}\n🏷️ รุ่น/Model: ${model || '-'}\n🔢 จำนวน: ${qty} ชิ้น\n📍 สถานที่จัดเก็บ: ${storage_location || 'ไม่ระบุ'}\n💬 หมายเหตุ: เพิ่มอุปกรณ์ใหม่เข้าระบบ`;
+        sendLineNotify('stock', lineMsg);
+
         res.status(201).json({ id: inventoryId, message: 'เพิ่มอุปกรณ์เรียบร้อย' });
       });
     }
@@ -116,6 +128,116 @@ exports.deleteItem = (req, res) => {
   db.run('DELETE FROM inventory WHERE id = ?', [id], (err) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ message: 'ลบอุปกรณ์เรียบร้อย' });
+  });
+};
+
+exports.bulkImport = (req, res) => {
+  const { items } = req.body;
+
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ message: 'ไม่พบข้อมูลสำหรับนำเข้า' });
+  }
+
+  // Normalize and validate rows first
+  const cleaned = [];
+  for (let i = 0; i < items.length; i++) {
+    const raw = items[i] || {};
+    const name = String(raw.name || '').trim();
+    if (!name) {
+      return res.status(400).json({ message: `แถวที่ ${i + 1}: ไม่มีชื่ออุปกรณ์` });
+    }
+    cleaned.push({
+      name,
+      model: String(raw.model || '').trim() || null,
+      description: String(raw.description || '').trim() || null,
+      storage_location: String(raw.storage_location || '').trim() || null,
+      quantity: Math.max(0, parseInt(raw.quantity, 10) || 0),
+      min_stock: Math.max(0, parseInt(raw.min_stock, 10) || 10),
+      requires_sn: raw.requires_sn === undefined || raw.requires_sn === null ? 1 : (parseInt(raw.requires_sn, 10) ? 1 : 0),
+      unit_price: raw.unit_price !== undefined && raw.unit_price !== null ? Math.max(0, parseFloat(raw.unit_price) || 0) : 0,
+      warranty_months: raw.warranty_months !== undefined && raw.warranty_months !== null ? Math.max(0, parseInt(raw.warranty_months, 10) || 36) : 36,
+    });
+  }
+
+  const summary = { created: 0, updated: 0, total: cleaned.length };
+
+  db.serialize(() => {
+    db.run('BEGIN TRANSACTION');
+
+    let aborted = false;
+    const fail = (message) => {
+      if (aborted) return;
+      aborted = true;
+      db.run('ROLLBACK', () => res.status(500).json({ message }));
+    };
+
+    const processRow = (idx) => {
+      if (aborted) return;
+      if (idx >= cleaned.length) {
+        db.run('COMMIT', (err) => {
+          if (err) return res.status(500).json({ message: err.message });
+
+          // Send LINE Notify Alert
+          const { sendLineNotify } = require('../utils/lineNotify');
+          const lineMsg = `\n📥 *นำเข้าอุปกรณ์แบบกลุ่ม (Excel)*\n➕ เพิ่มใหม่: ${summary.created} รายการ\n🔄 อัปเดตข้อมูล: ${summary.updated} รายการ\n📊 รวมทั้งหมด: ${summary.total} รายการ`;
+          sendLineNotify('stock', lineMsg);
+
+          const { checkAndGenerateAutoPOs } = require('../utils/autoPo');
+          checkAndGenerateAutoPOs((autoPoErr) => {
+            if (autoPoErr) console.error('Error auto-generating POs after import:', autoPoErr.message);
+          });
+          res.json({
+            message: `นำเข้าสำเร็จ: เพิ่มใหม่ ${summary.created} รายการ, อัปเดต ${summary.updated} รายการ`,
+            ...summary,
+          });
+        });
+        return;
+      }
+
+      const row = cleaned[idx];
+      // Upsert by name (case-insensitive, trimmed)
+      db.get('SELECT id FROM inventory WHERE LOWER(TRIM(name)) = LOWER(?)', [row.name], (err, existing) => {
+        if (err) return fail(err.message);
+
+        if (existing) {
+          db.run(
+            `UPDATE inventory SET model = ?, description = ?, quantity = ?, min_stock = ?, requires_sn = ?, storage_location = ?, unit_price = ?, warranty_months = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+            [row.model, row.description, row.quantity, row.min_stock, row.requires_sn, row.storage_location, row.unit_price, row.warranty_months, existing.id],
+            (uErr) => {
+              if (uErr) return fail(uErr.message);
+              summary.updated += 1;
+              db.run(
+                `INSERT INTO inventory_transactions (inventory_id, transaction_type, quantity_added, note) VALUES (?, "ADD_STOCK", ?, "นำเข้าข้อมูลผ่าน Excel (อัปเดต)")`,
+                [existing.id, row.quantity],
+                (tErr) => {
+                  if (tErr) return fail(tErr.message);
+                  processRow(idx + 1);
+                }
+              );
+            }
+          );
+        } else {
+          db.run(
+            `INSERT INTO inventory (name, model, description, quantity, min_stock, requires_sn, storage_location, unit_price, warranty_months) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [row.name, row.model, row.description, row.quantity, row.min_stock, row.requires_sn, row.storage_location, row.unit_price, row.warranty_months],
+            function (iErr) {
+              if (iErr) return fail(iErr.message);
+              summary.created += 1;
+              db.run(
+                `INSERT INTO inventory_transactions (inventory_id, transaction_type, quantity_added, note) VALUES (?, "ADD_STOCK", ?, "นำเข้าข้อมูลผ่าน Excel")`,
+                [this.lastID, row.quantity],
+                (tErr) => {
+                  if (tErr) return fail(tErr.message);
+                  processRow(idx + 1);
+                }
+              );
+            }
+          );
+        }
+      });
+    };
+
+    processRow(0);
   });
 };
 
@@ -241,16 +363,15 @@ exports.getLifecycleReport = (req, res) => {
       i.warranty_months,
       st.name as station_name,
       st.code as station_code,
-      COALESCE((
-        SELECT SUM(wi.quantity * i.unit_price)
-        FROM withdrawal_items wi
-        JOIN withdrawals w ON wi.withdrawal_id = w.id
-        WHERE wi.inventory_id = i.id 
-          AND w.station_id = ii.station_id
-      ), 0) as total_repair_cost
+      ii.contract_id,
+      c.contract_no,
+      c.name as contract_name,
+      c.year_be as contract_year,
+      (SELECT COUNT(*) FROM repairs r WHERE r.instance_id = ii.id) as repair_count
     FROM inventory_instances ii
     JOIN inventory i ON ii.inventory_id = i.id
     LEFT JOIN stations st ON ii.station_id = st.id
+    LEFT JOIN contracts c ON ii.contract_id = c.id
     WHERE ii.status = 'Withdrawn' AND ii.station_id IS NOT NULL
     ORDER BY ii.created_at DESC
   `;
@@ -260,26 +381,28 @@ exports.getLifecycleReport = (req, res) => {
     
     const reports = rows.map(row => {
       const installedDate = new Date(row.installed_at);
-      const currentDate = new Date();
-      const ageMonths = Math.max(0, (currentDate.getFullYear() - installedDate.getFullYear()) * 12 + (currentDate.getMonth() - installedDate.getMonth()));
-      const warranty = row.warranty_months || 36;
-      const unitPrice = row.unit_price || 0;
-      const totalCost = row.total_repair_cost || 0;
-
-      const isExpiredWarranty = ageMonths > warranty;
-      const costExceedsThreshold = unitPrice > 0 ? (totalCost / unitPrice) > 0.7 : false;
-      const recommendedReplacement = isExpiredWarranty || costExceedsThreshold;
+      const now = new Date();
+      const age_months = Math.max(0, (now.getFullYear() - installedDate.getFullYear()) * 12 + now.getMonth() - installedDate.getMonth());
+      const warranty_months = row.warranty_months !== null && row.warranty_months !== undefined ? row.warranty_months : 36;
+      const is_expired_warranty = age_months > warranty_months;
+      const repair_count = row.repair_count || 0;
+      const recommended_replacement = is_expired_warranty || repair_count >= 3;
+      const cost_exceeds_threshold = repair_count >= 3;
 
       return {
         ...row,
-        age_months: ageMonths,
-        is_expired_warranty: isExpiredWarranty,
-        cost_exceeds_threshold: costExceedsThreshold,
-        recommended_replacement: recommendedReplacement
+        warranty_months,
+        repair_count,
+        age_months,
+        is_expired_warranty,
+        cost_exceeds_threshold,
+        recommended_replacement
       };
     });
 
     res.json(reports);
   });
 };
+
+
 

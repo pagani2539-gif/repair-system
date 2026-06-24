@@ -667,6 +667,17 @@ nav {
   transform: scale(0.97);
 }
 
+/* Forms need a calm container — disable the tactile scale-depression and the
+   cursor-follow glow on any card that wraps a form, so the layout doesn't
+   shift while the user is typing. */
+.card:has(form):hover,
+.card:has(form):active {
+  transform: none;
+}
+.glass-card:has(form):hover::before {
+  opacity: 0;
+}
+
 /* Global Animations & Effects */
 @keyframes revealUp {
   from {
@@ -824,6 +835,30 @@ nav {
   color: white;
   transform: translateY(-3px);
   box-shadow: 0 8px 24px rgba(239, 68, 68, 0.3), 0 0 15px rgba(239, 68, 68, 0.2);
+}
+
+.btn-success {
+  background: var(--success);
+  color: white;
+  box-shadow: 0 8px 24px rgba(34, 197, 94, 0.25);
+}
+
+.btn-success:hover {
+  filter: brightness(1.05);
+  transform: translateY(-3px);
+  box-shadow: 0 12px 32px rgba(34, 197, 94, 0.4);
+}
+
+.btn-warning {
+  background: var(--warning);
+  color: white;
+  box-shadow: 0 8px 24px rgba(245, 158, 11, 0.25);
+}
+
+.btn-warning:hover {
+  filter: brightness(1.05);
+  transform: translateY(-3px);
+  box-shadow: 0 12px 32px rgba(245, 158, 11, 0.4);
 }
 
 .btn-sm {
@@ -1131,26 +1166,36 @@ select option {
 
 /* 5. FLAWLESS STICKY ACTION COLUMN (Last Column) */
 .data-table th:last-child,
-.data-table td:last-child {
+.data-table td:last-child,
+.sticky-actions-col-th,
+.sticky-actions-col-td {
   position: sticky !important;
   right: 0;
-  /* Solid opaque background is mandatory to prevent text-bleeding */
-  background-color: var(--bg-card, #ffffff) !important;
   overflow: visible !important;
 }
 
-/* Precise Z-Index Layering */
-.data-table td:last-child {
+/* Precise Z-Index Layering & Backgrounds */
+.data-table td:last-child,
+.sticky-actions-col-td {
   z-index: 10; /* Above normal cells but below sticky headers */
+  background-color: var(--bg-card, #ffffff) !important;
 }
 
-.data-table th:last-child {
+.data-table th:last-child,
+.sticky-actions-col-th {
   z-index: 15; /* Highest priority: Sticky-Top + Sticky-Right Intersection */
-  background-color: var(--bg-app) !important; /* Match header color */
+  background-color: var(--bg-app, #f4f6f9) !important; /* Match header color */
 }
 
 /* 6. Hover State Synchronization */
-.data-table tr:hover td {
+.data-table tr:hover td,
+.data-table tr.data-table-row:hover .sticky-actions-col-td {
+  background-color: var(--primary-light) !important;
+}
+
+/* Row selection state synchronization */
+.data-table tr.data-table-row.is-selected td,
+.data-table tr.data-table-row.is-selected .sticky-actions-col-td {
   background-color: var(--primary-light) !important;
 }
 
@@ -1972,6 +2017,46 @@ select option {
   .form-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+
+/* Form Sections (grouped fields with a heading) */
+.form-section {
+  margin-bottom: 2rem;
+}
+.form-section:last-child {
+  margin-bottom: 0;
+}
+.form-section + .form-section {
+  border-top: 1px solid var(--border);
+  padding-top: 1.75rem;
+}
+.form-section-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 1.1rem;
+}
+.form-section-header h3 {
+  font-size: 0.98rem;
+  font-weight: 800;
+  color: var(--text-main);
+  margin: 0;
+}
+.form-section-header p {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  margin: 2px 0 0;
+  line-height: 1.4;
+}
+.form-section-header .sec-icon {
+  color: var(--primary);
+  display: flex;
+  align-items: center;
+}
+.form-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
 }
 
 /* Detail Page 2-column Layout (Repair Detail, Withdrawal Detail) */
@@ -3021,3 +3106,179 @@ select option {
   box-shadow: var(--elevation-3), 0 0 20px var(--primary-light);
   border-color: var(--primary) !important;
 }
+
+/* --- Desktop Header & Profile Dropdown --- */
+.main-layout-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  height: 100%;
+  overflow: hidden;
+}
+
+@media (max-width: 1024px) {
+  .main-layout-container {
+    height: auto;
+    overflow: visible;
+  }
+}
+
+.desktop-header {
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-sidebar);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  z-index: 99;
+  flex-shrink: 0;
+}
+
+.profile-trigger-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  cursor: pointer;
+  color: var(--text-main);
+  transition: all 0.2s ease;
+}
+
+.profile-trigger-btn:hover {
+  background: var(--bg-app);
+  border-color: var(--primary);
+  box-shadow: 0 0 10px var(--primary-light);
+}
+
+.dropdown-item-btn {
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  text-align: left;
+  transition: all 0.2s ease;
+}
+
+.dropdown-item-btn:hover {
+  background: var(--primary-light);
+  color: var(--primary);
+}
+
+.dropdown-item-btn.danger:hover {
+  background: rgba(239, 68, 68, 0.08);
+  color: var(--danger);
+}
+
+@keyframes fadeInDropdown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.profile-dropdown-animate {
+  animation: fadeInDropdown 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Success Actions in New Withdrawal page */
+.success-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  align-items: center;
+  margin-top: 2rem;
+}
+
+.success-actions-row {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  width: 100%;
+}
+
+@media (max-width: 640px) {
+  .success-actions-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+  
+  .success-actions-row button,
+  .success-actions-row .btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* Ledger Premium Tabs System */
+.ledger-tabs-container {
+  display: flex;
+  width: 100%;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1.5rem;
+  padding-bottom: 0;
+  position: relative;
+}
+
+.ledger-tab-button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 18px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: var(--transition-smooth);
+}
+
+.ledger-tab-button:hover {
+  color: var(--text-main);
+  background: var(--bg-hover);
+}
+
+.ledger-tab-button.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+  background: var(--primary-light);
+}
+
+.ledger-tab-badge {
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  transition: var(--transition-smooth);
+  background: var(--border-hover);
+  color: var(--text-main);
+}
+
+.ledger-tab-button.active .ledger-tab-badge {
+  background: var(--primary);
+  color: #fff;
+}
+
+

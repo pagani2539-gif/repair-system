@@ -2,9 +2,10 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { stationApi } from '../../api';
 import type { Station, StationArea } from '../../types';
-import { MapPin, Sliders } from 'lucide-react';
+import { MapPin, Map, Sliders, X } from 'lucide-react';
 import { useNotification } from '../Layout';
 import { provincesByRegion, getRegionFromProvince } from '../../utils/thaiProvinces';
+import FormSection from './FormSection';
 
 interface StationSelectorProps {
   selectedStationId?: number;
@@ -40,6 +41,11 @@ const StationSelector: React.FC<StationSelectorProps> = ({
   // Filter States
   const [regionFilter, setRegionFilter] = useState<string>('');
   const [highwayFilter, setHighwayFilter] = useState<string>('');
+
+  // Search & Autocomplete States
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [showDropdown, setShowDropdown] = useState<boolean>(false);
+  const [showAdvanced, setShowAdvanced] = useState<boolean>(false);
 
 
 
@@ -111,12 +117,13 @@ const StationSelector: React.FC<StationSelectorProps> = ({
         const list = await stationApi.getUniqueList({ status: 1 });
         setStations(list);
         
-        // If there's an initial selected station, sync filters
+        // If there's an initial selected station, sync filters and search query
         if (selectedStationId) {
           const matched = list.find(st => st.id === selectedStationId);
           if (matched) {
             setRegionFilter(matched.region);
             setHighwayFilter(matched.highway_no);
+            setSearchQuery(matched.name);
           }
         }
         setError(null);
@@ -129,6 +136,23 @@ const StationSelector: React.FC<StationSelectorProps> = ({
     };
     loadStations();
   }, [selectedStationId]);
+
+  // Sync search query when selectedStationId or stations list changes
+  useEffect(() => {
+    if (selectedStationId && stations.length > 0) {
+      const matched = stations.find(st => st.id === selectedStationId);
+      if (matched) {
+        const name = matched.name;
+        setTimeout(() => {
+          setSearchQuery(name);
+        }, 0);
+      }
+    } else if (!selectedStationId) {
+      setTimeout(() => {
+        setSearchQuery('');
+      }, 0);
+    }
+  }, [selectedStationId, stations]);
 
   // Load areas when selectedStationId changes
   useEffect(() => {
@@ -168,14 +192,32 @@ const StationSelector: React.FC<StationSelectorProps> = ({
 
   const filteredStationsList = useMemo(() => {
     let list = stations;
+    
     if (regionFilter) {
       list = list.filter(st => st.region === regionFilter);
     }
+    
     if (highwayFilter) {
       list = list.filter(st => st.highway_no === highwayFilter);
     }
+    
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      // If the query is an exact match for the selected station, don't filter the dropdown list
+      const selectedStation = stations.find(st => st.id === selectedStationId);
+      if (selectedStation && selectedStation.name === searchQuery) {
+        // Keep the list as is (filtered by region/highway only)
+      } else {
+        list = list.filter(st => 
+          (st.name && st.name.toLowerCase().includes(q)) ||
+          (st.highway_no && st.highway_no.toLowerCase().includes(q)) ||
+          (st.region && st.region.toLowerCase().includes(q)) ||
+          (st.province && st.province.toLowerCase().includes(q))
+        );
+      }
+    }
     return list;
-  }, [stations, regionFilter, highwayFilter]);
+  }, [stations, regionFilter, highwayFilter, searchQuery, selectedStationId]);
 
   const handleRegionSelect = (val: string | number) => {
     setRegionFilter(String(val));
@@ -188,24 +230,6 @@ const StationSelector: React.FC<StationSelectorProps> = ({
     onChange({ stationId: undefined, stationName: '', areaId: undefined, areaName: '' });
   };
 
-  const handleStationSelect = (val: string | number) => {
-    const idVal = val ? parseInt(String(val), 10) : undefined;
-    if (idVal === undefined) {
-      onChange({ stationId: undefined, stationName: '', areaId: undefined, areaName: '' });
-      return;
-    }
-    
-    const matched = stations.find(st => st.id === idVal);
-    if (matched) {
-      // Trigger onChange
-      onChange({
-        stationId: matched.id,
-        stationName: matched.name,
-        areaId: undefined,
-        areaName: ''
-      });
-    }
-  };
 
   const handleAreaSelect = (val: string | number) => {
     if (!selectedStationId) return;
@@ -361,9 +385,10 @@ const StationSelector: React.FC<StationSelectorProps> = ({
 
   const getTypeLabel = (type: string) => {
     switch (type) {
-      case 'WEIGH_STATION': return 'สถานีหลัก';
-      case 'CHECK_POINT': return 'จุดตรวจ';
-      case 'SPOT_CHECK': return 'Spot Check';
+      case 'WEIGH_STATION': return 'สถานีตรวจสอบน้ำหนัก';
+      case 'CHECK_POINT': return 'จุดตรวจน้ำหนัก';
+      case 'SPOT_CHECK': return 'จุดสุ่มตรวจ (Spot Check)';
+      case 'REST_AREA': return 'จุดจอดพักรถบรรทุก (Rest Area)';
       default: return type;
     }
   };
@@ -388,60 +413,209 @@ const StationSelector: React.FC<StationSelectorProps> = ({
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', width: '100%' }}>
       {error && <div style={{ color: 'var(--danger)', fontSize: '0.8rem', fontWeight: 600 }}>{error}</div>}
       
-      <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', width: '100%' }}>
-        {/* Region Dropdown */}
-        <Select
-          value={regionFilter}
-          options={[{ label: '-- กรองภูมิภาค (ทุกภาค) --', value: '' }, ...regions.map(r => ({ label: r, value: r }))] }
-          placeholder="-- กรองภูมิภาค (ทุกภาค) --"
-          onChange={handleRegionSelect}
-          style={{ flex: 1, minWidth: '180px' }}
-        />
+      <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', width: '100%', alignItems: 'center' }}>
+        {/* Search input with autocomplete */}
+        <div style={{ flex: 3, minWidth: '280px', position: 'relative' }}>
+          <div style={{ display: 'flex', gap: '8px', position: 'relative', alignItems: 'center' }}>
+            <div style={{ position: 'relative', flex: 1 }}>
+              <input
+                type="text"
+                placeholder={`พิมพ์ค้นหาด่าน/สถานี (เช่น แม่ใจ, ทล.1)... ${required ? '*' : ''}`}
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setShowDropdown(true);
+                  if (e.target.value === '') {
+                    onChange({ stationId: undefined, stationName: '', areaId: undefined, areaName: '' });
+                  }
+                }}
+                onFocus={() => setShowDropdown(true)}
+                onBlur={() => {
+                  setTimeout(() => {
+                    setShowDropdown(false);
+                    // Reset search text if it doesn't match selected station
+                    const matched = stations.find(st => st.id === selectedStationId);
+                    if (matched) {
+                      setSearchQuery(matched.name);
+                    } else if (!selectedStationId) {
+                      setSearchQuery('');
+                    }
+                  }, 200);
+                }}
+                style={{
+                  width: '100%',
+                  padding: selectedStationId ? '10px 36px 10px 36px' : '10px 14px 10px 36px',
+                  borderRadius: '10px',
+                  border: '1px solid var(--border)',
+                  background: 'var(--bg-app)',
+                  color: 'var(--text-main)',
+                  fontSize: '0.9rem'
+                }}
+              />
+              <MapPin size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: selectedStationId ? 'var(--primary)' : 'var(--text-muted)' }} />
+              {selectedStationId && (
+                <button
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    onChange({ stationId: undefined, stationName: '', areaId: undefined, areaName: '' });
+                    setSearchQuery('');
+                    setShowDropdown(false);
+                  }}
+                  style={{
+                    position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)',
+                    background: 'none', border: 'none', cursor: 'pointer', padding: '2px',
+                    color: 'var(--text-muted)', display: 'flex', alignItems: 'center'
+                  }}
+                  title="ล้างการเลือก"
+                >
+                  <X size={15} />
+                </button>
+              )}
+            </div>
+            
+            <button
+              type="button"
+              onClick={() => setShowAdvanced(!showAdvanced)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '10px 14px',
+                borderRadius: '10px',
+                border: showAdvanced ? '1.5px solid var(--primary)' : '1px solid var(--border)',
+                background: showAdvanced ? 'var(--primary-light)' : 'var(--bg-card)',
+                color: showAdvanced ? 'var(--primary)' : 'var(--text-main)',
+                fontSize: '0.85rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              <Sliders size={14} />
+              ตัวกรองขั้นสูง
+            </button>
+          </div>
 
-        {/* Highway Number Dropdown */}
-        <Select
-          value={highwayFilter}
-          options={[{ label: '-- กรองเลขทางหลวง (ทั้งหมด) --', value: '' }, ...highways.map(h => ({ label: `ทางหลวงหมายเลข ${h}`, value: h }))] }
-          placeholder="-- กรองเลขทางหลวง (ทั้งหมด) --"
-          onChange={handleHighwaySelect}
-          style={{ flex: 1, minWidth: '180px' }}
-        />
-
-        {/* Station Select */}
-        <div style={{ flex: 2, minWidth: '280px', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-          <Select
-            value={selectedStationId || ''}
-            options={[{ label: `-- เลือกจุดตรวจ/สถานีควบคุมน้ำหนัก ${required ? '*' : ''} --`, value: '' }, ...filteredStationsList.map(st => ({ label: `[${getTypeLabel(st.station_type)}] ${st.name} (ทล.${st.highway_no})`, value: st.id }))] }
-            placeholder={`-- เลือกจุดตรวจ/สถานีควบคุมน้ำหนัก ${required ? '*' : ''} --`}
-            onChange={handleStationSelect}
-            icon={<MapPin size={16} style={{ color: selectedStationId ? 'var(--primary)' : 'var(--text-muted)', marginRight: '2px' }} />}
-            style={{ width: '100%' }}
-          />
-          <button
-            type="button"
-            onClick={openAddModal}
-            style={{
-              alignSelf: 'flex-start',
-              background: 'none',
-              border: 'none',
-              color: 'var(--primary)',
-              fontSize: '0.75rem',
-              fontWeight: 700,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              padding: '2px 6px',
-              borderRadius: '4px',
-              marginTop: '2px',
-              transition: 'background 0.2s'
-            }}
-            onMouseOver={(e) => e.currentTarget.style.background = 'var(--primary-light)'}
-            onMouseOut={(e) => e.currentTarget.style.background = 'none'}
-          >
-            ➕ ไม่พบสถานี? คลิกเพื่อเพิ่มสถานีใหม่
-          </button>
+          {/* Autocomplete Dropdown list */}
+          {showDropdown && filteredStationsList.length > 0 && (
+            <div style={{
+              position: 'absolute',
+              top: '100%',
+              left: 0,
+              right: 0,
+              zIndex: 1050,
+              background: 'var(--bg-card)',
+              border: '1px solid var(--border)',
+              borderRadius: '10px',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+              marginTop: '4px',
+              maxHeight: '220px',
+              overflowY: 'auto'
+            }}>
+              {filteredStationsList.map((st) => (
+                <div
+                  key={st.id}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    onChange({
+                      stationId: st.id,
+                      stationName: st.name,
+                      areaId: undefined,
+                      areaName: ''
+                    });
+                    setSearchQuery(st.name);
+                    setShowDropdown(false);
+                  }}
+                  style={{
+                    padding: '10px 14px',
+                    cursor: 'pointer',
+                    borderBottom: '1px solid var(--border)',
+                    fontSize: '0.85rem',
+                    transition: 'background 0.2s',
+                    color: 'var(--text-main)'
+                  }}
+                  onMouseOver={(e) => e.currentTarget.style.background = 'var(--primary-light)'}
+                  onMouseOut={(e) => e.currentTarget.style.background = 'none'}
+                >
+                  <div style={{ fontWeight: 700, color: 'var(--text-main)' }}>
+                    [{getTypeLabel(st.station_type)}] {st.name}
+                  </div>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '2px', display: 'flex', gap: '8px' }}>
+                    <span>🛣️ ทางหลวงหมายเลข {st.highway_no}</span>
+                    <span>📍 {st.province} ({st.region})</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
+      </div>
+
+      {/* Advanced Filter Drawer (Collapsible) */}
+      {showAdvanced && (
+        <div style={{
+          display: 'flex',
+          gap: '1rem',
+          flexWrap: 'wrap',
+          width: '100%',
+          padding: '12px',
+          background: 'var(--bg-app)',
+          border: '1px solid var(--border)',
+          borderRadius: '10px',
+          marginTop: '4px'
+        }}>
+          {/* Region Dropdown */}
+          <div style={{ flex: 1, minWidth: '160px' }}>
+            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '4px' }}>กรองภูมิภาค</label>
+            <Select
+              value={regionFilter}
+              options={[{ label: '-- ทุกภาค --', value: '' }, ...regions.map(r => ({ label: r, value: r }))] }
+              placeholder="-- ทุกภาค --"
+              onChange={handleRegionSelect}
+              style={{ width: '100%' }}
+            />
+          </div>
+
+          {/* Highway Number Dropdown */}
+          <div style={{ flex: 1, minWidth: '160px' }}>
+            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '4px' }}>กรองหมายเลขทางหลวง</label>
+            <Select
+              value={highwayFilter}
+              options={[{ label: '-- ทั้งหมด --', value: '' }, ...highways.map(h => ({ label: `ทางหลวงหมายเลข ${h}`, value: h }))] }
+              placeholder="-- ทั้งหมด --"
+              onChange={handleHighwaySelect}
+              style={{ width: '100%' }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Add New Station shortcut link */}
+      <div style={{ display: 'flex', width: '100%', marginTop: '-4px' }}>
+        <button
+          type="button"
+          onClick={openAddModal}
+          style={{
+            background: 'none',
+            border: 'none',
+            color: 'var(--primary)',
+            fontSize: '0.75rem',
+            fontWeight: 700,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '4px',
+            padding: '2px 6px',
+            borderRadius: '4px',
+            transition: 'background 0.2s'
+          }}
+          onMouseOver={(e) => e.currentTarget.style.background = 'var(--primary-light)'}
+          onMouseOut={(e) => e.currentTarget.style.background = 'none'}
+        >
+          ➕ ไม่พบสถานี? คลิกเพื่อเพิ่มสถานีใหม่
+        </button>
       </div>
 
       {/* Optional Cascading Area Select */}
@@ -560,8 +734,9 @@ const StationSelector: React.FC<StationSelectorProps> = ({
               ⚠️ กรอกข้อมูลให้ครบทุกช่อง — สถานีคือข้อมูลแม่บทที่ใช้ในทุกการเบิก/ซ่อม/เคลม
             </p>
 
-            <form onSubmit={handleAddSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <form onSubmit={handleAddSubmit} style={{ display: 'flex', flexDirection: 'column' }}>
 
+              <FormSection title="ข้อมูลสถานี" icon={<MapPin size={18} />} columns={1}>
               {/* ชื่อสถานี */}
               <div>
                 <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-main)', marginBottom: '4px' }}>
@@ -596,9 +771,10 @@ const StationSelector: React.FC<StationSelectorProps> = ({
                   }}
                   style={{ width: '100%', padding: '10px 14px', borderRadius: '10px', border: fieldErrors.station_type ? '1.5px solid var(--danger)' : '1px solid var(--border)', background: 'var(--bg-app)', color: 'var(--text-main)', fontSize: '0.9rem', fontWeight: 600 }}
                 >
-                  <option value="WEIGH_STATION">สถานีควบคุมน้ำหนักหลัก</option>
-                  <option value="CHECK_POINT">จุดตรวจ (Check Point)</option>
+                  <option value="WEIGH_STATION">สถานีตรวจสอบน้ำหนัก</option>
+                  <option value="CHECK_POINT">จุดตรวจน้ำหนัก (Check Point)</option>
                   <option value="SPOT_CHECK">จุดสุ่มตรวจ (Spot Check)</option>
+                  <option value="REST_AREA">จุดจอดพักรถบรรทุก (Rest Area)</option>
                   <option value="OTHER">อื่นๆ (ระบุด้วยตัวเอง)</option>
                 </select>
                 {fieldErrors.station_type && (
@@ -640,6 +816,9 @@ const StationSelector: React.FC<StationSelectorProps> = ({
                 )}
               </div>
 
+              </FormSection>
+
+              <FormSection title="ที่ตั้ง" icon={<Map size={18} />} columns={1}>
               {/* จังหวัด — dropdown grouped */}
               <div>
                 <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-main)', marginBottom: '4px' }}>
@@ -727,6 +906,8 @@ const StationSelector: React.FC<StationSelectorProps> = ({
                   )}
                 </div>
               </div>
+
+              </FormSection>
 
               {/* แจ้งเตือนรวมถ้ามี error */}
               {Object.keys(fieldErrors).length > 0 && (

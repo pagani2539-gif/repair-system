@@ -2,7 +2,7 @@ const bcrypt = require('bcryptjs');
 const db = require('../database/init');
 const { sign } = require('../utils/jwt');
 
-const PASSWORD_MIN_LEN = 6;
+const PASSWORD_MIN_LEN = 8;
 
 const sanitizeUser = (row) => {
   if (!row) return null;

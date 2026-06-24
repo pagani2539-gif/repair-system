@@ -16,19 +16,19 @@ import {
   Handshake,
   CircleCheckBig,
   CirclePause,
-  AlertTriangle,
   UserCheck,
-  Inbox,
   Hourglass,
   CheckCircle2,
-  Wrench,
   MapPin,
   PauseCircle,
   FileText,
   Package,
   MessageSquare,
   AlertCircle,
-  Download
+  Download,
+  // Modern Icons
+  Sliders,
+  ShieldAlert
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import StationCell from '../components/shared/StationCell';
@@ -180,7 +180,7 @@ const RepairList: React.FC = () => {
 
   const columns: TableColumn<Repair>[] = [
     {
-      id: 'ticket', header: 'เลขที่ใบงาน', accessor: 'ticket_no', priority: 1, width: '140px',
+      id: 'ticket', header: 'เลขที่ใบงาน', accessor: 'ticket_no', priority: 1, width: '170px',
       render: (val, row) => (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 800, color: 'var(--primary)', fontSize: '0.9rem' }}>
@@ -399,9 +399,9 @@ const RepairList: React.FC = () => {
 
       <div className="stats-grid boot-animate stagger-1" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.25rem', marginBottom: '2rem' }}>
         {stats?.repair && [
-          { label: 'งานทั้งหมด', val: stats.repair.total, icon: Inbox, status: 'All' },
-          { label: 'รอดำเนินการ', val: stats.repair.pending, icon: AlertTriangle, status: 'รอดำเนินการ' },
-          { label: 'กำลังซ่อม', val: stats.repair.in_progress, icon: Wrench, status: 'กำลังซ่อม' },
+          { label: 'งานทั้งหมด', val: stats.repair.total, icon: Sliders, status: 'All' },
+          { label: 'รอดำเนินการ', val: stats.repair.pending, icon: ShieldAlert, status: 'รอดำเนินการ' },
+          { label: 'กำลังซ่อม', val: stats.repair.in_progress, icon: Sliders, status: 'กำลังซ่อม' },
           { label: 'รออะไหล่', val: stats.repair.on_hold, icon: Hourglass, status: 'รออะไหล่' },
           { label: 'เสร็จสิ้น', val: stats.repair.completed, icon: CheckCircle2, status: 'เสร็จสิ้น' }
         ].map((s, i) => {

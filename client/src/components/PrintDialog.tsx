@@ -19,13 +19,14 @@ interface Props {
    * The dialog will mount this element (hidden) and call printElement on it.
    */
   renderTemplate: (companyId: number | null, logoId: number | null) => React.ReactNode;
+  onBeforePrint?: (companyId: number, logoId: number) => Promise<void> | void;
 }
 
 /**
  * Universal print dialog: lets the user pick which company + which logo
  * to print with, then triggers printElement on the chosen template.
  */
-export const PrintDialog: React.FC<Props> = ({ open, onClose, templateId, docTitle, renderTemplate }) => {
+export const PrintDialog: React.FC<Props> = ({ open, onClose, templateId, docTitle, renderTemplate, onBeforePrint }) => {
   const { notify } = useNotification();
   const [companies, setCompanies] = useState<Company[]>([]);
   const [logos, setLogos] = useState<CompanyLogo[]>([]);
@@ -48,6 +49,8 @@ export const PrintDialog: React.FC<Props> = ({ open, onClose, templateId, docTit
         const defaultCompany = list.find((c) => c.is_default === 1) || list[0];
         if (defaultCompany) {
           setSelectedCompanyId(defaultCompany.id);
+        } else {
+          setSelectedCompanyId(-1);
         }
       } catch {
         if (!cancelled) notify('ไม่สามารถโหลดข้อมูลบริษัทได้', 'error');
@@ -62,12 +65,8 @@ export const PrintDialog: React.FC<Props> = ({ open, onClose, templateId, docTit
 
   // Load logos when selected company changes
   useEffect(() => {
-    if (!selectedCompanyId) {
-      const timer = setTimeout(() => {
-        setLogos([]);
-        setSelectedLogoId(null);
-      }, 0);
-      return () => clearTimeout(timer);
+    if (!selectedCompanyId || selectedCompanyId === -1) {
+      return;
     }
     let cancelled = false;
 
@@ -87,12 +86,20 @@ export const PrintDialog: React.FC<Props> = ({ open, onClose, templateId, docTit
     return () => { cancelled = true; };
   }, [selectedCompanyId, notify]);
 
-  const handlePrint = useCallback(() => {
-    if (!selectedCompanyId) {
+  const handlePrint = useCallback(async () => {
+    if (selectedCompanyId === null) {
       notify('กรุณาเลือกบริษัท', 'error');
       return;
     }
     setPrinting(true);
+
+    if (onBeforePrint) {
+      try {
+        await onBeforePrint(selectedCompanyId === -1 ? 0 : selectedCompanyId, selectedLogoId ?? 0);
+      } catch (err) {
+        console.error('onBeforePrint error:', err);
+      }
+    }
 
     // Give the template a moment to re-render with the chosen company/logo
     setTimeout(() => {
@@ -102,7 +109,7 @@ export const PrintDialog: React.FC<Props> = ({ open, onClose, templateId, docTit
         onClose();
       }, 600);
     }, 400);
-  }, [selectedCompanyId, templateId, docTitle, notify, onClose]);
+  }, [selectedCompanyId, selectedLogoId, templateId, docTitle, notify, onClose, onBeforePrint]);
 
   if (!open) return null;
 
@@ -171,20 +178,6 @@ export const PrintDialog: React.FC<Props> = ({ open, onClose, templateId, docTit
                 <Loader2 size={28} className="spinner" />
                 <div style={{ marginTop: '8px', fontSize: '0.9rem' }}>กำลังโหลด...</div>
               </div>
-            ) : companies.length === 0 ? (
-              <div style={{
-                padding: '2rem',
-                textAlign: 'center',
-                color: 'var(--text-muted)',
-                border: '2px dashed var(--border)',
-                borderRadius: '12px',
-              }}>
-                <Building2 size={32} style={{ opacity: 0.3, marginBottom: '8px' }} />
-                <div style={{ fontSize: '0.9rem', fontWeight: 600 }}>ยังไม่มีบริษัทในระบบ</div>
-                <div style={{ fontSize: '0.8rem', marginTop: '4px' }}>
-                  กรุณาเพิ่มบริษัทในหน้า "ตั้งค่าระบบ" ก่อนปริ้น
-                </div>
-              </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
                 {/* Company picker */}
@@ -202,12 +195,22 @@ export const PrintDialog: React.FC<Props> = ({ open, onClose, templateId, docTit
                     ออกในนามบริษัท
                   </label>
                   <Select
-                    value={selectedCompanyId ?? ''}
-                    options={companies.map((c) => ({
-                      label: `${c.name_th}${c.is_default === 1 ? ' (หลัก)' : ''}`,
-                      value: c.id
-                    }))}
-                    onChange={(val) => setSelectedCompanyId(Number(val))}
+                    value={selectedCompanyId ?? -1}
+                    options={[
+                      { label: 'ไม่ระบุบริษัท (ใช้หัวเอกสารระบบทั่วไป)', value: -1 },
+                      ...companies.map((c) => ({
+                        label: `${c.name_th}${c.is_default === 1 ? ' (หลัก)' : ''}`,
+                        value: c.id
+                      }))
+                    ]}
+                    onChange={(val) => {
+                      const cid = Number(val);
+                      setSelectedCompanyId(cid);
+                      if (cid === -1) {
+                        setLogos([]);
+                        setSelectedLogoId(null);
+                      }
+                    }}
                     style={{ width: '100%' }}
                   />
                   {selectedCompany && (
@@ -225,94 +228,106 @@ export const PrintDialog: React.FC<Props> = ({ open, onClose, templateId, docTit
                       {selectedCompany.phone && <div>โทร. {selectedCompany.phone}</div>}
                     </div>
                   )}
-                </div>
-
-                {/* Logo picker */}
-                <div>
-                  <label style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    fontSize: '0.85rem',
-                    fontWeight: 700,
-                    marginBottom: '8px',
-                    color: 'var(--text-main)',
-                  }}>
-                    <ImageIcon size={14} color="var(--primary)" />
-                    โลโก้ที่ใช้บนเอกสาร
-                  </label>
-
-                  {logos.length === 0 ? (
+                  {companies.length === 0 && (
                     <div style={{
-                      padding: '12px',
-                      background: 'var(--bg-app)',
-                      borderRadius: '8px',
-                      fontSize: '0.8rem',
+                      marginTop: '6px',
+                      fontSize: '0.75rem',
                       color: 'var(--text-muted)',
-                      textAlign: 'center',
+                      fontStyle: 'italic'
                     }}>
-                      ⚠️ บริษัทนี้ยังไม่มีโลโก้ — สามารถปริ้นได้แต่จะไม่มีโลโก้บนเอกสาร
-                    </div>
-                  ) : (
-                    <div style={{
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
-                      gap: '8px',
-                    }}>
-                      {logos.map((logo) => {
-                        const isSelected = logo.id === selectedLogoId;
-                        return (
-                          <button
-                            key={logo.id}
-                            type="button"
-                            onClick={() => setSelectedLogoId(logo.id)}
-                            style={{
-                              padding: '6px',
-                              border: isSelected ? '2px solid var(--primary)' : '1px solid var(--border)',
-                              borderRadius: '8px',
-                              background: isSelected ? 'var(--primary-light)' : 'var(--bg-card)',
-                              cursor: 'pointer',
-                              display: 'flex',
-                              flexDirection: 'column',
-                              alignItems: 'center',
-                              gap: '4px',
-                              transition: 'all 0.15s',
-                            }}
-                          >
-                            <div style={{
-                              width: '100%',
-                              height: '70px',
-                              background: 'var(--bg-app)',
-                              borderRadius: '6px',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              padding: '4px',
-                            }}>
-                              <img
-                                src={`${UPLOAD_URL}/uploads/${logo.file_path}`}
-                                alt={logo.label}
-                                style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
-                              />
-                            </div>
-                            <div style={{
-                              fontSize: '0.7rem',
-                              fontWeight: 600,
-                              color: isSelected ? 'var(--primary)' : 'var(--text-muted)',
-                              textAlign: 'center',
-                              maxWidth: '100%',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                            }}>
-                              {isSelected ? '✓ ' : ''}{logo.label}
-                            </div>
-                          </button>
-                        );
-                      })}
+                      💡 คุณสามารถเพิ่มข้อมูลบริษัทและโลโก้ได้ที่หน้า "ตั้งค่าระบบ" เพื่อใช้พิมพ์หัวเอกสารองค์กร
                     </div>
                   )}
                 </div>
+
+                {/* Logo picker */}
+                {selectedCompanyId !== null && selectedCompanyId !== -1 && companies.length > 0 && (
+                  <div>
+                    <label style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      fontSize: '0.85rem',
+                      fontWeight: 700,
+                      marginBottom: '8px',
+                      color: 'var(--text-main)',
+                    }}>
+                      <ImageIcon size={14} color="var(--primary)" />
+                      โลโก้ที่ใช้บนเอกสาร
+                    </label>
+
+                    {logos.length === 0 ? (
+                      <div style={{
+                        padding: '12px',
+                        background: 'var(--bg-app)',
+                        borderRadius: '8px',
+                        fontSize: '0.8rem',
+                        color: 'var(--text-muted)',
+                        textAlign: 'center',
+                      }}>
+                        ⚠️ บริษัทนี้ยังไม่มีโลโก้ — สามารถปริ้นได้แต่จะไม่มีโลโก้บนเอกสาร
+                      </div>
+                    ) : (
+                      <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
+                        gap: '8px',
+                      }}>
+                        {logos.map((logo) => {
+                          const isSelected = logo.id === selectedLogoId;
+                          return (
+                            <button
+                              key={logo.id}
+                              type="button"
+                              onClick={() => setSelectedLogoId(logo.id)}
+                              style={{
+                                padding: '6px',
+                                border: isSelected ? '2px solid var(--primary)' : '1px solid var(--border)',
+                                borderRadius: '8px',
+                                background: isSelected ? 'var(--primary-light)' : 'var(--bg-card)',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                gap: '4px',
+                                transition: 'all 0.15s',
+                              }}
+                            >
+                              <div style={{
+                                width: '100%',
+                                height: '70px',
+                                background: 'var(--bg-app)',
+                                borderRadius: '6px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                padding: '4px',
+                              }}>
+                                <img
+                                  src={`${UPLOAD_URL}/uploads/${logo.file_path}`}
+                                  alt={logo.label}
+                                  style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+                                />
+                              </div>
+                              <div style={{
+                                fontSize: '0.7rem',
+                                fontWeight: 600,
+                                color: isSelected ? 'var(--primary)' : 'var(--text-muted)',
+                                textAlign: 'center',
+                                maxWidth: '100%',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                              }}>
+                                {isSelected ? '✓ ' : ''}{logo.label}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Preview hint */}
                 <div style={{
@@ -348,7 +363,7 @@ export const PrintDialog: React.FC<Props> = ({ open, onClose, templateId, docTit
               icon={<Printer size={16} />}
               onClick={handlePrint}
               loading={printing}
-              disabled={!selectedCompanyId || companies.length === 0}
+              disabled={selectedCompanyId === null}
             >
               พิมพ์เอกสาร
             </Button>

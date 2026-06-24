@@ -7,12 +7,18 @@ import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input, TextArea, Select } from '../components/ui/Input';
 import StationSelector from '../components/ui/StationSelector';
-import { 
-  Upload, 
-  X, 
-  FileText
+import StationAssetPicker from '../components/ui/StationAssetPicker';
+import FormSection from '../components/ui/FormSection';
+import {
+  Upload,
+  X,
+  FileText,
+  MapPin,
+  Wrench,
+  Image as ImageIcon
 } from 'lucide-react';
 import { compressImage } from '../utils/imageCompressor';
+import type { AssetLifecycleItem } from '../types';
 
 const NewRepair: React.FC = () => {
   const navigate = useNavigate();
@@ -27,7 +33,9 @@ const NewRepair: React.FC = () => {
     device_name: '',
     problem: '',
     priority: 'ปกติ',
-    received_at: new Date().toLocaleString('sv-SE').replace(' ', 'T').slice(0, 16)
+    received_at: new Date().toLocaleString('sv-SE').replace(' ', 'T').slice(0, 16),
+    instance_id: undefined as number | undefined,
+    inventory_id: undefined as number | undefined
   });
   const [subLocation, setSubLocation] = useState('');
   const [images, setImages] = useState<File[]>([]);
@@ -128,6 +136,13 @@ const NewRepair: React.FC = () => {
       data.append('priority', formData.priority);
       data.append('received_at', new Date(formData.received_at).toISOString());
       
+      if (formData.instance_id) {
+        data.append('instance_id', String(formData.instance_id));
+      }
+      if (formData.inventory_id) {
+        data.append('inventory_id', String(formData.inventory_id));
+      }
+
       images.forEach(image => {
         data.append('images', image);
       });
@@ -156,8 +171,8 @@ const NewRepair: React.FC = () => {
       
       <Card className="glass-card" style={{ maxWidth: '800px', margin: '0 auto', padding: '2rem', overflow: 'visible' }}>
         <form onSubmit={handleSubmit}>
-          <div className="form-grid">
-            {/* ผู้แจ้ง (Full width) */}
+          {/* ① ข้อมูลการแจ้ง */}
+          <FormSection title="ข้อมูลการแจ้ง" icon={<FileText size={18} />}>
             <div style={{ gridColumn: '1 / -1' }} className="form-group">
               <label style={{ fontSize: '0.85rem', fontWeight: 700, marginBottom: '6px', display: 'block' }}>ผู้แจ้ง</label>
               <div style={{
@@ -167,13 +182,19 @@ const NewRepair: React.FC = () => {
               }}>
                 👤 {user?.full_name || '—'}
                 <span style={{ marginLeft: '8px', fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400 }}>
-                  (ดึงจากบัญชีที่เข้าสู่ระบบ)
+                  (จากบัญชีที่เข้าสู่ระบบ)
                 </span>
               </div>
             </div>
-
-            {/* ระดับความสำคัญ & โครงการ/งาน */}
-            <Select 
+            <Input
+              label="โครงการ / งาน"
+              required
+              maxLength={100}
+              placeholder="ระบุชื่อโครงการ..."
+              value={formData.project_name}
+              onChange={(e) => setFormData({...formData, project_name: e.target.value})}
+            />
+            <Select
               label="ระดับความสำคัญ"
               value={formData.priority}
               onChange={(e) => setFormData({...formData, priority: e.target.value})}
@@ -183,16 +204,6 @@ const NewRepair: React.FC = () => {
               <option value="ด่วนมาก">ด่วนมาก</option>
               <option value="วิกฤต">วิกฤต</option>
             </Select>
-            <Input 
-              label="โครงการ / งาน"
-              required 
-              maxLength={100}
-              placeholder="ระบุชื่อโครงการ..."
-              value={formData.project_name}
-              onChange={(e) => setFormData({...formData, project_name: e.target.value})}
-            />
-
-            {/* วันที่เกิดปัญหา & ชื่ออุปกรณ์ */}
             <Input
               label="วันที่และเวลาที่รับเครื่อง / เกิดปัญหา"
               type="datetime-local"
@@ -200,17 +211,15 @@ const NewRepair: React.FC = () => {
               value={formData.received_at}
               onChange={(e) => setFormData({...formData, received_at: e.target.value})}
             />
-            <Input 
-              label="ชื่ออุปกรณ์ / รุ่น"
-              required 
-              maxLength={100}
-              placeholder="เช่น เครื่องพิมพ์ HP LaserJet, จอ Monitor"
-              value={formData.device_name}
-              onChange={(e) => setFormData({...formData, device_name: e.target.value})}
-            />
+          </FormSection>
 
-            {/* สถานที่ตั้งด่าน & จุดติดตั้งย่อย */}
-            <div className="form-group">
+          {/* ② สถานที่ / ด่าน */}
+          <FormSection
+            title="สถานที่ / ด่าน"
+            subtitle="เลือกด่านก่อน เพื่อกรองรายการอุปกรณ์ที่ติดตั้งอยู่จริง"
+            icon={<MapPin size={18} />}
+          >
+            <div className="form-group" style={{ gridColumn: '1 / -1' }}>
               <label style={{ display: 'block', marginBottom: '8px', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-main)' }}>
                 สถานที่ตั้งด่าน / จุดควบคุมน้ำหนักทางหลวง <span style={{ color: 'var(--danger)' }}>*</span>
               </label>
@@ -219,11 +228,13 @@ const NewRepair: React.FC = () => {
                 showArea={false}
                 required={true}
                 onChange={(data) => {
-                  setFormData({
-                    ...formData,
+                  setFormData(prev => ({
+                    ...prev,
                     station_id: data.stationId,
-                    location: data.stationName
-                  });
+                    location: data.stationName,
+                    instance_id: undefined,
+                    inventory_id: undefined
+                  }));
                 }}
               />
             </div>
@@ -234,12 +245,43 @@ const NewRepair: React.FC = () => {
               value={subLocation}
               onChange={(e) => setSubLocation(e.target.value)}
             />
+          </FormSection>
 
-            {/* อาการเสีย (Full width) */}
+          {/* ③ อุปกรณ์และอาการ */}
+          <FormSection title="อุปกรณ์และอาการ" icon={<Wrench size={18} />}>
+            <StationAssetPicker
+              stationId={formData.station_id}
+              selectedInstanceId={formData.instance_id}
+              label="อุปกรณ์ที่แจ้งซ่อม (เลือกจากคุรุภัณฑ์ที่ติดตั้งอยู่ในด่านนี้)"
+              onSelect={(item: AssetLifecycleItem) => {
+                setFormData(prev => ({
+                  ...prev,
+                  device_name: `${item.device_name}${item.model ? ' ' + item.model : ''}`,
+                  instance_id: item.instance_id,
+                  inventory_id: item.inventory_id
+                }));
+              }}
+              onClear={() => {
+                setFormData(prev => ({
+                  ...prev,
+                  device_name: '',
+                  instance_id: undefined,
+                  inventory_id: undefined
+                }));
+              }}
+            />
+            <Input
+              label="ชื่ออุปกรณ์ / รุ่น"
+              required
+              maxLength={100}
+              placeholder="เช่น เครื่องพิมพ์ HP LaserJet, จอ Monitor"
+              value={formData.device_name}
+              onChange={(e) => setFormData({...formData, device_name: e.target.value})}
+            />
             <div style={{ gridColumn: '1 / -1' }}>
-              <TextArea 
+              <TextArea
                 label="อาการเสีย / รายละเอียดปัญหา"
-                required 
+                required
                 rows={4}
                 maxLength={1000}
                 placeholder="อธิบายอาการเสียที่พบอย่างละเอียด..."
@@ -247,38 +289,42 @@ const NewRepair: React.FC = () => {
                 onChange={(e) => setFormData({...formData, problem: e.target.value})}
               />
             </div>
+          </FormSection>
 
-            {/* รูปภาพประกอบ (Full width) */}
-            <div style={{ gridColumn: '1 / -1' }} className="form-group">
-              <label><FileText size={16} color="var(--primary)" /> รูปภาพประกอบอาการเสีย (สูงสุด 4 รูป)</label>
-              <div className="image-uploader-grid" style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
-                {images.map((image, index) => (
-                  <div key={index} className="image-preview-card">
-                    <img src={URL.createObjectURL(image)} alt="preview" />
-                    <button type="button" className="remove-btn" onClick={() => removeImage(index)} disabled={loading}>
-                      <X size={16} />
-                    </button>
-                  </div>
-                ))}
-                {images.length < 4 && (
-                  images.length === 0 ? (
-                    <label className="image-uploader-box" style={{ width: '100%', height: '120px', cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.6 : 1, background: 'var(--bg-app)', border: '1px dashed var(--border)' }}>
-                      <Upload size={24} style={{ marginBottom: '8px' }} />
-                      <span style={{ fontSize: '0.85rem', fontWeight: 500 }}>คลิกเพื่อเลือกรูปภาพประกอบอาการเสีย</span>
-                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '4px' }}>รองรับไฟล์ JPG, PNG (สูงสุด 4 รูป)</span>
-                      <input type="file" multiple accept="image/*" style={{ display: 'none' }} onChange={handleImageChange} disabled={loading} />
-                    </label>
-                  ) : (
-                    <label className="image-uploader-box" style={{ width: '100px', height: '100px', padding: 0, cursor: loading ? 'not-allowed' : 'pointer', background: 'var(--bg-app)', border: '1px dashed var(--border)' }}>
-                      <Upload size={20} />
-                      <span style={{ fontSize: '0.75rem', marginTop: '4px' }}>เพิ่มรูปภาพ</span>
-                      <input type="file" multiple accept="image/*" style={{ display: 'none' }} onChange={handleImageChange} disabled={loading} />
-                    </label>
-                  )
-                )}
-              </div>
+          {/* ④ หลักฐานประกอบ */}
+          <FormSection
+            title="หลักฐานประกอบ"
+            subtitle="แนบรูปอาการเสียได้สูงสุด 4 รูป (JPG, PNG)"
+            icon={<ImageIcon size={18} />}
+            columns={1}
+          >
+            <div className="image-uploader-grid" style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+              {images.map((image, index) => (
+                <div key={index} className="image-preview-card">
+                   <img src={URL.createObjectURL(image)} alt="preview" />
+                  <button type="button" className="remove-btn" onClick={() => removeImage(index)} disabled={loading}>
+                    <X size={16} />
+                  </button>
+                </div>
+              ))}
+              {images.length < 4 && (
+                images.length === 0 ? (
+                  <label className="image-uploader-box" style={{ width: '100%', height: '120px', cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.6 : 1, background: 'var(--bg-app)', border: '1px dashed var(--border)' }}>
+                    <Upload size={24} style={{ marginBottom: '8px' }} />
+                    <span style={{ fontSize: '0.85rem', fontWeight: 500 }}>คลิกเพื่อเลือกรูปภาพประกอบอาการเสีย</span>
+                    <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '4px' }}>รองรับไฟล์ JPG, PNG (สูงสุด 4 รูป)</span>
+                    <input type="file" multiple accept="image/*" style={{ display: 'none' }} onChange={handleImageChange} disabled={loading} />
+                  </label>
+                ) : (
+                  <label className="image-uploader-box" style={{ width: '100px', height: '100px', padding: 0, cursor: loading ? 'not-allowed' : 'pointer', background: 'var(--bg-app)', border: '1px dashed var(--border)' }}>
+                    <Upload size={20} />
+                    <span style={{ fontSize: '0.75rem', marginTop: '4px' }}>เพิ่มรูปภาพ</span>
+                    <input type="file" multiple accept="image/*" style={{ display: 'none' }} onChange={handleImageChange} disabled={loading} />
+                  </label>
+                )
+              )}
             </div>
-          </div>
+          </FormSection>
 
           <div className="form-actions">
             <Button type="button" variant="outline" onClick={() => navigate(-1)} disabled={loading}>

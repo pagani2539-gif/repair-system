@@ -37,11 +37,11 @@ const notifyWithdrawal = (withdrawalId) => {
       .join('\n');
     const place = row.project_name || row.location;
 
-    let msg = `\n📦 *มีการเบิกอุปกรณ์*\nเลขที่: #${withdrawalId}\nผู้เบิก: ${row.recipient || '-'}`;
-    if (row.type) msg += `\nประเภท: ${row.type}`;
-    if (place) msg += `\nสถานที่: ${place}`;
-    if (itemsList) msg += `\nรายการ:\n${itemsList}`;
-    if (row.note) msg += `\nหมายเหตุ: ${row.note}`;
+    let msg = `\n📦 *มีการเบิกอุปกรณ์*\n🔢 เลขที่ใบเบิก: #${withdrawalId}\n👤 ผู้เบิก: ${row.recipient || '-'}`;
+    if (row.type) msg += `\n🛠️ ประเภท: ${row.type}`;
+    if (place) msg += `\n📍 สถานที่: ${place}`;
+    if (itemsList) msg += `\n📋 รายการอุปกรณ์:\n${itemsList}`;
+    if (row.note) msg += `\n💬 หมายเหตุ: ${row.note}`;
 
     sendLineNotify('stock', msg);
   });
@@ -73,7 +73,7 @@ exports.getAllWithdrawals = (req, res) => {
 
 exports.createWithdrawal = async (req, res) => {
   console.log('Received withdrawal request body:', req.body);
-  const { type, note, items, project_name, location, station_id, station_area_id, return_due_date } = req.body;
+  const { type, note, items, project_name, location, station_id, station_area_id, return_due_date, contract_id } = req.body;
   const recipient = req.user.full_name;
 
   if (!items || items.length === 0) {
@@ -92,9 +92,9 @@ exports.createWithdrawal = async (req, res) => {
       db.run('BEGIN TRANSACTION');
 
       db.run(`
-        INSERT INTO withdrawals (recipient, type, note, project_name, location, station_id, station_area_id, return_due_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `, [recipient, type, note, project_name || null, officialLocation, station_id || null, station_area_id || null, return_due_date || null], function(err) {
+        INSERT INTO withdrawals (recipient, type, note, project_name, location, station_id, station_area_id, return_due_date, contract_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [recipient, type, note, project_name || null, officialLocation, station_id || null, station_area_id || null, return_due_date || null, contract_id || null], function(err) {
       if (err) {
         console.error('Database INSERT error:', err);
         db.run('ROLLBACK');
@@ -157,11 +157,17 @@ exports.createWithdrawal = async (req, res) => {
                   providedSns.forEach(sn => {
                     if (errorOccurred) return;
                     
-                    db.get('SELECT id FROM inventory_instances WHERE serial_number = ?', [sn], (err, row) => {
+                    db.get('SELECT id, inventory_id FROM inventory_instances WHERE serial_number = ?', [sn], (err, row) => {
                       if (err) {
                         errorOccurred = true;
                         db.run('ROLLBACK');
                         return res.status(500).json({ error: err.message });
+                      }
+                      
+                      if (row && row.inventory_id !== item.inventory_id) {
+                        errorOccurred = true;
+                        db.run('ROLLBACK');
+                        return res.status(400).json({ message: `หมายเลขเครื่อง S/N '${sn}' ถูกใช้งานไปแล้วกับอุปกรณ์ประเภทอื่น` });
                       }
                       
                       const proceedWithTx = (instanceId) => {
@@ -173,6 +179,7 @@ exports.createWithdrawal = async (req, res) => {
                           project_name: project_name,
                           location: officialLocation,
                           station_id: station_id,
+                          contract_id: contract_id,
                           user_name: recipient,
                           note: note,
                           withdrawal_id: withdrawalId
@@ -190,6 +197,7 @@ exports.createWithdrawal = async (req, res) => {
                               project_name: project_name,
                               location: officialLocation,
                               station_id: station_id,
+                              contract_id: contract_id,
                               user_name: recipient,
                               note: note ? `${note} (Remaining qty without S/N)` : '(Remaining qty without S/N)',
                               withdrawal_id: withdrawalId
@@ -203,8 +211,8 @@ exports.createWithdrawal = async (req, res) => {
 
                       if (row) {
                         const instanceId = row.id;
-                        db.run(`UPDATE inventory_instances SET status = 'Withdrawn', current_location = ?, station_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-                          [officialLocation || project_name || 'Withdrawn', station_id || null, instanceId], (err) => {
+                        db.run(`UPDATE inventory_instances SET status = 'Withdrawn', current_location = ?, station_id = ?, contract_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+                          [officialLocation || project_name || 'Withdrawn', station_id || null, contract_id || null, instanceId], (err) => {
                             if (err) {
                               errorOccurred = true;
                               db.run('ROLLBACK');
@@ -213,8 +221,8 @@ exports.createWithdrawal = async (req, res) => {
                             proceedWithTx(instanceId);
                           });
                       } else {
-                        db.run(`INSERT INTO inventory_instances (inventory_id, serial_number, status, current_location, station_id) VALUES (?, ?, 'Withdrawn', ?, ?)`,
-                          [item.inventory_id, sn, officialLocation || project_name || 'Withdrawn', station_id || null], function(err) {
+                        db.run(`INSERT INTO inventory_instances (inventory_id, serial_number, status, current_location, station_id, contract_id) VALUES (?, ?, 'Withdrawn', ?, ?, ?)`,
+                          [item.inventory_id, sn, officialLocation || project_name || 'Withdrawn', station_id || null, contract_id || null], function(err) {
                             if (err) {
                               errorOccurred = true;
                               db.run('ROLLBACK');
@@ -234,6 +242,7 @@ exports.createWithdrawal = async (req, res) => {
                     project_name: project_name,
                     location: officialLocation,
                     station_id: station_id,
+                    contract_id: contract_id,
                     user_name: recipient,
                     note: note,
                     withdrawal_id: withdrawalId
@@ -279,7 +288,7 @@ exports.updateItemSerialNumbers = (req, res) => {
     db.run('BEGIN TRANSACTION');
 
     // 1. Get the current item info
-    db.get('SELECT wi.*, w.recipient, w.project_name, w.location, w.station_id, w.note FROM withdrawal_items wi JOIN withdrawals w ON wi.withdrawal_id = w.id WHERE wi.id = ? AND wi.withdrawal_id = ?', [itemId, id], (err, item) => {
+    db.get('SELECT wi.*, w.recipient, w.project_name, w.location, w.station_id, w.contract_id, w.note FROM withdrawal_items wi JOIN withdrawals w ON wi.withdrawal_id = w.id WHERE wi.id = ? AND wi.withdrawal_id = ?', [itemId, id], (err, item) => {
       if (err || !item) {
         db.run('ROLLBACK');
         return res.status(404).json({ message: 'ไม่พบรายการเบิกที่ต้องการแก้ไข' });
@@ -310,10 +319,15 @@ exports.updateItemSerialNumbers = (req, res) => {
 
         newSns.forEach(sn => {
           // 3. Register/Update inventory_instances
-          db.get('SELECT id FROM inventory_instances WHERE serial_number = ?', [sn], (err, row) => {
+          db.get('SELECT id, inventory_id FROM inventory_instances WHERE serial_number = ?', [sn], (err, row) => {
             if (err) {
               db.run('ROLLBACK');
               return res.status(500).json({ error: err.message });
+            }
+
+            if (row && row.inventory_id !== item.inventory_id) {
+              db.run('ROLLBACK');
+              return res.status(400).json({ message: `หมายเลขเครื่อง S/N '${sn}' ถูกใช้งานไปแล้วกับอุปกรณ์ประเภทอื่น` });
             }
 
             const finalizeSn = (instanceId) => {
@@ -326,6 +340,7 @@ exports.updateItemSerialNumbers = (req, res) => {
                 project_name: item.project_name,
                 location: item.location,
                 station_id: item.station_id,
+                contract_id: item.contract_id,
                 user_name: item.recipient,
                 note: `ระบุ S/N ย้อนหลังสำหรับการเบิก #${id}`,
                 withdrawal_id: id
@@ -340,8 +355,8 @@ exports.updateItemSerialNumbers = (req, res) => {
             };
 
             if (row) {
-              db.run(`UPDATE inventory_instances SET status = 'Withdrawn', current_location = ?, station_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-                [item.location || item.project_name || 'Withdrawn', item.station_id || null, row.id], (err) => {
+              db.run(`UPDATE inventory_instances SET status = 'Withdrawn', current_location = ?, station_id = ?, contract_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+                [item.location || item.project_name || 'Withdrawn', item.station_id || null, item.contract_id || null, row.id], (err) => {
                   if (err) {
                     db.run('ROLLBACK');
                     return res.status(500).json({ error: err.message });
@@ -349,8 +364,8 @@ exports.updateItemSerialNumbers = (req, res) => {
                   finalizeSn(row.id);
                 });
             } else {
-              db.run(`INSERT INTO inventory_instances (inventory_id, serial_number, status, current_location, station_id) VALUES (?, ?, 'Withdrawn', ?, ?)`,
-                [item.inventory_id, sn, item.location || item.project_name || 'Withdrawn', item.station_id || null], function(err) {
+              db.run(`INSERT INTO inventory_instances (inventory_id, serial_number, status, current_location, station_id, contract_id) VALUES (?, ?, 'Withdrawn', ?, ?, ?)`,
+                [item.inventory_id, sn, item.location || item.project_name || 'Withdrawn', item.station_id || null, item.contract_id || null], function(err) {
                   if (err) {
                     db.run('ROLLBACK');
                     return res.status(500).json({ error: err.message });
@@ -454,4 +469,17 @@ exports.deleteWithdrawal = (req, res) => {
       });
     });
   });
+};
+
+exports.updateWithdrawalCompany = (req, res) => {
+  const { id } = req.params;
+  const { company_id } = req.body;
+  db.run(
+    'UPDATE withdrawals SET company_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+    [company_id || null, id],
+    function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ message: 'อัปเดตข้อมูลบริษัทของใบเบิกสำเร็จ' });
+    }
+  );
 };

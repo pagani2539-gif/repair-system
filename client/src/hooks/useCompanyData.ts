@@ -36,10 +36,10 @@ export function useCompanyData(companyId?: number | null, logoId?: number | null
         if (cancelled) return;
 
         let target: Company | undefined;
-        if (companyId) {
+        if (companyId && companyId !== -1) {
           target = companies.find((c) => c.id === companyId);
         }
-        if (!target) {
+        if (!target && companyId !== -1) {
           target = companies.find((c) => c.is_default === 1) || companies[0];
         }
         if (!target) {

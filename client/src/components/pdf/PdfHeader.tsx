@@ -13,6 +13,8 @@ interface Props {
   statusBadge?: { label: string; tone?: 'success' | 'warning' | 'danger' | 'neutral' };
   /** Show the corporate company block (logo + name + address). Default true. Set false for repair/claim/withdrawal forms. */
   showCompany?: boolean;
+  titleTh?: string;
+  titleEn?: string;
 }
 
 /**
@@ -27,9 +29,10 @@ interface Props {
  *  │       <<accent stripe>>                              │
  *  └──────────────────────────────────────────────────────┘
  */
-export const PdfHeader: React.FC<Props> = ({ docType, docNumber, docDate, company, logo, statusBadge, showCompany = true }) => {
+export const PdfHeader: React.FC<Props> = ({ docType, docNumber, docDate, company, logo, statusBadge, showCompany, titleTh, titleEn }) => {
   const labels = docLabels[docType];
   const accentColor = pdfTheme.accents[docType];
+  const shouldShowCompany = showCompany !== undefined ? showCompany : (company !== null);
 
   const getSoftTint = (type: DocType): string => {
     switch (type) {
@@ -59,7 +62,7 @@ export const PdfHeader: React.FC<Props> = ({ docType, docNumber, docDate, compan
         alignItems: 'center',
       }}>
         {/* ─── Left Column: Company Info (Detailed or Mini) ─── */}
-        {!showCompany ? (
+        {!shouldShowCompany ? (
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center', fontFamily: pdfTheme.fonts.body }}>
             <div style={{
               width: '38px',
@@ -199,7 +202,7 @@ export const PdfHeader: React.FC<Props> = ({ docType, docNumber, docDate, compan
               color: pdfTheme.colors.text,
               lineHeight: 1.1,
             }}>
-              {labels.th}
+              {titleTh || labels.th}
             </div>
             <div style={{
               fontSize: `${pdfTheme.size.micro}px`,
@@ -207,7 +210,7 @@ export const PdfHeader: React.FC<Props> = ({ docType, docNumber, docDate, compan
               color: pdfTheme.colors.textMuted,
               marginTop: '1px',
             }}>
-              {labels.en}
+              {titleEn || labels.en}
             </div>
             <div style={{
               marginTop: '4px',

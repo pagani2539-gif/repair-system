@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Repair, RepairDetail, RepairStatsResponse, InventoryItem, Withdrawal, InventoryStats, DashboardData, GlobalSearchResults, PurchaseOrder, StationDetailResponse, Station, StationArea, VendorContact, Company, CompanyLogo, User, SystemSettings, AuditLog, AssetLifecycleItem } from './types';
+import type { Repair, RepairDetail, RepairStatsResponse, InventoryItem, Withdrawal, InventoryStats, DashboardData, GlobalSearchResults, PurchaseOrder, StationDetailResponse, Station, StationArea, VendorContact, Company, CompanyLogo, User, SystemSettings, AuditLog, AssetLifecycleItem, Contract, AssetManualStatus } from './types';
 
 const TOKEN_KEY = 'maintenance_auth_token';
 
@@ -34,7 +34,7 @@ api.interceptors.request.use((config) => {
 // On 401, clear token + redirect to /login (skip if already on auth pages)
 api.interceptors.response.use(
   (response) => {
-    if (response.config.url?.includes('/repairs/stats')) {
+    if (import.meta.env.DEV && response.config.url?.includes('/repairs/stats')) {
       console.log('--- STATS API RAW DATA ---');
       console.log(JSON.stringify(response.data, null, 2));
     }
@@ -137,6 +137,11 @@ export const repairApi = {
     return response.data;
   },
 
+  updateCompany: async (id: number | string, companyId: number) => {
+    const response = await api.patch(`/repairs/${id}/company`, { company_id: companyId });
+    return response.data;
+  },
+
   markAsRead: async (id: number | string) => {
     const response = await api.patch(`/repairs/${id}/read`);
     return response.data;
@@ -174,6 +179,10 @@ export const inventoryApi = {
     });
     return response.data;
   },
+  importBulk: async (items: Array<{ name: string; model?: string; description?: string; storage_location?: string; quantity?: number; min_stock?: number; requires_sn?: number }>) => {
+    const response = await api.post<{ message: string; created: number; updated: number; total: number }>('/inventory/import', { items });
+    return response.data;
+  },
   updateInstanceCondition: async (instanceId: number | string, condition: string) => {
     const response = await api.patch(`/inventory/instances/${instanceId}/condition`, { condition });
     return response.data;
@@ -203,14 +212,20 @@ export const withdrawalApi = {
     });
     return response.data;
   },
+  updateCompany: async (id: number | string, companyId: number) => {
+    const response = await api.patch(`/withdrawals/${id}/company`, { company_id: companyId });
+    return response.data;
+  },
   create: async (data: {
     recipient: string;
     project_name?: string;
     location?: string;
     station_id?: number;
     station_area_id?: number;
+    contract_id?: number;
     type: string;
     note?: string;
+    return_due_date?: string;
     items: Array<{ inventory_id: number; quantity: number; serial_numbers?: string[] }>;
   }) => {
     const response = await api.post('/withdrawals', data);
@@ -291,8 +306,27 @@ export const purchaseOrderApi = {
     const response = await api.post<{ id: number; po_no: string; message: string }>('/purchase-orders', data);
     return response.data;
   },
-  update: async (id: number | string, data: { status?: 'Draft' | 'Pending' | 'Approved' | 'Cancelled'; approved_by?: string }) => {
+  update: async (id: number | string, data: {
+    status?: 'Draft' | 'Pending' | 'Approved' | 'Ordered' | 'Cancelled';
+    note?: string;
+    items?: { inventory_id: number; quantity: number; unit_price?: number }[];
+    ordered_by?: string;
+    project_name?: string;
+    company_name?: string;
+    vendor_address?: string;
+    vendor_phone?: string;
+    vendor_contact_person?: string;
+    vendor_tax_id?: string;
+    buyer_department?: string;
+    buyer_phone?: string;
+    buyer_email?: string;
+    approved_by?: string;
+  }) => {
     const response = await api.patch(`/purchase-orders/${id}`, data);
+    return response.data;
+  },
+  updateCompany: async (id: number | string, companyId: number) => {
+    const response = await api.patch(`/purchase-orders/${id}/company`, { company_id: companyId });
     return response.data;
   },
   delete: async (id: number | string) => {
@@ -335,6 +369,46 @@ export const stationApi = {
   },
   update: async (stationId: number | string, data: Omit<Station, 'id' | 'status' | 'code'>) => {
     const response = await api.patch<Station>(`/stations/${stationId}`, data);
+    return response.data;
+  },
+  setAssetStatus: async (
+    stationId: number | string,
+    inventoryId: number | string,
+    body: { status: string; note?: string }
+  ) => {
+    const response = await api.put<AssetManualStatus>(
+      `/stations/${stationId}/assets/${inventoryId}/status`,
+      body
+    );
+    return response.data;
+  }
+};
+
+type ContractInput = {
+  contract_no: string;
+  name: string;
+  year_be: number;
+  company_id?: number;
+  start_date?: string;
+  end_date?: string;
+  note?: string;
+};
+
+export const contractApi = {
+  getAll: async (params?: { status?: number }) => {
+    const response = await api.get<Contract[]>('/contracts', { params });
+    return response.data;
+  },
+  create: async (data: ContractInput) => {
+    const response = await api.post<Contract>('/contracts', data);
+    return response.data;
+  },
+  update: async (id: number | string, data: ContractInput) => {
+    const response = await api.patch<Contract>(`/contracts/${id}`, data);
+    return response.data;
+  },
+  delete: async (id: number | string) => {
+    const response = await api.delete<{ message: string }>(`/contracts/${id}`);
     return response.data;
   }
 };

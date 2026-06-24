@@ -12,6 +12,7 @@ const variantColor = (variant?: TableAction<unknown>['variant']): string => {
   switch (variant) {
     case 'primary': return 'var(--primary)';
     case 'danger':  return 'var(--danger)';
+    case 'success': return 'var(--success)';
     case 'outline': return 'var(--text-main)';
     default:        return 'var(--text-muted)';
   }

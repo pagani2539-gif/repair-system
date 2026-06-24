@@ -23,6 +23,8 @@ export interface Repair {
   is_read: number;
   project_name?: string;
   type?: 'repair' | 'claim';
+  instance_id?: number;
+  inventory_id?: number;
 }
 
 export interface RepairLog {
@@ -117,10 +119,29 @@ export interface Withdrawal {
   type: string;
   note?: string;
   return_due_date?: string;
+  contract_id?: number;
+  contract_no?: string;
+  contract_name?: string;
+  contract_year?: number;
   created_at: string;
   items_summary?: string;
   items_missing_sn?: number;
   items: WithdrawalItem[];
+}
+
+export interface Contract {
+  id: number;
+  contract_no: string;
+  name: string;
+  year_be: number;
+  company_id?: number;
+  company_name?: string;
+  start_date?: string;
+  end_date?: string;
+  note?: string;
+  status: number;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface InventoryStats {
@@ -198,7 +219,7 @@ export interface InventoryInstance {
   inventory_id: number;
   serial_number?: string;
   condition: 'New' | 'Good' | 'Fair' | 'Broken';
-  status: 'In Stock' | 'Borrowed' | 'Withdrawn' | 'In Repair';
+  status: 'In Stock' | 'Withdrawn' | 'Under Repair' | 'Claiming' | 'Damaged';
   current_location?: string;
   station_id?: number;
   created_at: string;
@@ -233,6 +254,10 @@ export interface InventoryTransaction {
   status?: string;
   return_image?: string;
   return_due_date?: string;
+  contract_id?: number;
+  contract_no?: string;
+  contract_name?: string;
+  contract_year?: number;
 }
 
 export interface PurchaseOrderItem {
@@ -251,7 +276,7 @@ export interface PurchaseOrderItem {
 export interface PurchaseOrder {
   id: number;
   po_no: string;
-  status: 'Draft' | 'Pending' | 'Approved' | 'Received' | 'Cancelled';
+  status: 'Draft' | 'Pending' | 'Approved' | 'Ordered' | 'Received' | 'Cancelled';
   created_by: string;
   note?: string;
   ordered_by?: string;
@@ -314,6 +339,14 @@ export interface StationStats {
   withdrawal_total: number;
 }
 
+export interface AssetManualStatus {
+  inventory_id: number;
+  status: string;
+  note?: string;
+  updated_by?: string;
+  updated_at?: string;
+}
+
 export interface StationDetailResponse {
   station: Station;
   stats: StationStats;
@@ -321,6 +354,15 @@ export interface StationDetailResponse {
   claims: Repair[];
   withdrawals: Withdrawal[];
   transactions: InventoryTransaction[];
+  asset_statuses?: AssetManualStatus[];
+  instances?: Array<{
+    id: number;
+    inventory_id: number;
+    serial_number: string;
+    condition: string;
+    status: string;
+    updated_at?: string;
+  }>;
 }
 
 export interface Company {
@@ -406,11 +448,14 @@ export interface AssetLifecycleItem {
   inventory_id: number;
   device_name: string;
   model?: string;
-  unit_price: number;
   warranty_months: number;
   station_name?: string;
   station_code?: string;
-  total_repair_cost: number;
+  contract_id?: number;
+  contract_no?: string;
+  contract_name?: string;
+  contract_year?: number;
+  repair_count: number;
   age_months: number;
   is_expired_warranty: boolean;
   cost_exceeds_threshold: boolean;

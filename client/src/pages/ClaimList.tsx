@@ -14,19 +14,19 @@ import {
   Trash2,
   ScanEye,
   CirclePlay,
-  AlertTriangle,
   UserCheck,
-  Inbox,
   Hourglass,
   CheckCircle2,
   MapPin,
   PauseCircle,
   FileText,
   Package,
-  RefreshCw,
   AlertCircle,
   MessageSquare,
-  Download
+  Download,
+  // Modern Icons
+  ShieldAlert,
+  FileWarning
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import StationCell from '../components/shared/StationCell';
@@ -178,7 +178,7 @@ const ClaimList: React.FC = () => {
 
   const columns: TableColumn<Repair>[] = [
     {
-      id: 'ticket', header: 'เลขที่ใบเคลม', accessor: 'ticket_no', priority: 1, width: '140px',
+      id: 'ticket', header: 'เลขที่ใบเคลม', accessor: 'ticket_no', priority: 1, width: '170px',
       render: (val, row) => (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 800, color: 'var(--primary)', fontSize: '0.9rem' }}>
@@ -367,9 +367,9 @@ const ClaimList: React.FC = () => {
 
       <div className="stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.25rem', marginBottom: '2rem' }}>
         {stats?.claim && [
-          { label: 'งานทั้งหมด', val: stats.claim.total, icon: Inbox, status: 'All' },
-          { label: 'รอดำเนินการ', val: stats.claim.pending, icon: AlertTriangle, status: 'รอดำเนินการ' },
-          { label: 'กำลังเคลม', val: stats.claim.in_progress, icon: RefreshCw, status: 'กำลังซ่อม' },
+          { label: 'งานทั้งหมด', val: stats.claim.total, icon: ShieldAlert, status: 'All' },
+          { label: 'รอดำเนินการ', val: stats.claim.pending, icon: ShieldAlert, status: 'รอดำเนินการ' },
+          { label: 'กำลังเคลม', val: stats.claim.in_progress, icon: FileWarning, status: 'กำลังซ่อม' },
           { label: 'รออะไหล่/ศูนย์', val: stats.claim.on_hold, icon: Hourglass, status: 'รออะไหล่' },
           { label: 'เคลมเสร็จสิ้น', val: stats.claim.completed, icon: CheckCircle2, status: 'เสร็จสิ้น' }
         ].map((s, i) => (

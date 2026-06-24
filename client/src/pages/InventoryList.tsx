@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { inventoryApi, transactionApi, UPLOAD_URL } from '../api';
 import { useNotification } from '../components/Layout';
 import { useAuth } from '../contexts/AuthContext';
@@ -26,9 +26,14 @@ import {
   ArrowUpCircle,
   ArrowDownCircle,
   RefreshCcw,
-  Download
+  Download,
+  Tag,
+  Clock,
+  FileSpreadsheet,
+  AlertTriangle
 } from 'lucide-react';
 import { exportToCsv } from '../utils/csvExporter';
+import { parseInventoryFile, type ParsedInventoryRow } from '../utils/excelImporter';
 import { compressImage } from '../utils/imageCompressor';
 import BaseDataTable from '../components/tables/BaseDataTable';
 import TableToolbar from '../components/tables/TableToolbar';
@@ -44,12 +49,18 @@ const InventoryList: React.FC = () => {
   const [showModal, setShowModal] = useState<boolean>(false);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
   const [formData, setFormData] = useState({
-    name: '', model: '', description: '', quantity: 0, min_stock: 10, requires_sn: 1, storage_location: '', unit_price: 0, warranty_months: 36
+    name: '', model: '', description: '', quantity: 0, min_stock: 10, requires_sn: 1, storage_location: '',
+    unit_price: 0, warranty_months: 36
   });
 
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const [importModal, setImportModal] = useState<{ open: boolean; rows: ParsedInventoryRow[]; errors: string[]; importing: boolean }>({
+    open: false, rows: [], errors: [], importing: false
+  });
 
   const handleInventoryImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -218,7 +229,7 @@ const InventoryList: React.FC = () => {
 
   const handleExportExcel = () => {
     const headers = [
-      'ชื่ออุปกรณ์', 'รุ่น/Model', 'คำอธิบาย', 'ที่เก็บอุปกรณ์', 'จำนวนคงเหลือ', 'จุดเตือนสต็อกขั้นต่ำ', 'ราคาต่อหน่วย (บาท)', 'ระยะรับประกัน (เดือน)', 'ต้องมี S/N'
+      'ชื่ออุปกรณ์', 'รุ่น/Model', 'คำอธิบาย', 'ที่เก็บอุปกรณ์', 'จำนวนคงเหลือ', 'จุดเตือนสต็อกขั้นต่ำ', 'ต้องมี S/N'
     ];
     const rows = filteredData.map(item => [
       item.name,
@@ -227,12 +238,51 @@ const InventoryList: React.FC = () => {
       item.storage_location || '-',
       item.quantity,
       item.min_stock,
-      item.unit_price || 0,
-      item.warranty_months || 0,
       item.requires_sn === 1 ? 'ใช่' : 'ไม่'
     ]);
     exportToCsv(`inventory_export_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`, headers, rows);
     notify('ส่งออกข้อมูล Excel เรียบร้อยแล้ว');
+  };
+
+  const handleDownloadTemplate = () => {
+    const headers = ['ชื่ออุปกรณ์', 'รุ่น/Model', 'คำอธิบาย', 'ที่เก็บอุปกรณ์', 'จำนวนคงเหลือ', 'จุดเตือนสต็อกขั้นต่ำ', 'ต้องมี S/N'];
+    const sample = [
+      ['Power Supply 24V', 'Omron S8VK-G', 'ใช้กับตู้ควบคุม', 'คลังกลาง / ชั้น A3', 10, 5, 'ใช่'],
+      ['สาย LAN CAT6', '', 'สำรองหน้างาน', 'คลังกลาง / ชั้น B1', 50, 20, 'ไม่']
+    ];
+    exportToCsv('inventory_import_template', headers, sample);
+    notify('ดาวน์โหลดเทมเพลตเรียบร้อย');
+  };
+
+  const handleImportFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow re-selecting the same file
+    if (!file) return;
+    try {
+      const { rows, errors } = await parseInventoryFile(file);
+      if (rows.length === 0) {
+        notify(errors[0] || 'ไม่พบข้อมูลที่นำเข้าได้', 'error');
+        return;
+      }
+      setImportModal({ open: true, rows, errors, importing: false });
+    } catch {
+      notify('ไม่สามารถอ่านไฟล์ได้ กรุณาตรวจสอบรูปแบบไฟล์ (.xlsx, .xls, .csv)', 'error');
+    }
+  };
+
+  const handleConfirmImport = async () => {
+    setImportModal(prev => ({ ...prev, importing: true }));
+    try {
+      const res = await inventoryApi.importBulk(importModal.rows);
+      notify(res.message);
+      setImportModal({ open: false, rows: [], errors: [], importing: false });
+      await fetchData();
+      refreshUnreadCounts();
+    } catch (error) {
+      const err = error as { response?: { data?: { message?: string } } };
+      notify(err.response?.data?.message || 'เกิดข้อผิดพลาดในการนำเข้า', 'error');
+      setImportModal(prev => ({ ...prev, importing: false }));
+    }
   };
 
   const fetchItemHistory = async (itemId: number) => {
@@ -425,9 +475,9 @@ const InventoryList: React.FC = () => {
           <Card style={{ padding: '1rem', backgroundColor: 'var(--bg-app)' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', fontSize: '0.9rem' }}>
               <div><strong>ที่เก็บ:</strong> {item.storage_location || '-'}</div>
+              <div><strong>ราคาต่อหน่วย:</strong> {item.unit_price !== undefined ? `${item.unit_price.toLocaleString()} บาท` : '—'}</div>
+              <div><strong>ระยะเวลาประกัน:</strong> {item.warranty_months !== undefined ? `${item.warranty_months} เดือน` : '—'}</div>
               <div><strong>จำนวนคงเหลือ:</strong> {item.quantity} ชิ้น (แจ้งเตือนที่ {item.min_stock} ชิ้น)</div>
-              <div><strong>ราคาต่อหน่วย:</strong> {item.unit_price ? `${item.unit_price.toLocaleString()} บาท` : '0 บาท'}</div>
-              <div><strong>การรับประกัน:</strong> {item.warranty_months ? `${item.warranty_months} เดือน` : '36 เดือน'}</div>
               <div><strong>ประเภทการติดตาม:</strong> {item.requires_sn ? 'ต้องระบุหมายเลขเครื่อง (S/N)' : 'ไม่ระบุหมายเลขเครื่อง (S/N)'}</div>
               <div><strong>คำอธิบาย:</strong> {item.description || '-'}</div>
             </div>
@@ -491,8 +541,17 @@ const InventoryList: React.FC = () => {
         <div className="page-header boot-animate stagger-0" style={{ marginBottom: '2rem' }}>
           <div className="page-title"><h2>จัดการอุปกรณ์และสต็อก</h2><p>เพิ่ม แก้ไข และติดตามจำนวนอุปกรณ์คงเหลือในระบบ</p></div>
           <div style={{ display: 'flex', gap: '12px' }}>
+            <Button variant="outline" icon={<FileSpreadsheet size={20} />} onClick={handleDownloadTemplate}>เทมเพลต</Button>
+            <Button variant="outline" icon={<Upload size={20} />} onClick={() => importInputRef.current?.click()}>นำเข้า Excel</Button>
             <Button variant="outline" icon={<Download size={20} />} onClick={handleExportExcel}>ส่งออก Excel</Button>
             <Button variant="primary" icon={<Plus size={20} />} onClick={() => handleOpenModal()}>เพิ่มอุปกรณ์ใหม่</Button>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              style={{ display: 'none' }}
+              onChange={handleImportFileChange}
+            />
           </div>
         </div>
 
@@ -606,7 +665,7 @@ const InventoryList: React.FC = () => {
                   </label>
                 </div>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '1rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '1rem', marginBottom: '1.25rem' }}>
                 <Input
                   label="จำนวนคงเหลือ"
                   type="number"
@@ -651,24 +710,23 @@ const InventoryList: React.FC = () => {
                   </label>
                 </div>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.25rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '1rem', marginBottom: '1.25rem' }}>
                 <Input
                   label="ราคาต่อหน่วย (บาท)"
                   type="number"
                   min={0}
+                  step="any"
                   value={formData.unit_price}
                   onChange={e => setFormData({ ...formData, unit_price: Number(e.target.value) })}
                   disabled={saving}
-                  placeholder="เช่น 1500"
                 />
                 <Input
-                  label="ระยะรับประกัน (เดือน)"
+                  label="ระยะเวลาประกัน (เดือน)"
                   type="number"
                   min={0}
                   value={formData.warranty_months}
                   onChange={e => setFormData({ ...formData, warranty_months: Number(e.target.value) })}
                   disabled={saving}
-                  placeholder="เช่น 36"
                 />
               </div>
               <TextArea
@@ -685,6 +743,61 @@ const InventoryList: React.FC = () => {
                 <Button type="submit" variant="primary" loading={saving}>บันทึก</Button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {importModal.open && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '860px' }}>
+            <h3 style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <Upload size={22} color="var(--primary)" /> ตรวจสอบข้อมูลก่อนนำเข้า
+            </h3>
+            <p style={{ color: 'var(--text-muted)', marginTop: '-0.25rem', fontSize: '0.9rem' }}>
+              พบ <strong style={{ color: 'var(--primary)' }}>{importModal.rows.length}</strong> รายการพร้อมนำเข้า
+              {' · '}อุปกรณ์ชื่อซ้ำกับในคลังจะถูกอัปเดตข้อมูลและจำนวนให้อัตโนมัติ
+            </p>
+
+            {importModal.errors.length > 0 && (
+              <div style={{ display: 'flex', gap: '8px', padding: '0.75rem 1rem', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: '8px', marginBottom: '1rem', fontSize: '0.82rem', color: '#c2410c' }}>
+                <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: '2px' }} />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                  {importModal.errors.slice(0, 5).map((err, i) => <span key={i}>{err}</span>)}
+                  {importModal.errors.length > 5 && <span>และอีก {importModal.errors.length - 5} แถวที่ถูกข้าม</span>}
+                </div>
+              </div>
+            )}
+
+            <div style={{ maxHeight: '360px', overflow: 'auto', border: '1px solid var(--border)', borderRadius: '10px' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+                <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-app)', zIndex: 1 }}>
+                  <tr>
+                    {['ชื่ออุปกรณ์', 'รุ่น/แบรนด์', 'ที่เก็บ', 'จำนวน', 'ขั้นต่ำ', 'S/N', 'ราคา', 'ประกัน (เดือน)'].map(h => (
+                      <th key={h} style={{ textAlign: 'left', padding: '10px 12px', fontWeight: 800, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {importModal.rows.map((row, i) => (
+                    <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td style={{ padding: '8px 12px', fontWeight: 700 }}>{row.name}</td>
+                      <td style={{ padding: '8px 12px', color: 'var(--text-muted)' }}>{row.model || '—'}</td>
+                      <td style={{ padding: '8px 12px', color: 'var(--text-muted)' }}>{row.storage_location || '—'}</td>
+                      <td style={{ padding: '8px 12px' }}>{row.quantity}</td>
+                      <td style={{ padding: '8px 12px' }}>{row.min_stock}</td>
+                      <td style={{ padding: '8px 12px' }}>{row.requires_sn ? 'ใช่' : 'ไม่'}</td>
+                      <td style={{ padding: '8px 12px' }}>{row.unit_price !== undefined ? `${row.unit_price.toLocaleString()} บ.` : '—'}</td>
+                      <td style={{ padding: '8px 12px' }}>{row.warranty_months !== undefined ? `${row.warranty_months} ด.` : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="modal-actions">
+              <Button type="button" variant="outline" disabled={importModal.importing} onClick={() => setImportModal({ open: false, rows: [], errors: [], importing: false })}>ยกเลิก</Button>
+              <Button type="button" variant="primary" loading={importModal.importing} onClick={handleConfirmImport}>ยืนยันนำเข้า {importModal.rows.length} รายการ</Button>
+            </div>
           </div>
         </div>
       )}

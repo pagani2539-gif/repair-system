@@ -156,45 +156,54 @@ const PrintReturnTemplate: React.FC<Props> = ({ transaction, isPreview, companyI
                 ) },
               ]}
             />
-
-            {/* Display Return Image if present */}
-            {transaction.return_image && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                <div style={{
-                  fontSize: `${pdfTheme.size.micro}px`,
-                  color: pdfTheme.colors.primary,
-                  fontWeight: 800,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.04em',
-                  margin: '4px 0 2px 0',
-                }}>
-                  รูปสภาพอุปกรณ์ตอนคืน
-                </div>
-                <div style={{
-                  height: '90px',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: '6px',
-                  background: pdfTheme.colors.bgSubtle,
-                  overflow: 'hidden',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  padding: '4px',
-                  boxShadow: '0 2px 4px rgba(0,0,0,0.03)',
-                }}>
-                  <img
-                    src={`${UPLOAD_URL}/uploads/${transaction.return_image}`}
-                    alt="หลักฐานสภาพตอนคืน"
-                    crossOrigin="anonymous"
-                    style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
-                  />
-                </div>
-              </div>
-            )}
           </div>
         </div>
 
-        <div style={{ marginTop: 'auto' }} />
+        {/* ─── Return Image: full-width, grows to fill available space ─── */}
+        {transaction.return_image ? (
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '4px',
+            flex: 1,
+            minHeight: 0,
+            marginTop: '12px',
+          }}>
+            <div style={{
+              fontSize: `${pdfTheme.size.micro}px`,
+              color: pdfTheme.colors.primary,
+              fontWeight: 800,
+              textTransform: 'uppercase',
+              letterSpacing: '0.04em',
+              margin: '0 0 2px 0',
+              flexShrink: 0,
+            }}>
+              รูปสภาพอุปกรณ์ตอนคืน
+            </div>
+            <div style={{
+              flex: 1,
+              minHeight: '320px',
+              border: '1px solid #cbd5e1',
+              borderRadius: '6px',
+              background: pdfTheme.colors.bgSubtle,
+              overflow: 'hidden',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '6px',
+              boxShadow: '0 2px 4px rgba(0,0,0,0.03)',
+            }}>
+              <img
+                src={`${UPLOAD_URL}/uploads/${transaction.return_image}`}
+                alt="หลักฐานสภาพตอนคืน"
+                crossOrigin="anonymous"
+                style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+              />
+            </div>
+          </div>
+        ) : (
+          <div style={{ marginTop: 'auto' }} />
+        )}
 
         <PdfSignatureBlock
           slots={[

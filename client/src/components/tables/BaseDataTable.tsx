@@ -171,6 +171,7 @@ function BaseDataTable<T>({
                 <th
                   title="จัดการ"
                   aria-label="จัดการ"
+                  className="sticky-actions-col-th"
                   style={{ textAlign: 'center', position: 'sticky', right: 0, zIndex: 21, width: `${actionsCellWidth}px`, color: 'var(--text-muted)' }}
                 >
                   <MoreHorizontal size={16} style={{ verticalAlign: 'middle' }} />
@@ -180,16 +181,17 @@ function BaseDataTable<T>({
           </thead>
 
           <tbody>
-            {data.map((row) => {
-              const rowId = selection?.getRowId(row);
-              const isSelected = rowId !== undefined && selection?.selectedIds.includes(rowId);
+            {data.map((row, rowIndex) => {
+              const selectionId = selection?.getRowId(row);
+              const rowId = selectionId ?? (row as Record<string, unknown>).id ?? rowIndex;
+              const isSelected = selectionId !== undefined && selection?.selectedIds.includes(selectionId);
 
               const accent = getRowAccent?.(row);
               return (
                 <tr
                   key={rowId as string | number}
                   onClick={() => handleRowClick(row)}
-                  className="data-table-row"
+                  className={`data-table-row ${isSelected ? 'is-selected' : ''}`}
                   style={{
                     height: 'var(--table-row-height)',
                     cursor: 'pointer',
@@ -204,8 +206,8 @@ function BaseDataTable<T>({
                         type="checkbox" 
                         checked={isSelected}
                         onChange={() => {
-                          if (isSelected) selection.onSelectionChange(selection.selectedIds.filter(id => id !== rowId));
-                          else selection.onSelectionChange([...selection.selectedIds, rowId!]);
+                          if (isSelected) selection.onSelectionChange(selection.selectedIds.filter(id => id !== selectionId));
+                          else selection.onSelectionChange([...selection.selectedIds, selectionId!]);
                         }}
                       />
                     </td>
@@ -228,7 +230,7 @@ function BaseDataTable<T>({
                     );
                   })}
                   {actions.length > 0 && (
-                    <td style={{ textAlign: 'center', position: 'sticky', right: 0, zIndex: 10, width: `${actionsCellWidth}px` }} onClick={e => e.stopPropagation()}>
+                    <td className="sticky-actions-col-td" style={{ textAlign: 'center', position: 'sticky', right: 0, zIndex: 10, width: `${actionsCellWidth}px` }} onClick={e => e.stopPropagation()}>
                       <ActionMenu
                         row={row}
                         actions={actions.map(a => a.id === 'view' ? { ...a, onClick: () => handleRowClick(row) } : a)}

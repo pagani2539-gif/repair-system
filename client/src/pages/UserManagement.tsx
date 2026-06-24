@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
+import FormSection from '../components/ui/FormSection';
 import { useNotification } from '../components/Layout';
 import { useAuth } from '../contexts/AuthContext';
 import { userApi } from '../api';
@@ -16,6 +17,7 @@ import {
   Check,
   Shield,
   Lock,
+  User as UserIcon,
 } from 'lucide-react';
 
 const DEFAULT_REGULAR_PERMISSIONS: Permissions = {
@@ -152,12 +154,12 @@ const UserManagement: React.FC = () => {
         notify('กรุณากรอกข้อมูลให้ครบ', 'error');
         return;
       }
-      if (form.password.length < 6) {
-        notify('รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร', 'error');
+      if (form.password.length < 8) {
+        notify('รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร', 'error');
         return;
       }
-    } else if (form.password && form.password.length < 6) {
-      notify('รหัสผ่านใหม่ต้องมีอย่างน้อย 6 ตัวอักษร', 'error');
+    } else if (form.password && form.password.length < 8) {
+      notify('รหัสผ่านใหม่ต้องมีอย่างน้อย 8 ตัวอักษร', 'error');
       return;
     }
 
@@ -281,7 +283,7 @@ const UserManagement: React.FC = () => {
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                       fontWeight: 800, fontSize: '0.9rem', border: u.is_full ? 'none' : '1px solid var(--border)',
                     }}>
-                      {u.full_name.charAt(0).toUpperCase()}
+                      <UserIcon size={18} />
                     </div>
                     <div>
                       <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>@{u.username}</div>
@@ -351,88 +353,91 @@ const UserManagement: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleSave} style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              {!editing && (
+            <form onSubmit={handleSave} style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column' }}>
+              <FormSection title="ข้อมูลบัญชี" icon={<UserIcon size={18} />} columns={1}>
+                {!editing && (
+                  <Input
+                    label="ชื่อผู้ใช้ (Username)"
+                    required
+                    value={form.username}
+                    onChange={(e) => setForm({ ...form, username: e.target.value })}
+                    placeholder="worker1"
+                    autoComplete="off"
+                  />
+                )}
                 <Input
-                  label="ชื่อผู้ใช้ (Username)"
+                  label="ชื่อ-สกุล (แสดงในเอกสาร)"
                   required
-                  value={form.username}
-                  onChange={(e) => setForm({ ...form, username: e.target.value })}
-                  placeholder="worker1"
-                  autoComplete="off"
+                  value={form.full_name}
+                  onChange={(e) => setForm({ ...form, full_name: e.target.value })}
+                  placeholder="ช่างสมชาย ใจดี"
                 />
-              )}
-              <Input
-                label="ชื่อ-สกุล (แสดงในเอกสาร)"
-                required
-                value={form.full_name}
-                onChange={(e) => setForm({ ...form, full_name: e.target.value })}
-                placeholder="ช่างสมชาย ใจดี"
-              />
-              <Input
-                label={editing ? 'รหัสผ่านใหม่ (เว้นว่างหากไม่เปลี่ยน)' : 'รหัสผ่าน (≥ 6 ตัวอักษร)'}
-                type="password"
-                required={!editing}
-                value={form.password}
-                onChange={(e) => setForm({ ...form, password: e.target.value })}
-                placeholder="••••••"
-                autoComplete="new-password"
-              />
-
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 12px', background: 'var(--bg-app)', borderRadius: '8px', cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={form.is_full}
-                  onChange={(e) => setForm({ ...form, is_full: e.target.checked })}
-                  disabled={editing?.id === currentUser?.id}
+                <Input
+                  label={editing ? 'รหัสผ่านใหม่ (เว้นว่างหากไม่เปลี่ยน)' : 'รหัสผ่าน (≥ 6 ตัวอักษร)'}
+                  type="password"
+                  required={!editing}
+                  value={form.password}
+                  onChange={(e) => setForm({ ...form, password: e.target.value })}
+                  placeholder="••••••"
+                  autoComplete="new-password"
                 />
-                <Shield size={14} color="var(--primary)" />
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: '0.85rem' }}>ผู้ดูแลระบบ</div>
-                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>มีสิทธิ์ทุกอย่าง รวมถึงจัดการผู้ใช้และตั้งค่าระบบ</div>
-                </div>
-              </label>
+                {!editing && (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                    <input
+                      type="checkbox"
+                      checked={form.force_password_change}
+                      onChange={(e) => setForm({ ...form, force_password_change: e.target.checked })}
+                    />
+                    บังคับเปลี่ยนรหัสผ่านในการเข้าใช้งานครั้งแรก
+                  </label>
+                )}
+              </FormSection>
 
-              {!form.is_full && (
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                    <div style={{ fontWeight: 700, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <Lock size={14} color="var(--primary)" />
-                      สิทธิ์การลบข้อมูล
-                    </div>
-                    <div style={{ display: 'flex', gap: '6px' }}>
-                      <button type="button" onClick={() => setAllDeletePerms(true)} style={chip}>ติ๊กทั้งหมด</button>
-                      <button type="button" onClick={() => setAllDeletePerms(false)} style={chip}>ล้างทั้งหมด</button>
-                    </div>
-                  </div>
-                  <div style={{
-                    display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px',
-                    padding: '10px', border: '1px solid var(--border)', borderRadius: '8px', background: 'var(--bg-app)',
-                  }}>
-                    {DELETE_LABELS.map(({ key, label }) => (
-                      <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', cursor: 'pointer' }}>
-                        <input
-                          type="checkbox"
-                          checked={!!form.permissions.delete?.[key]}
-                          onChange={() => toggleDeletePerm(key)}
-                        />
-                        {label}
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {!editing && (
-                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+              <FormSection title="สิทธิ์การใช้งาน" icon={<Shield size={18} />} columns={1}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 12px', background: 'var(--bg-app)', borderRadius: '8px', cursor: 'pointer' }}>
                   <input
                     type="checkbox"
-                    checked={form.force_password_change}
-                    onChange={(e) => setForm({ ...form, force_password_change: e.target.checked })}
+                    checked={form.is_full}
+                    onChange={(e) => setForm({ ...form, is_full: e.target.checked })}
+                    disabled={editing?.id === currentUser?.id}
                   />
-                  บังคับเปลี่ยนรหัสผ่านในการเข้าใช้งานครั้งแรก
+                  <Shield size={14} color="var(--primary)" />
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: '0.85rem' }}>ผู้ดูแลระบบ</div>
+                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>มีสิทธิ์ทุกอย่าง รวมถึงจัดการผู้ใช้และตั้งค่าระบบ</div>
+                  </div>
                 </label>
-              )}
+
+                {!form.is_full && (
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                      <div style={{ fontWeight: 700, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <Lock size={14} color="var(--primary)" />
+                        สิทธิ์การลบข้อมูล
+                      </div>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <button type="button" onClick={() => setAllDeletePerms(true)} style={chip}>ติ๊กทั้งหมด</button>
+                        <button type="button" onClick={() => setAllDeletePerms(false)} style={chip}>ล้างทั้งหมด</button>
+                      </div>
+                    </div>
+                    <div style={{
+                      display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px',
+                      padding: '10px', border: '1px solid var(--border)', borderRadius: '8px', background: 'var(--bg-app)',
+                    }}>
+                      {DELETE_LABELS.map(({ key, label }) => (
+                        <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={!!form.permissions.delete?.[key]}
+                            onChange={() => toggleDeletePerm(key)}
+                          />
+                          {label}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </FormSection>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
                 <Button type="button" variant="outline" onClick={closeModal} disabled={saving}>ยกเลิก</Button>

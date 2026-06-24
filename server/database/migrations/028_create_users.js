@@ -1,4 +1,5 @@
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 
 module.exports = {
   name: '028_create_users',
@@ -31,14 +32,31 @@ module.exports = {
             if (cntErr) return callback(cntErr);
             if (row && row.cnt > 0) return callback(null);
 
-            const passwordHash = bcrypt.hashSync('admin', 10);
+            // Never seed a guessable default credential. Take the initial
+            // password from the environment, otherwise generate a random one
+            // and print it ONCE to the boot log so the operator can capture it.
+            const username = (process.env.SEED_ADMIN_USERNAME || 'admin').trim();
+            const fromEnv = Boolean(process.env.SEED_ADMIN_PASSWORD);
+            const password = fromEnv
+              ? process.env.SEED_ADMIN_PASSWORD
+              : crypto.randomBytes(12).toString('base64url');
+
+            const passwordHash = bcrypt.hashSync(password, 10);
             db.run(
               `INSERT INTO users (username, password_hash, full_name, is_full, permissions, force_password_change)
                VALUES (?, ?, ?, 1, '{}', 1)`,
-              ['admin', passwordHash, 'System Administrator'],
+              [username, passwordHash, 'System Administrator'],
               (insErr) => {
                 if (insErr) return callback(insErr);
-                console.log('Seeded default admin (username: admin, password: admin) — please change on first login');
+                if (fromEnv) {
+                  console.log(`Seeded admin user "${username}" from SEED_ADMIN_PASSWORD — change it on first login.`);
+                } else {
+                  console.log('====================================================================');
+                  console.log(` Seeded admin user "${username}" with a one-time random password:`);
+                  console.log(`   ${password}`);
+                  console.log(' Log in with it now and change it immediately. It will NOT be shown again.');
+                  console.log('====================================================================');
+                }
                 callback(null);
               }
             );
