@@ -1,833 +1,1002 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { repairApi } from '../api';
 import { useNotification } from '../components/Layout';
 import { useApi } from '../hooks/useApi';
 import { Skeleton } from '../components/ui/Skeleton';
-import { 
-  TrendingUp,
+import {
   Check,
-  Activity,
-  Users,
-  Clock,
-  BarChart3,
-  AlertTriangle,
   Wrench,
-  History,
-  ShieldAlert,
-  ChevronRight,
+  Inbox,
+  ShoppingBag,
+  Activity,
   ArrowUpRight,
-  ShoppingBag
+  ArrowDownRight,
+  Users,
+  HardDrive,
+  AlertCircle,
+  Calendar,
+  Package,
+  Clock,
+  RefreshCw,
+  Crown,
+  Shield,
+  MapPin,
+  ChevronRight,
+  // New Icons for Consistency
+  Sliders,
+  Boxes,
+  PackageCheck,
+  Hourglass,
+  FileSignature,
+  ShieldAlert
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { 
-  BarChart, 
-  Bar, 
-  XAxis, 
-  YAxis, 
-  Tooltip, 
-  ResponsiveContainer, 
-  Cell, 
-  CartesianGrid, 
-  Legend, 
-  PieChart, 
-  Pie, 
-  AreaChart, 
-  Area 
+import Card from '../components/ui/Card';
+import Counter from '../components/ui/Counter';
+import type { RepairLog, InventoryTransaction } from '../types';
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  BarChart,
+  Bar,
+  Legend
 } from 'recharts';
-import { formatDateThai as formatDate, formatDateTimeThai } from '../utils/formatDate';
-import DatePicker from '../components/ui/DatePicker';
-import type { InventoryTransaction, Withdrawal, PurchaseOrder } from '../types';
 
-const COLORS = ['#29b6f6', '#10b981', '#f59e0b', '#7c3aed', '#ec4899', '#3b82f6'];
-
-// --- CountUp Animation Component ---
-const CountUp: React.FC<{ end: number; duration?: number; delay?: number }> = ({ end, duration = 1200, delay = 0 }) => {
-  const [count, setCount] = useState(0);
-  useEffect(() => {
-    let startTime: number | null = null;
-    let animationFrame: number;
-    const startTimeout = setTimeout(() => {
-      const animate = (time: number) => {
-        if (!startTime) startTime = time;
-        const progress = Math.min((time - startTime) / duration, 1);
-        const easeOut = 1 - Math.pow(1 - progress, 4); // Quartic ease out
-        setCount(Math.floor(easeOut * end));
-        if (progress < 1) {
-          animationFrame = requestAnimationFrame(animate);
-        } else {
-          setCount(end);
-        }
-      };
-      animationFrame = requestAnimationFrame(animate);
-    }, delay);
-    return () => {
-      clearTimeout(startTimeout);
-      cancelAnimationFrame(animationFrame);
-    };
-  }, [end, duration, delay]);
-  return <>{count.toLocaleString()}</>;
+const chartTooltipStyle: React.CSSProperties = {
+  borderRadius: '12px',
+  border: '1px solid var(--glass-border)',
+  boxShadow: 'var(--glass-shadow)',
+  background: 'var(--glass-bg)',
+  backdropFilter: 'var(--glass-blur)',
+  color: 'var(--text-main)',
+  padding: '10px 14px'
 };
 
-// --- Styled Bento Card Component ---
-const StyledCard: React.FC<{ title: string; icon: React.ReactNode; children: React.ReactNode; action?: React.ReactNode; style?: React.CSSProperties; delay?: number }> = ({ title, icon, children, action, style, delay = 0 }) => (
-  <div 
-    className="dashboard-styled-card"
-    style={{
-      background: 'rgba(255, 255, 255, 0.85)',
-      backdropFilter: 'blur(16px)',
-      WebkitBackdropFilter: 'blur(16px)',
-      borderRadius: '28px',
-      padding: '1.75rem',
-      boxShadow: '0 8px 30px rgba(0, 0, 0, 0.025), 0 1px 3px rgba(0, 0, 0, 0.015)',
-      border: '1px solid rgba(226, 232, 240, 0.8)',
-      display: 'flex',
-      flexDirection: 'column',
-      position: 'relative',
-      overflow: 'hidden',
-      animation: 'revealUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) both',
-      animationDelay: `${delay}ms`,
-      ...style
-    }}
-  >
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-        <div style={{ 
-          width: '42px', height: '42px', borderRadius: '14px', 
-          background: 'var(--primary-light)', 
-          color: 'var(--primary)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center'
-        }}>
-          {icon}
-        </div>
-        <h3 style={{ fontSize: '1.15rem', fontWeight: 800, color: 'var(--text-main)', margin: 0, letterSpacing: '-0.02em' }}>{title}</h3>
-      </div>
-      {action && <div>{action}</div>}
+const timeAgo = (iso: string): string => {
+  const diff = Date.now() - new Date(iso).getTime();
+  if (Number.isNaN(diff)) return '';
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return 'เมื่อสักครู่';
+  if (minutes < 60) return `${minutes} นาทีที่แล้ว`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} ชม.ที่แล้ว`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days} วันที่แล้ว`;
+  return new Date(iso).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
+};
+
+const SectionHeader: React.FC<{ icon: React.ReactNode; title: string; subtitle?: string }> = ({ icon, title, subtitle }) => (
+  <div className="dash-section-title boot-animate">
+    <span className="dash-section-icon">{icon}</span>
+    <div style={{ minWidth: 0 }}>
+      <div style={{ fontWeight: 800, fontSize: '0.95rem', color: 'var(--text-main)', lineHeight: 1.3 }}>{title}</div>
+      {subtitle && <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 600 }}>{subtitle}</div>}
     </div>
-    <div style={{ flex: 1 }}>{children}</div>
   </div>
 );
-
-interface KPICardProps {
-  title: string;
-  value: number;
-  subText?: string;
-  icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
-  delay: number;
-  danger?: boolean;
-  to?: string;
-}
-
-// --- KPI Card Component ---
-const KPICard: React.FC<KPICardProps> = ({ title, value, subText, icon: Icon, delay, danger, to }) => {
-  const content = (
-    <div 
-      className="dashboard-kpi-card"
-      style={{
-        background: 'rgba(255, 255, 255, 0.85)',
-        backdropFilter: 'blur(16px)',
-        WebkitBackdropFilter: 'blur(16px)',
-        borderRadius: '28px',
-        padding: '1.5rem',
-        border: danger ? '1px solid rgba(239, 68, 68, 0.2)' : '1px solid rgba(226, 232, 240, 0.8)',
-        display: 'flex', alignItems: 'center', gap: '1.5rem',
-        boxShadow: '0 8px 30px rgba(0, 0, 0, 0.025), 0 1px 3px rgba(0, 0, 0, 0.015)',
-        position: 'relative', overflow: 'hidden',
-        animation: 'revealUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) both',
-        animationDelay: `${delay}ms`,
-        height: '100%'
-      }}
-    >
-      <div 
-        className="kpi-icon-container"
-        style={{ 
-          width: '60px', height: '60px', borderRadius: '18px', 
-          background: danger ? 'var(--danger-light)' : 'var(--primary-light)', 
-          display: 'flex', alignItems: 'center', justifyContent: 'center', 
-          color: danger ? 'var(--danger)' : 'var(--primary)', 
-          flexShrink: 0
-        }}
-      >
-        <Icon size={28} strokeWidth={2.5} />
-      </div>
-      <div style={{ flex: 1 }}>
-        <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.01em' }}>{title}</div>
-        <div style={{ fontSize: '2.25rem', fontWeight: 900, color: 'var(--text-main)', lineHeight: 1.1, marginTop: '2px', letterSpacing: '-0.04em' }}>
-          <CountUp end={value} delay={delay} />
-        </div>
-        {subText && (
-          <div style={{ 
-            fontSize: '0.75rem', marginTop: '6px', 
-            color: danger || subText.includes('ต่ำ') || subText.includes('เกิน') || subText.includes('รอดำเนินการ') ? 'var(--danger)' : 'var(--success)', 
-            fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' 
-          }}>
-             {subText}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-
-  if (to) {
-    return (
-      <Link to={to} style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}>
-        {content}
-      </Link>
-    );
-  }
-
-  return content;
-};
 
 const Dashboard: React.FC = () => {
   const { notify } = useNotification();
   const { data, loading, request: fetchStats } = useApi(
-    async (params?: { startDate?: string; endDate?: string }) => 
+    async (params?: { startDate?: string; endDate?: string }) =>
       await repairApi.getDashboardStats(params)
   );
   const [lastUpdated, setLastUpdated] = useState<string>('');
-  const [isLoaded, setIsLoaded] = useState(false);
-  const [startDate, setStartDate] = useState<string>('');
-  const [endDate, setEndDate] = useState<string>('');
+  const [showFilterDropdown, setShowFilterDropdown] = useState<boolean>(false);
+  const [refreshTick, setRefreshTick] = useState<number>(0);
+  // จำตัวกรองช่วงเวลาไว้ใน localStorage (กลับมาหน้าเดิมแล้วยังอยู่)
+  const [quickFilter, setQuickFilter] = useState<string>(() => {
+    try { return localStorage.getItem('dashboard_quick_filter') || 'all'; } catch { return 'all'; }
+  });
+  const [autoRefresh, setAutoRefresh] = useState<boolean>(() => {
+    try { return localStorage.getItem('dashboard_auto_refresh') === '1'; } catch { return false; }
+  });
 
-  const setQuickFilter = (type: 'today' | 'week' | 'month' | 'all') => {
-    const today = new Date();
-    const format = (d: Date) => {
-      const offset = d.getTimezoneOffset() * 60000;
-      return new Date(d.getTime() - offset).toISOString().split('T')[0];
+  const computeRange = (filterType: string): { startDate: string; endDate: string } => {
+    const end = new Date();
+    if (filterType === 'all') return { startDate: '', endDate: '' };
+    const start = new Date();
+    if (filterType === '7_days') start.setDate(end.getDate() - 7);
+    else if (filterType === '30_days') start.setDate(end.getDate() - 30);
+    else if (filterType === '90_days') start.setDate(end.getDate() - 90);
+    const toYYYYMMDD = (d: Date) => {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
     };
-    
-    const todayStr = format(today);
-
-    if (type === 'today') {
-      setStartDate(todayStr);
-      setEndDate(todayStr);
-    } else if (type === 'week') {
-      const lastWeek = new Date(today);
-      lastWeek.setDate(today.getDate() - 6); // Includes today
-      setStartDate(format(lastWeek));
-      setEndDate(todayStr);
-    } else if (type === 'month') {
-      const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
-      setStartDate(format(firstDay));
-      setEndDate(todayStr);
-    } else {
-      setStartDate('');
-      setEndDate('');
-    }
+    return { startDate: toYYYYMMDD(start), endDate: toYYYYMMDD(end) };
   };
 
-  const isFilterActive = (type: 'today' | 'week' | 'month' | 'all') => {
-    const today = new Date();
-    const format = (d: Date) => {
-      const offset = d.getTimezoneOffset() * 60000;
-      return new Date(d.getTime() - offset).toISOString().split('T')[0];
-    };
-    const todayStr = format(today);
-
-    if (type === 'all') return !startDate && !endDate;
-    if (type === 'today') return startDate === todayStr && endDate === todayStr;
-    if (type === 'week') {
-      const lastWeek = new Date(today);
-      lastWeek.setDate(today.getDate() - 6);
-      return startDate === format(lastWeek) && endDate === todayStr;
-    }
-    if (type === 'month') {
-      const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
-      return startDate === format(firstDay) && endDate === todayStr;
-    }
-    return false;
-  };
+  const [dateRange, setDateRange] = useState<{ startDate: string; endDate: string }>(() => computeRange(quickFilter));
 
   useEffect(() => {
     const load = async () => {
       try {
-        setIsLoaded(false);
-        await fetchStats({ startDate, endDate });
+        const params: { startDate?: string; endDate?: string } = {};
+        if (dateRange.startDate) params.startDate = dateRange.startDate;
+        if (dateRange.endDate) params.endDate = dateRange.endDate;
+        await fetchStats(params);
         setLastUpdated(new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }));
-        setTimeout(() => setIsLoaded(true), 150);
       } catch {
         notify('ไม่สามารถโหลดข้อมูลสถิติได้', 'error');
       }
     };
     load();
-  }, [fetchStats, notify, startDate, endDate]);
+  }, [fetchStats, notify, dateRange, refreshTick]);
+
+  // Auto-refresh ทุก 60 วินาที (เปิด/ปิดได้)
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const interval = setInterval(() => setRefreshTick(t => t + 1), 60000);
+    return () => clearInterval(interval);
+  }, [autoRefresh]);
+
+  const handleQuickFilterChange = (filterType: string) => {
+    setQuickFilter(filterType);
+    try { localStorage.setItem('dashboard_quick_filter', filterType); } catch { /* ignore */ }
+    setDateRange(computeRange(filterType));
+  };
+
+  const toggleAutoRefresh = () => {
+    setAutoRefresh(prev => {
+      const next = !prev;
+      try { localStorage.setItem('dashboard_auto_refresh', next ? '1' : '0'); } catch { /* ignore */ }
+      return next;
+    });
+  };
+
+  const operationalPulse = useMemo(() => {
+    if (!data) return [];
+
+    const repairEvents = (data.recentLogs || []).map((log: RepairLog & { ticket_no: string; device_name: string }) => ({
+      id: `rep-${log.id}`,
+      title: log.ticket_no,
+      subtitle: `${log.device_name} · ${log.action}`,
+      user: log.user,
+      time: log.created_at,
+      icon: <Wrench size={14} />,
+      color: 'var(--primary)'
+    }));
+
+    const stockEvents = (data.inventory?.recentTransactions || []).map((tx: InventoryTransaction & { product_name: string }) => ({
+      id: `stk-${tx.id}`,
+      title: tx.product_name,
+      subtitle: `${tx.transaction_type === 'ADD_STOCK' ? 'นำเข้า' : tx.transaction_type === 'WITHDRAW' ? 'เบิกจ่าย' : tx.transaction_type === 'RETURN' ? 'คืน' : 'ปรับปรุง'} · ${tx.quantity_added || tx.quantity_withdrawn || tx.quantity_returned || tx.quantity_borrowed} ชิ้น`,
+      user: tx.user_name || 'ระบบ',
+      time: tx.created_at,
+      icon: tx.transaction_type === 'ADD_STOCK' ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />,
+      color: tx.transaction_type === 'ADD_STOCK' ? 'var(--success)' : 'var(--danger)'
+    }));
+
+    return [...repairEvents, ...stockEvents]
+      .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
+      .slice(0, 7);
+  }, [data]);
+
+  const {
+    kpis = { total: 0, pending: 0, in_progress: 0, completed: 0, critical_stock: 0 },
+    purchaseOrders = { pending_po: 0 },
+    analysis = { mostBroken: [], overdue: [], monthlyTrend: [] },
+    technicians = [],
+    inventory = { criticalItems: [], topUsed: [], leastUsed: [] },
+    stockMovements = [],
+    withdrawalBreakdown = [],
+    people = { topRecipients: [], pendingReturns: [], pendingReturnsCount: 0 },
+    supervisors = [],
+    unassignedStationsCount = 0,
+    claimsKpis = { total: 0, pending: 0, in_progress: 0, completed: 0 },
+    inventoryConditions = []
+  } = data || {};
+
+  const conditions = useMemo(() => {
+    return {
+      New: (inventoryConditions || []).find(c => c.condition === 'New')?.count || 0,
+      Good: (inventoryConditions || []).find(c => c.condition === 'Good')?.count || 0,
+      Fair: (inventoryConditions || []).find(c => c.condition === 'Fair')?.count || 0,
+      Broken: (inventoryConditions || []).find(c => c.condition === 'Broken')?.count || 0,
+    };
+  }, [inventoryConditions]);
+
+  const totalInstances = useMemo(() => {
+    return Object.values(conditions).reduce((a, b) => a + b, 0);
+  }, [conditions]);
+
+  const totalWithdrawals = useMemo(
+    () => (withdrawalBreakdown || []).reduce((a: number, b: { name: string; count: number }) => a + (b.count || 0), 0),
+    [withdrawalBreakdown]
+  );
+
+  const warehouseHealth = useMemo(() => {
+    const criticalCount = kpis.critical_stock || 0;
+    const score = Math.max(0, 100 - (criticalCount * 10));
+    return {
+      score,
+      label: score > 90 ? 'สมบูรณ์เยี่ยม' : score > 70 ? 'ปกติ' : score > 40 ? 'ควรเฝ้าระวัง' : 'วิกฤต',
+      color: score > 90 ? '#10b981' : score > 70 ? 'var(--primary)' : score > 40 ? '#f59e0b' : '#ef4444'
+    };
+  }, [kpis.critical_stock]);
 
   if (loading || !data) {
     return (
-      <div style={{ padding: 'var(--main-padding)', display: 'flex', flexDirection: 'column', gap: '2rem', background: 'var(--bg-app)', minHeight: '100vh' }}>
-        <div className="responsive-grid grid-cols-4">
-          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} height="140px" variant="rect" style={{ borderRadius: '28px' }} />)}
-        </div>
-        <div className="responsive-grid grid-cols-2">
-          <Skeleton height="400px" variant="rect" style={{ borderRadius: '28px' }} />
-          <Skeleton height="400px" variant="rect" style={{ borderRadius: '28px' }} />
+      <div style={{ padding: 'var(--main-padding)', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+        <div className="bento-grid" style={{ gap: '1.25rem' }}>
+          <Skeleton height="90px" variant="rect" className="dash-span-12" />
+          {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} height="110px" variant="rect" className="dash-span-2" />)}
+          <Skeleton height="300px" variant="rect" className="dash-span-8" />
+          <Skeleton height="300px" variant="rect" className="dash-span-4" />
+          {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i + 6} height="240px" variant="rect" className="dash-span-4" />)}
         </div>
       </div>
     );
   }
 
-  const { 
-    kpis = { total: 0, pending: 0, in_progress: 0, completed: 0, critical_stock: 0 }, 
-    recentJobs = [], 
-    technicians = [], 
-    inventory = { topUsed: [], leastUsed: [], criticalItems: [], recentTransactions: [], recentWithdrawals: [] }, 
-    analysis = { mostBroken: [], overdue: [], monthlyTrend: [] }, 
-    withdrawalBreakdown = [], 
-    stockMovements = [],
-    purchaseOrders = { total_po: 0, pending_po: 0, received_po: 0, total_spent: 0, recentPurchaseOrders: [] }
-  } = data || {};
+  const statusPieData = [
+    { name: 'รอดำเนินการ', value: kpis.pending, color: '#ef4444' },
+    { name: 'กำลังซ่อม', value: kpis.in_progress, color: '#f59e0b' },
+    { name: 'เสร็จสิ้น', value: kpis.completed, color: '#10b981' },
+  ];
+
+  // KPI strip (compact, 6 ตัว)
+  const kpiCards = [
+    { label: 'งานแจ้งซ่อม', value: kpis.total, icon: Sliders, color: 'var(--primary)', bg: 'var(--primary-light)', to: '/repairs', alert: false },
+    { label: 'กำลังซ่อม', value: kpis.in_progress, icon: Sliders, color: 'var(--warning)', bg: 'var(--warning-light)', to: '/repairs?status=กำลังซ่อม', alert: kpis.in_progress > 0 },
+    { label: 'พัสดุวิกฤต', value: kpis.critical_stock, icon: ShieldAlert, color: 'var(--danger)', bg: 'var(--danger-light)', to: '/inventory', alert: kpis.critical_stock > 0 },
+    { label: 'ใบเบิกทั้งหมด', value: totalWithdrawals, icon: PackageCheck, color: 'var(--success)', bg: 'var(--success-light)', to: '/withdrawal', alert: false },
+    { label: 'ค้างคืน', value: people.pendingReturnsCount, icon: Hourglass, color: '#d97706', bg: 'rgba(217,119,6,0.1)', to: '/pending-returns', alert: people.pendingReturnsCount > 0 },
+    { label: 'PO รอรับ', value: purchaseOrders.pending_po || 0, icon: FileSignature, color: 'var(--primary)', bg: 'var(--primary-light)', to: '/purchase-orders', alert: false },
+  ];
 
   return (
-    <div style={{ 
-      padding: 'var(--main-padding)', display: 'flex', flexDirection: 'column', gap: '2.5rem', 
-      background: 'var(--bg-app)', minHeight: '100vh', width: '100%', maxWidth: '1480px', margin: '0 auto'
-    }}>
-      {/* HEADER */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'relative', zIndex: 100, flexWrap: 'wrap', gap: '1.5rem' }}>
-        <div>
-          <h2 style={{ 
-            fontSize: 'var(--h2-font-size)', fontWeight: 900, color: 'var(--text-main)', 
-            display: 'flex', alignItems: 'center', gap: '16px', letterSpacing: '-0.04em', margin: 0
-          }}>
-             <div style={{ 
-               padding: '12px', background: 'var(--primary)', borderRadius: '16px', 
-               display: 'flex', boxShadow: '0 10px 25px -10px rgba(41, 182, 246, 0.4)' 
-             }}>
-               <Activity size={28} color="#ffffff" strokeWidth={2.5} />
-             </div>
-             ภาพรวมระบบ
-          </h2>
-          <p style={{ fontSize: '1rem', color: 'var(--text-muted)', marginTop: '10px', fontWeight: 600 }}>
-             ระบบบริหารจัดการงานซ่อมและคลังอุปกรณ์ · อัปเดต {lastUpdated} น.
-          </p>
-        </div>
-        <div style={{ display: 'flex', gap: '15px', alignItems: 'center', flexWrap: 'wrap' }}>
-          {/* Quick Filter Pills */}
-          <div style={{ display: 'flex', gap: '8px', background: 'var(--bg-card)', padding: '6px', borderRadius: '18px', border: '1px solid var(--border)', boxShadow: '0 4px 15px -5px rgba(0,0,0,0.05)', flexWrap: 'wrap' }}>
-            <button 
-              className={`btn-filter ${isFilterActive('all') ? 'btn-filter-active' : 'btn-filter-inactive'}`}
-              onClick={() => setQuickFilter('all')}
-            >
-              ทั้งหมด
-            </button>
-            <button 
-              className={`btn-filter ${isFilterActive('today') ? 'btn-filter-active' : 'btn-filter-inactive'}`}
-              onClick={() => setQuickFilter('today')}
-            >
-              วันนี้
-            </button>
-            <button 
-              className={`btn-filter ${isFilterActive('week') ? 'btn-filter-active' : 'btn-filter-inactive'}`}
-              onClick={() => setQuickFilter('week')}
-            >
-              7 วันล่าสุด
-            </button>
-            <button 
-              className={`btn-filter ${isFilterActive('month') ? 'btn-filter-active' : 'btn-filter-inactive'}`}
-              onClick={() => setQuickFilter('month')}
-            >
-              เดือนนี้
-            </button>
-          </div>
-
-          {/* Custom Date Range */}
-          <div style={{ 
-            display: 'flex', gap: '12px', alignItems: 'center', background: 'var(--bg-card)', padding: '8px 16px', borderRadius: '18px', border: '1px solid var(--border)', boxShadow: '0 4px 15px -5px rgba(0,0,0,0.05)', flexWrap: 'wrap'
-          }}>
-            <span style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--text-muted)' }}>กำหนดเอง:</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <DatePicker 
-                value={startDate} 
-                onChange={setStartDate} 
-                placeholder="เริ่มต้น" 
-              />
-              <span style={{ color: '#cbd5e1', fontWeight: 900 }}>-</span>
-              <DatePicker 
-                value={endDate} 
-                onChange={setEndDate} 
-                placeholder="สิ้นสุด" 
-              />
+    <div className="dashboard-page" style={{ padding: '0 0 3rem 0', minHeight: '100vh', backgroundColor: 'var(--bg-app)' }}>
+      <div style={{ maxWidth: '1400px', margin: '0 auto', padding: 'var(--main-padding)', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+        {/* Header (compact) */}
+        <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: '1rem', marginBottom: 0 }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--primary)', marginBottom: '2px' }}>
+              <Activity size={16} />
+              <span style={{ fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', fontSize: '0.7rem' }}>ศูนย์ปฏิบัติการหลัก</span>
             </div>
-            {(!isFilterActive('all') && !isFilterActive('today') && !isFilterActive('week') && !isFilterActive('month')) && (
+            <h2 style={{ fontSize: '1.6rem', fontWeight: 800, margin: 0, letterSpacing: '-0.02em' }}>แผงควบคุมการบริหารจัดการ</h2>
+            <p style={{ color: 'var(--text-muted)', marginTop: '2px', fontSize: '0.85rem', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <span>สรุปคลังพัสดุและศูนย์ซ่อมบำรุง · อัปเดต {lastUpdated} น.</span>
+              {autoRefresh && (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.7rem', fontWeight: 800, color: 'var(--success)', background: 'var(--success-light)', border: '1px solid var(--success-border)', padding: '1px 8px', borderRadius: '999px' }}>
+                  <span className="live-dot" /> LIVE
+                </span>
+              )}
+            </p>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button
+              className="btn btn-outline"
+              onClick={toggleAutoRefresh}
+              title={autoRefresh ? 'ปิดอัปเดตอัตโนมัติ' : 'เปิดอัปเดตอัตโนมัติ (ทุก 60 วินาที)'}
+              aria-label="สลับอัปเดตอัตโนมัติ"
+              aria-pressed={autoRefresh}
+              style={{
+                borderRadius: '10px',
+                padding: '8px 14px',
+                fontSize: '0.8rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                ...(autoRefresh ? { borderColor: 'var(--success)', color: 'var(--success)', background: 'var(--success-light)' } : {})
+              }}
+            >
+              <Activity size={15} /> <span>อัตโนมัติ</span>
+            </button>
+            <button
+              className="btn btn-outline"
+              onClick={() => setRefreshTick(t => t + 1)}
+              title="รีเฟรชข้อมูล"
+              aria-label="รีเฟรชข้อมูล"
+              style={{ borderRadius: '10px', padding: '8px 12px', fontSize: '0.85rem' }}
+            >
+              <RefreshCw size={16} style={loading ? { animation: 'spin 0.8s linear infinite' } : undefined} />
+            </button>
+
+            <div style={{ position: 'relative', zIndex: 50 }}>
               <button
-                type="button"
-                onClick={() => setQuickFilter('all')}
-                style={{
-                  padding: '4px 10px',
-                  borderRadius: '8px',
-                  border: 'none',
-                  backgroundColor: 'var(--danger-light)',
-                  color: 'var(--danger)',
-                  fontSize: '0.75rem',
-                  fontWeight: 800,
-                  cursor: 'pointer',
-                  transition: 'all 0.2s',
-                  fontFamily: 'inherit'
-                }}
+                className="btn btn-outline"
+                onClick={() => setShowFilterDropdown(!showFilterDropdown)}
+                style={{ borderRadius: '10px', padding: '8px 16px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}
               >
-                ล้าง
+                <Calendar size={16} />
+                <span>
+                  {quickFilter === 'all' ? 'ข้อมูลทั้งหมด' :
+                   quickFilter === '7_days' ? 'ย้อนหลัง 7 วัน' :
+                   quickFilter === '30_days' ? 'ย้อนหลัง 30 วัน' :
+                   quickFilter === '90_days' ? 'ย้อนหลัง 90 วัน' : 'ช่วงเวลาที่เลือก'}
+                </span>
               </button>
-            )}
-          </div>
-        </div>
-      </div>
 
-      {/* --- PRIORITY 1: INVENTORY (คลังอุปกรณ์) --- */}
-      <section>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '1.75rem' }}>
-          <div style={{ width: '8px', height: '32px', background: 'var(--primary)', borderRadius: '4px' }} />
-          <h3 style={{ fontSize: '1.4rem', fontWeight: 900, color: 'var(--text-main)', margin: 0, letterSpacing: '-0.02em' }}>คลังอุปกรณ์</h3>
-          <div style={{ height: '2px', flex: 1, background: 'linear-gradient(90deg, var(--border), transparent)' }} />
-        </div>
-
-        <div className="responsive-grid grid-cols-3" style={{ marginBottom: '1.75rem' }}>
-          <KPICard title="อุปกรณ์ใกล้หมด" value={kpis.critical_stock} subText={kpis.critical_stock > 0 ? `ควรสั่งซื้อเพิ่ม ${kpis.critical_stock} รายการ` : 'สต็อกปกติ'} icon={AlertTriangle} danger={kpis.critical_stock > 0} delay={0} to="/inventory?filter=critical" />
-          <KPICard title="ความเคลื่อนไหววันนี้" value={inventory.recentTransactions?.length || 0} subText="รายการเคลื่อนไหววันนี้" icon={History} delay={150} to="/transactions" />
-          <KPICard title="อุปกรณ์ยอดนิยม" value={inventory.topUsed.length || 0} subText="รายการที่ถูกใช้งานบ่อย" icon={TrendingUp} delay={300} to="/inventory" />
-        </div>
-
-        <div className="dashboard-main-grid">
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-            <StyledCard title="ความเคลื่อนไหวล่าสุด" icon={<Activity size={22} />} action={<Link to="/transactions" className="link-hover-shift">ดูทั้งหมด <ChevronRight size={16} /></Link>} delay={400}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                {(inventory.recentTransactions || []).slice(0, 3).map((t: InventoryTransaction) => (
-                  <div key={t.id} className="dashboard-list-row" style={{ display: 'flex', gap: '12px', alignItems: 'center', padding: '10px 12px', borderRadius: '16px', borderBottom: '1px solid var(--border)' }}>
-                    <div style={{ 
-                      fontSize: '0.65rem', padding: '5px 10px', borderRadius: '10px', 
-                      background: t.transaction_type === 'WITHDRAW' ? 'var(--warning-light)' : t.transaction_type === 'ADD_STOCK' ? 'var(--success-light)' : 'var(--primary-light)',
-                      color: t.transaction_type === 'WITHDRAW' ? 'var(--warning)' : t.transaction_type === 'ADD_STOCK' ? 'var(--success)' : 'var(--primary)',
-                      fontWeight: 900, flexShrink: 0, letterSpacing: '0.04em'
-                    }}>
-                      {t.transaction_type === 'WITHDRAW' ? 'เบิกอุปกรณ์' : 
-                       t.transaction_type === 'ADD_STOCK' ? 'นำเข้าสต็อก' : 
-                       t.transaction_type === 'BORROW' ? 'ยืมอุปกรณ์' : 
-                       t.transaction_type === 'RETURN' ? 'คืนอุปกรณ์' : t.transaction_type}
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-main)' }}>{t.product_name}</div>
-                      <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '3px', fontWeight: 600 }}>โดย {t.user_name} · {formatDateTimeThai(t.created_at)}</div>
-                    </div>
-                    <div style={{ fontSize: '1.15rem', fontWeight: 900, color: 'var(--text-main)' }}>
-                      {t.quantity_added > 0 ? `+${t.quantity_added}` : `-${t.quantity_withdrawn || t.quantity_borrowed || 0}`}
-                    </div>
-                  </div>
-                ))}
-                {(!inventory.recentTransactions || inventory.recentTransactions.length === 0) && (
-                  <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)', fontWeight: 600 }}>ไม่มีรายการเคลื่อนไหว</div>
-                )}
-              </div>
-            </StyledCard>
-
-            <StyledCard title="รายการอุปกรณ์สต็อกต่ำกว่าเกณฑ์" icon={<AlertTriangle size={22} />} action={<Link to="/inventory?filter=critical" className="link-hover-shift">ดูทั้งหมด <ChevronRight size={16} /></Link>} delay={500}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                {(inventory.criticalItems || []).slice(0, 3).map((item) => (
-                  <div key={item.name} className="dashboard-list-row" style={{ display: 'flex', gap: '12px', alignItems: 'center', padding: '10px 12px', borderRadius: '16px', borderBottom: '1px solid var(--border)' }}>
-                    <div style={{ 
-                      fontSize: '0.65rem', padding: '5px 10px', borderRadius: '10px', 
-                      background: 'var(--danger-light)',
-                      color: 'var(--danger)',
-                      fontWeight: 900, flexShrink: 0, letterSpacing: '0.04em'
-                    }}>
-                      วิกฤต
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-main)' }}>{item.name}</div>
-                      <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '3px', fontWeight: 600 }}>คงเหลือ {item.quantity} ชิ้น · เกณฑ์ขั้นต่ำ {item.min_stock} ชิ้น</div>
-                    </div>
-                    <div style={{ fontSize: '0.9rem', color: 'var(--danger)', fontWeight: 900 }}>
-                      ขาดอีก {item.min_stock - item.quantity} ชิ้น
-                    </div>
-                  </div>
-                ))}
-                {(!inventory.criticalItems || inventory.criticalItems.length === 0) && (
-                  <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)', fontWeight: 600 }}>ไม่มีอุปกรณ์ที่สต็อกต่ำกว่าเกณฑ์</div>
-                )}
-              </div>
-            </StyledCard>
-          </div>
-
-          <div className="dashboard-right-column">
-            <StyledCard title="ใบเบิกล่าสุด" icon={<ArrowUpRight size={22} />} action={<Link to="/withdrawal-history" className="link-hover-shift">ดูทั้งหมด <ChevronRight size={16} /></Link>} delay={600}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                {(inventory.recentWithdrawals || []).slice(0, 3).map((w: Withdrawal) => (
-                  <div key={w.id} className="dashboard-list-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem', borderRadius: '18px', background: 'var(--bg-app)' }}>
-                    <div>
-                      <div style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text-main)' }}>{w.recipient}</div>
-                      <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px', fontWeight: 600 }}>{w.project_name || 'งานทั่วไป'} · {formatDate(w.created_at)}</div>
-                    </div>
-                    <ChevronRight size={20} color="var(--border-hover)" />
-                  </div>
-                ))}
-              </div>
-            </StyledCard>
-            
-            <StyledCard title="อุปกรณ์เบิกมากสุด" icon={<TrendingUp size={22} />} delay={800}>
-               <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-                {inventory.topUsed.slice(0, 3).map((item) => (
-                  <div key={item.name} className="dashboard-list-row" style={{ padding: '8px', borderRadius: '12px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', alignItems: 'center' }}>
-                      <span style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-main)' }}>{item.name}</span>
-                      <span style={{ fontSize: '0.9rem', color: 'var(--primary)', fontWeight: 900 }}>{item.count} ครั้ง</span>
-                    </div>
-                    <div style={{ height: '10px', background: 'var(--border)', borderRadius: '5px', overflow: 'hidden', position: 'relative' }}>
-                      <div style={{ 
-                        position: 'absolute',
-                        top: 0, left: 0, bottom: 0, right: 0,
-                        background: 'var(--primary)', 
-                        borderRadius: '5px',
-                        transform: isLoaded ? `scaleX(${item.count / (inventory.topUsed[0]?.count || 1)})` : 'scaleX(0)',
-                        transformOrigin: 'left',
-                        transition: 'transform 1s cubic-bezier(0.16, 1, 0.3, 1) 0.5s'
-                      }}></div>
-                    </div>
-                  </div>
-                ))}
-               </div>
-            </StyledCard>
-          </div>
-        </div>
-
-        <div className="responsive-grid grid-cols-2" style={{ marginTop: '1.75rem' }}>
-          {/* Withdrawal Reasons breakdown (Donut Pie Chart) */}
-          <StyledCard title="สัดส่วนจุดประสงค์การเบิกพัสดุ" icon={<TrendingUp size={22} />} delay={850}>
-            {(!withdrawalBreakdown || withdrawalBreakdown.length === 0) ? (
-              <div style={{ textAlign: 'center', padding: '4rem 0', color: 'var(--text-muted)', fontWeight: 600 }}>ไม่มีข้อมูลการเบิกพัสดุ</div>
-            ) : (
-              <div className="dashboard-chart-split" style={{ marginTop: '10px' }}>
-                <div className="chart-panel" style={{ height: '260px', minHeight: '260px' }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={withdrawalBreakdown}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={60}
-                        outerRadius={90}
-                        paddingAngle={4}
-                        dataKey="count"
-                        nameKey="name"
-                        stroke="none"
-                      >
-                        {withdrawalBreakdown.map((_entry, index) => (
-                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <Tooltip 
-                        contentStyle={{ 
-                          borderRadius: '16px', 
-                          backgroundColor: 'var(--bg-card)',
-                          border: '1px solid var(--border)',
-                          boxShadow: 'var(--shadow-lg)',
-                          fontSize: '13px', 
-                          fontWeight: 700,
-                          color: 'var(--text-main)'
+              {showFilterDropdown && (
+                <>
+                  <div
+                    onClick={() => setShowFilterDropdown(false)}
+                    style={{ position: 'fixed', inset: 0, zIndex: -1, cursor: 'default' }}
+                  />
+                  <div className="glass-card" style={{
+                    position: 'absolute',
+                    top: 'calc(100% + 8px)',
+                    right: 0,
+                    width: '180px',
+                    borderRadius: '12px',
+                    padding: '6px',
+                    boxShadow: 'var(--glass-shadow)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '4px',
+                    border: '1px solid var(--glass-border)',
+                    background: 'var(--glass-bg)',
+                    backdropFilter: 'var(--glass-blur)'
+                  }}>
+                    {[
+                      { label: 'ข้อมูลทั้งหมด', value: 'all' },
+                      { label: 'ย้อนหลัง 7 วัน', value: '7_days' },
+                      { label: 'ย้อนหลัง 30 วัน', value: '30_days' },
+                      { label: 'ย้อนหลัง 90 วัน', value: '90_days' }
+                    ].map(opt => (
+                      <button
+                        key={opt.value}
+                        onClick={() => {
+                          handleQuickFilterChange(opt.value);
+                          setShowFilterDropdown(false);
                         }}
-                        itemStyle={{ color: 'var(--text-main)' }}
-                      />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {withdrawalBreakdown.map((item, idx) => (
-                    <div key={item.name} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', fontWeight: 700 }}>
-                      <div style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: COLORS[idx % COLORS.length], flexShrink: 0 }} />
-                      <span style={{ color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.name}>{item.name}</span>
-                      <span style={{ color: 'var(--text-main)', marginLeft: 'auto', flexShrink: 0 }}>{item.count} ครั้ง</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </StyledCard>
-
-          {/* Stock movements trend area chart */}
-          <StyledCard title="แนวโน้มการทำรายการพัสดุ (6 เดือนย้อนหลัง)" icon={<TrendingUp size={22} />} delay={950}>
-            {(!stockMovements || stockMovements.length === 0) ? (
-              <div style={{ textAlign: 'center', padding: '4rem 0', color: 'var(--text-muted)', fontWeight: 600 }}>ไม่มีข้อมูลการเคลื่อนไหวพัสดุ</div>
-            ) : (
-              <div style={{ height: '220px', marginTop: '10px' }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart
-                    data={stockMovements}
-                    margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
-                  >
-                    <defs>
-                      <linearGradient id="colorAdded" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.2}/>
-                        <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                      </linearGradient>
-                      <linearGradient id="colorWithdrawn" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#ea580c" stopOpacity={0.2}/>
-                        <stop offset="95%" stopColor="#ea580c" stopOpacity={0}/>
-                      </linearGradient>
-                      <linearGradient id="colorBorrowed" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#29b6f6" stopOpacity={0.2}/>
-                        <stop offset="95%" stopColor="#29b6f6" stopOpacity={0}/>
-                      </linearGradient>
-                      <linearGradient id="colorReturned" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#7c3aed" stopOpacity={0.2}/>
-                        <stop offset="95%" stopColor="#7c3aed" stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                    <XAxis dataKey="month" fontSize={10} tickLine={false} axisLine={false} tickFormatter={(v) => v.split('-')[1] + '/' + v.split('-')[0].substring(2)} tick={{ fill: 'var(--text-muted)', fontWeight: 700 }} />
-                    <YAxis fontSize={10} tickLine={false} axisLine={false} tick={{ fill: 'var(--text-muted)', fontWeight: 700 }} />
-                    <Tooltip
-                      contentStyle={{ 
-                        borderRadius: '16px', 
-                        backgroundColor: 'var(--bg-card)',
-                        border: '1px solid var(--border)', 
-                        boxShadow: 'var(--shadow-lg)', 
-                        fontSize: '13px', 
-                        padding: '15px', 
-                        fontWeight: 700,
-                        color: 'var(--text-main)'
-                      }}
-                      itemStyle={{ color: 'var(--text-main)' }}
-                    />
-                    <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px', fontWeight: 700, color: 'var(--text-muted)' }} />
-                    <Area type="monotone" dataKey="added" stroke="#10b981" fillOpacity={1} fill="url(#colorAdded)" strokeWidth={2} name="นำเข้า (+)" />
-                    <Area type="monotone" dataKey="withdrawn" stroke="#ea580c" fillOpacity={1} fill="url(#colorWithdrawn)" strokeWidth={2} name="เบิกจ่าย (-)" />
-                    <Area type="monotone" dataKey="borrowed" stroke="#29b6f6" fillOpacity={1} fill="url(#colorBorrowed)" strokeWidth={2} name="ยืมพัสดุ (-)" />
-                    <Area type="monotone" dataKey="returned" stroke="#7c3aed" fillOpacity={1} fill="url(#colorReturned)" strokeWidth={2} name="คืนพัสดุ (+)" />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-          </StyledCard>
-        </div>
-      </section>
-
-      {/* --- PRIORITY 2: REPAIRS (งานซ่อมแซมและเคลม) --- */}
-      <section>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '1.75rem' }}>
-          <div style={{ width: '8px', height: '32px', background: 'var(--primary)', borderRadius: '4px' }} />
-          <h3 style={{ fontSize: '1.4rem', fontWeight: 900, color: 'var(--text-main)', margin: 0, letterSpacing: '-0.02em' }}>งานซ่อมแซมและเคลม</h3>
-          <div style={{ height: '2px', flex: 1, background: 'linear-gradient(90deg, var(--border), transparent)' }} />
-        </div>
-
-        <div className="responsive-grid grid-cols-4" style={{ marginBottom: '1.75rem' }}>
-          <KPICard title="งานทั้งหมด" value={kpis.total} subText="รับแจ้งเข้าสู่ระบบ" icon={Wrench} delay={450} to="/repairs" />
-          <KPICard title="รอดำเนินการ" value={kpis.pending} subText={`ด่วน ${kpis.pending > 2 ? 2 : kpis.pending} รายการ`} icon={Clock} delay={600} to="/repairs?status=รอดำเนินการ" />
-          <KPICard title="กำลังดำเนินการ" value={kpis.in_progress} subText="อยู่ระหว่างซ่อม/เคลม" icon={Wrench} delay={750} to="/repairs?status=กำลังซ่อม" />
-          <KPICard title="เสร็จสิ้น" value={kpis.completed} subText="ปิดงานเรียบร้อย" icon={Check} delay={900} to="/repairs?status=เสร็จสิ้น" />
-        </div>
-
-        <div className="responsive-grid grid-cols-2">
-          <StyledCard title="งานซ่อม/เคลมล่าสุด" icon={<ShieldAlert size={22} />} action={<Link to="/repairs" className="link-hover-shift">ดูทั้งหมด <ChevronRight size={16} /></Link>} delay={1000}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              {recentJobs.slice(0, 4).map((job) => (
-                <div key={job.id} className="dashboard-list-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', borderRadius: '16px', borderBottom: '1px solid #f8fafc' }}>
-                  <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                    <div style={{ 
-                      fontSize: '0.65rem', padding: '4px 10px', borderRadius: '8px', 
-                      background: job.type === 'claim' ? '#fff1f2' : '#f0f9ff', 
-                      color: job.type === 'claim' ? '#e11d48' : '#0288d1',
-                      fontWeight: 900, textTransform: 'uppercase'
-                    }}>
-                      {job.type === 'claim' ? 'เคลม' : 'ซ่อม'}
-                    </div>
-                    <div>
-                      <div style={{ fontSize: '1rem', fontWeight: 800, color: '#1e293b' }}>{job.device_name}</div>
-                      <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '2px', fontWeight: 600 }}>{job.reporter} · {formatDate(job.created_at)}</div>
-                    </div>
+                        style={{
+                          padding: '8px 12px',
+                          borderRadius: '8px',
+                          border: 'none',
+                          background: quickFilter === opt.value ? 'var(--primary-light)' : 'transparent',
+                          color: quickFilter === opt.value ? 'var(--primary)' : 'var(--text-main)',
+                          fontSize: '0.82rem',
+                          fontWeight: quickFilter === opt.value ? 800 : 600,
+                          textAlign: 'left',
+                          cursor: 'pointer',
+                          transition: 'all 0.15s ease',
+                          width: '100%'
+                        }}
+                        className="dropdown-item-hover"
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
                   </div>
-                  <span className={`badge badge-${job.status}`} style={{ height: 'fit-content', fontSize: '0.75rem', fontWeight: 800, padding: '5px 12px', borderRadius: '10px' }}>{job.status}</span>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="bento-grid" style={{ gap: '1.25rem' }}>
+          {/* ============ Zone: ภาพรวม ============ */}
+
+          {/* Warehouse Health (hero) */}
+          <Card className={`glass-card boot-animate stagger-0 dash-span-12 ${warehouseHealth.score <= 40 ? 'led-breathe-danger' : warehouseHealth.score <= 70 ? 'led-breathe-warning' : ''}`} style={{ padding: '1.5rem 1.75rem', background: `linear-gradient(135deg, ${warehouseHealth.color}10, transparent)`, border: `1px solid ${warehouseHealth.color}80` }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1.75rem', flexWrap: 'wrap' }}>
+              <div style={{ position: 'relative', flexShrink: 0 }}>
+                <svg width="84" height="84" viewBox="0 0 120 120">
+                  <circle cx="60" cy="60" r="54" fill="none" stroke="var(--bg-app)" strokeWidth="12" />
+                  <circle cx="60" cy="60" r="54" fill="none" stroke={warehouseHealth.color} strokeWidth="12" strokeDasharray="339.29" strokeDashoffset={339.29 * (1 - warehouseHealth.score / 100)} strokeLinecap="round" transform="rotate(-90 60 60)" style={{ transition: 'stroke-dashoffset 1.5s cubic-bezier(0.16, 1, 0.3, 1)' }} />
+                </svg>
+                <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', textAlign: 'center' }}>
+                  <div style={{ fontSize: '1.15rem', fontWeight: 800, color: warehouseHealth.color }}>
+                    <Counter end={warehouseHealth.score} suffix="%" />
+                  </div>
+                </div>
+              </div>
+              <div style={{ flex: 1, minWidth: '260px' }}>
+                <h3 style={{ margin: '0 0 4px 0', fontSize: '1.1rem', fontWeight: 800 }}>
+                  สภาวะคลัง: <span style={{ color: warehouseHealth.color }}>{warehouseHealth.label}</span>
+                </h3>
+                <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)', lineHeight: '1.5', fontWeight: 500, margin: 0 }}>
+                  {warehouseHealth.score > 70
+                    ? `คลังพร้อมใช้งานสูง พบรายการวิกฤต ${kpis.critical_stock} รายการ`
+                    : `ต้องเร่งจัดการ! พัสดุวิกฤต ${kpis.critical_stock} รายการ ควรออกใบสั่งซื้อ (PO) ทันที`}
+                </p>
+                <div style={{ display: 'flex', gap: '1.25rem', marginTop: '10px', flexWrap: 'wrap' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', fontWeight: 700 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#ef4444' }} /> วิกฤต {kpis.critical_stock}
+                  </span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', fontWeight: 700 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#f59e0b' }} /> รอซ่อม {kpis.in_progress}
+                  </span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', fontWeight: 700 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#d97706' }} /> ค้างคืน {people.pendingReturnsCount}
+                  </span>
+                </div>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', minWidth: '180px' }}>
+                <Link to="/inventory" style={{ textDecoration: 'none' }}>
+                  <button className="btn btn-primary" style={{ width: '100%', justifyContent: 'space-between', padding: '10px 16px', background: warehouseHealth.color, fontSize: '0.85rem' }}>
+                    <span>จัดการสต็อกวิกฤต</span><ArrowUpRight size={16} />
+                  </button>
+                </Link>
+                <Link to="/purchase-orders" style={{ textDecoration: 'none' }}>
+                  <button className="btn btn-outline" style={{ width: '100%', justifyContent: 'space-between', padding: '10px 16px', border: `1px solid ${warehouseHealth.color}40`, fontSize: '0.85rem' }}>
+                    <span>ออกใบสั่งซื้อ (PO)</span><ShoppingBag size={16} />
+                  </button>
+                </Link>
+              </div>
+            </div>
+          </Card>
+
+          {/* KPI strip */}
+          {kpiCards.map((k, i) => (
+            <Link key={i} to={k.to} className="boot-animate stagger-1 dash-span-2" style={{ textDecoration: 'none' }}>
+              <Card className={`glass-card kpi-tile ${k.alert ? 'led-breathe-danger' : ''}`} style={{ height: '100%', padding: '1rem 1.1rem', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <div style={{ width: 36, height: 36, background: k.bg, color: k.color, borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <k.icon size={18} />
+                  </div>
+                  <ArrowUpRight size={15} className="kpi-tile-arrow" />
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: '1.7rem', fontWeight: 800, lineHeight: 1.1, color: k.alert ? k.color : 'var(--text-main)', fontFamily: 'Outfit' }}>
+                    <Counter end={k.value} />
+                  </div>
+                  <div style={{ fontSize: '0.74rem', fontWeight: 700, color: 'var(--text-muted)', marginTop: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {k.label}
+                  </div>
+                </div>
+              </Card>
+            </Link>
+          ))}
+
+          {/* ============ Zone: งานซ่อมและการเคลม ============ */}
+          <SectionHeader icon={<Sliders size={17} />} title="งานซ่อมและการเคลม" subtitle="สถานะงานซ่อม ตั๋วเคลม และงานค้างเกินกำหนด" />
+
+          {/* Status pie */}
+          <Card className="glass-card boot-animate stagger-2 dash-span-4" style={{ padding: '1.5rem' }}>
+            <h3 style={{ margin: '0 0 1rem 0', fontSize: '1.05rem', fontWeight: 800 }}>สัดส่วนสถานะงานซ่อม</h3>
+            <div style={{ position: 'relative', height: '170px', width: '100%' }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={statusPieData} cx="50%" cy="50%" innerRadius={50} outerRadius={72} paddingAngle={6} dataKey="value" animationBegin={200} animationDuration={1100}>
+                    {statusPieData.map((entry, index) => <Cell key={index} fill={entry.color} stroke="none" />)}
+                  </Pie>
+                  <Tooltip contentStyle={chartTooltipStyle} itemStyle={{ color: 'var(--text-main)' }} labelStyle={{ color: 'var(--text-muted)', fontWeight: 800 }} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+                <div style={{ fontSize: '1.45rem', fontWeight: 800, fontFamily: 'Outfit', lineHeight: 1 }}>
+                  <Counter end={kpis.total} />
+                </div>
+                <div style={{ fontSize: '0.62rem', fontWeight: 700, color: 'var(--text-muted)', marginTop: '3px' }}>งานทั้งหมด</div>
+              </div>
+            </div>
+            <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {statusPieData.map((item, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', background: 'var(--bg-app)', borderRadius: '8px' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.82rem', fontWeight: 700 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: item.color }} />{item.name}
+                  </span>
+                  <span style={{ fontWeight: 800, fontSize: '0.95rem', color: item.color }}>{item.value}</span>
                 </div>
               ))}
             </div>
-          </StyledCard>
+          </Card>
 
-          <StyledCard title="แนวโน้มงานซ่อม" icon={<BarChart3 size={22} />} delay={1200}>
-            <div style={{ height: '200px', marginTop: '10px' }}>
+          {/* Claims stats */}
+          <Card className="glass-card boot-animate stagger-2 dash-span-4" style={{ padding: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800 }}>สถิติใบส่งเคลมอุปกรณ์</h3>
+                <p style={{ margin: '2px 0 0 0', fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>ประกัน / เคลมภายนอก (Claim Tickets)</p>
+              </div>
+              <Inbox size={18} color="var(--primary)" />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {[
+                { name: 'ตั๋วส่งเคลมทั้งหมด', value: claimsKpis?.total || 0, color: 'var(--text-main)', bg: 'var(--bg-app)' },
+                { name: 'รอดำเนินการ', value: claimsKpis?.pending || 0, color: 'var(--danger)', bg: 'var(--danger-light)' },
+                { name: 'กำลังดำเนินการเคลม', value: claimsKpis?.in_progress || 0, color: 'var(--warning)', bg: 'var(--warning-light)' },
+                { name: 'เคลมสำเร็จเสร็จสิ้น', value: claimsKpis?.completed || 0, color: 'var(--success)', bg: 'var(--success-light)' }
+              ].map((item, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', background: item.bg, borderRadius: '8px' }}>
+                  <span style={{ fontSize: '0.82rem', fontWeight: 700, color: item.color }}>{item.name}</span>
+                  <span style={{ fontWeight: 800, fontSize: '0.95rem', color: item.color }}>{item.value}</span>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          {/* Overdue jobs (SLA) */}
+          <Card className={`glass-card boot-animate stagger-2 dash-span-4 ${(analysis.overdue?.length || 0) > 0 ? 'led-breathe-danger' : ''}`} style={{ padding: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem' }}>
+              <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: (analysis.overdue?.length || 0) > 0 ? 'var(--danger)' : 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <AlertCircle size={16} /> งานค้างเกินกำหนด (SLA)
+              </h3>
+              <span style={{
+                position: 'relative',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                fontSize: '0.68rem',
+                fontWeight: 800,
+                background: (analysis.overdue?.length || 0) > 0 ? 'var(--danger-light)' : 'var(--bg-app)',
+                color: (analysis.overdue?.length || 0) > 0 ? 'var(--danger)' : 'var(--text-muted)',
+                padding: '3px 8px',
+                borderRadius: '6px',
+                border: (analysis.overdue?.length || 0) > 0 ? '1px solid var(--danger-border)' : '1px solid var(--border)'
+              }}>
+                {(analysis.overdue?.length || 0) > 0 && (
+                  <span className="pulse-dot" style={{ position: 'relative', top: 'auto', right: 'auto', display: 'inline-block', width: 6, height: 6, padding: 0 }} />
+                )}
+                {analysis.overdue?.length || 0} รายการ
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {analysis.overdue?.length > 0 ? analysis.overdue.slice(0, 5).map((job: { id?: number; ticket_no: string; device_name: string; reporter: string; created_at: string; days_over: number }, i: number) => {
+                // SLA progress percentage (3 days or more = 100%)
+                const slaProgress = Math.min(100, Math.round((job.days_over / 3) * 100));
+                return (
+                  <Link key={i} to={job.id ? `/repairs/${job.id}` : '/repairs'} className="dash-row-link" style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 10px', background: 'var(--bg-app)', borderRadius: '10px', border: '1px solid var(--border)', transition: 'all 0.2s ease', textDecoration: 'none', color: 'inherit' }}>
+                    <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '30px', height: '30px', flexShrink: 0 }}>
+                      <svg width="30" height="30" viewBox="0 0 36 36">
+                        <circle cx="18" cy="18" r="15" fill="none" stroke="var(--border)" strokeWidth="3" />
+                        <circle
+                          cx="18"
+                          cy="18"
+                          r="15"
+                          fill="none"
+                          stroke="var(--danger)"
+                          strokeWidth="3"
+                          strokeDasharray="94.2"
+                          strokeDashoffset={94.2 * (1 - slaProgress / 100)}
+                          strokeLinecap="round"
+                          transform="rotate(-90 18 18)"
+                          style={{ transition: 'stroke-dashoffset 1s ease' }}
+                        />
+                      </svg>
+                      <div style={{ position: 'absolute', fontSize: '0.68rem', fontWeight: 800, color: 'var(--danger)', fontFamily: 'Outfit' }}>
+                        {job.days_over}
+                      </div>
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: '0.8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-main)' }}>{job.ticket_no} · {job.device_name}</div>
+                      <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontWeight: 600 }}>โดย {job.reporter}</div>
+                    </div>
+                    <span style={{
+                      fontSize: '0.62rem',
+                      fontWeight: 800,
+                      color: 'var(--danger)',
+                      background: 'var(--danger-light)',
+                      border: '1px solid var(--danger-border)',
+                      padding: '2px 6px',
+                      borderRadius: '5px',
+                      whiteSpace: 'nowrap'
+                    }}>
+                      Overdue
+                    </span>
+                    <ChevronRight size={15} className="dash-row-chevron" style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                  </Link>
+                );
+              }) : (
+                <div style={{ textAlign: 'center', padding: '1.5rem 1rem', color: 'var(--success)', fontWeight: 600, fontSize: '0.82rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                  <Check size={16} /> ไม่มีงานค้างเกินกำหนด
+                </div>
+              )}
+            </div>
+          </Card>
+
+          {/* Most broken */}
+          <Card className="glass-card boot-animate stagger-3 dash-span-6" style={{ padding: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800 }}>สุขภาพอุปกรณ์</h3>
+                <p style={{ margin: '2px 0 0 0', fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>ส่งซ่อมบ่อยที่สุด 5 อันดับ</p>
+              </div>
+              <HardDrive size={18} color="var(--primary)" />
+            </div>
+            <div style={{ height: '200px', width: '100%' }}>
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={analysis.monthlyTrend}>
-                  <defs>
-                    <linearGradient id="repairActiveGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="var(--primary)" stopOpacity={1}/>
-                      <stop offset="100%" stopColor="var(--primary-hover)" stopOpacity={0.8}/>
-                    </linearGradient>
-                    <linearGradient id="repairNormalGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="var(--primary-light)" stopOpacity={1}/>
-                      <stop offset="100%" stopColor="var(--primary-light)" stopOpacity={0.8}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
-                  <XAxis dataKey="month" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => v.split('-')[1]} tick={{ fill: 'var(--text-muted)', fontWeight: 700 }} />
-                  <Tooltip 
-                    contentStyle={{ 
-                      borderRadius: '20px', 
-                      backgroundColor: 'var(--bg-card)',
-                      border: '1px solid var(--border)', 
-                      boxShadow: 'var(--shadow-lg)', 
-                      fontSize: '13px', 
-                      padding: '15px', 
-                      fontWeight: 700,
-                      color: 'var(--text-main)'
-                    }}
-                    cursor={{ fill: 'var(--bg-app)' }}
-                    itemStyle={{ color: 'var(--text-main)' }}
-                  />
-                  <Bar dataKey="count" radius={[8, 8, 0, 0]} barSize={28}>
-                    {analysis.monthlyTrend.map((_entry, index) => (
-                      <Cell key={`cell-${index}`} fill={index === analysis.monthlyTrend.length - 1 ? 'url(#repairActiveGrad)' : 'url(#repairNormalGrad)'} />
+                <BarChart data={analysis.mostBroken} layout="vertical" margin={{ left: -20 }}>
+                  <XAxis type="number" hide />
+                  <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fill: 'var(--text-main)', fontSize: 10, fontWeight: 700 }} width={90} />
+                  <Tooltip cursor={{ fill: 'var(--primary-light)' }} contentStyle={chartTooltipStyle} itemStyle={{ color: 'var(--text-main)' }} labelStyle={{ color: 'var(--text-muted)', fontWeight: 800 }} />
+                  <Bar dataKey="count" radius={[0, 6, 6, 0]} barSize={16} animationDuration={1000}>
+                    {analysis.mostBroken.map((_entry: { name: string; count: number }, index: number) => (
+                      <Cell key={index} fill={index === 0 ? 'var(--danger)' : index < 3 ? 'var(--primary)' : '#cbd5e1'} />
                     ))}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
-            <div className="responsive-grid grid-cols-3" style={{ marginTop: '25px', background: 'var(--bg-app)', padding: '15px', borderRadius: '22px', border: '1px solid var(--border)' }}>
-              {[
-                { label: 'เฉลี่ยต่อเดือน', val: Math.round(analysis.monthlyTrend.reduce((a, b) => a + b.count, 0) / (analysis.monthlyTrend.length || 1)) },
-                { label: 'สูงสุด', val: Math.max(...analysis.monthlyTrend.map(t => t.count), 0), color: 'var(--primary)' },
-                { label: 'เดือนนี้', val: analysis.monthlyTrend[analysis.monthlyTrend.length - 1]?.count || 0 }
-              ].map((s) => (
-                <div key={s.label} style={{ textAlign: 'center' }}>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{s.label}</div>
-                  <div style={{ fontSize: '1.4rem', fontWeight: 900, color: s.color || 'var(--text-main)', marginTop: '4px' }}>
-                    <CountUp end={s.val} delay={1000} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </StyledCard>
-        </div>
+          </Card>
 
-        <div style={{ marginTop: '1.75rem' }}>
-          <StyledCard title="ภาระงานและการปฏิบัติงานของช่าง" icon={<Users size={22} />} delay={1400}>
-            {(!technicians || technicians.length === 0) ? (
-              <div style={{ textAlign: 'center', padding: '4rem 0', color: 'var(--text-muted)', fontWeight: 700 }}>ยังไม่มีข้อมูลช่างปฏิบัติงาน</div>
-            ) : (
-              <div style={{ height: '240px', marginTop: '10px' }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    data={technicians}
-                    layout="vertical"
-                    margin={{ top: 5, right: 10, left: 10, bottom: 5 }}
-                  >
-                    <defs>
-                      <linearGradient id="techCompletedGrad" x1="0" y1="0" x2="1" y2="0">
-                        <stop offset="0%" stopColor="var(--success-light)" />
-                        <stop offset="100%" stopColor="var(--success)" />
-                      </linearGradient>
-                      <linearGradient id="techActiveGrad" x1="0" y1="0" x2="1" y2="0">
-                        <stop offset="0%" stopColor="var(--primary-light)" />
-                        <stop offset="100%" stopColor="var(--primary)" />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="var(--border)" />
-                    <XAxis type="number" fontSize={10} tickLine={false} axisLine={false} tick={{ fill: 'var(--text-muted)', fontWeight: 700 }} />
-                    <YAxis dataKey="name" type="category" fontSize={11} tickLine={false} axisLine={false} tick={{ fill: 'var(--text-main)', fontWeight: 800 }} width={75} />
-                    <Tooltip
-                      contentStyle={{ 
-                        borderRadius: '16px', 
-                        backgroundColor: 'var(--bg-card)',
-                        border: '1px solid var(--border)', 
-                        boxShadow: 'var(--shadow-lg)', 
-                        fontSize: '13px', 
-                        padding: '15px', 
-                        fontWeight: 700,
-                        color: 'var(--text-main)'
-                      }}
-                      itemStyle={{ color: 'var(--text-main)' }}
-                    />
-                    <Legend 
-                      verticalAlign="top" 
-                      height={32} 
-                      iconType="circle" 
-                      wrapperStyle={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)' }} 
-                    />
-                    <Bar dataKey="completed" stackId="a" fill="url(#techCompletedGrad)" radius={[0, 6, 6, 0]} barSize={14} name="ซ่อมเสร็จสิ้น" />
-                    <Bar dataKey="active" stackId="a" fill="url(#techActiveGrad)" radius={[0, 6, 6, 0]} barSize={14} name="กำลังซ่อม" />
-                  </BarChart>
-                </ResponsiveContainer>
+          {/* Technicians workload */}
+          <Card className="glass-card boot-animate stagger-3 dash-span-6" style={{ padding: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800 }}>ภาระงานช่าง</h3>
+                <p style={{ margin: '2px 0 0 0', fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>การกระจายงานในทีมเทคนิค</p>
               </div>
-            )}
-          </StyledCard>
-        </div>
-      </section>
+              <Users size={18} color="var(--primary)" />
+            </div>
+            <div style={{ height: '200px', width: '100%' }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={technicians} layout="vertical" margin={{ left: -20 }}>
+                  <XAxis type="number" hide />
+                  <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fill: 'var(--text-main)', fontSize: 10, fontWeight: 700 }} width={70} />
+                  <Tooltip cursor={{ fill: 'var(--primary-light)' }} contentStyle={chartTooltipStyle} itemStyle={{ color: 'var(--text-main)' }} labelStyle={{ color: 'var(--text-muted)', fontWeight: 800 }} />
+                  <Bar dataKey="active" stackId="a" fill="var(--warning)" name="กำลังทำ" barSize={15} animationDuration={1000} />
+                  <Bar dataKey="completed" stackId="a" fill="var(--success)" name="เสร็จแล้ว" radius={[0, 6, 6, 0]} barSize={15} animationDuration={1200} />
+                  <Legend iconType="circle" wrapperStyle={{ paddingTop: '12px', fontSize: '10px', fontWeight: 700 }} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
 
-      {/* --- PRIORITY 3: PURCHASE ORDERS (การจัดซื้อและจัดหาพัสดุ) --- */}
-      <section>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '1.75rem', marginTop: '1rem' }}>
-          <div style={{ width: '8px', height: '32px', background: 'var(--primary)', borderRadius: '4px' }} />
-          <h3 style={{ fontSize: '1.4rem', fontWeight: 900, color: 'var(--text-main)', margin: 0, letterSpacing: '-0.02em' }}>การสั่งซื้อและจัดหาพัสดุ</h3>
-          <div style={{ height: '2px', flex: 1, background: 'linear-gradient(90deg, var(--border), transparent)' }} />
-        </div>
+          {/* ============ Zone: คลังพัสดุ ============ */}
+          <SectionHeader icon={<Boxes size={17} />} title="คลังพัสดุ" subtitle="ความเคลื่อนไหวสต็อก สภาพอุปกรณ์ และรายการที่ต้องจับตา" />
 
-        <div className="responsive-grid grid-cols-3" style={{ marginBottom: '1.75rem' }}>
-          <KPICard 
-            title="งบประมาณจัดซื้อสะสม" 
-            value={purchaseOrders.total_spent || 0} 
-            subText="เฉพาะใบสั่งซื้อที่ตรวจรับสินค้าแล้ว" 
-            icon={ShoppingBag} 
-            
-            delay={100} 
-            to="/purchase-orders" 
-          />
-          <KPICard 
-            title="ใบสั่งซื้อรอดำเนินการ" 
-            value={purchaseOrders.pending_po || 0} 
-            subText="อยู่ระหว่างจัดซื้อ/รออนุมัติ" 
-            icon={Clock} 
-            delay={250} 
-            to="/purchase-orders?status=Pending" 
-          />
-          <KPICard 
-            title="ใบสั่งซื้อที่รับของแล้ว" 
-            value={purchaseOrders.received_po || 0} 
-            subText="นำสินค้าเข้าคลังสำเร็จ" 
-            icon={Check} 
-            delay={400} 
-            to="/purchase-orders?status=Received" 
-          />
-        </div>
+          {/* Stock movement chart */}
+          <Card className="glass-card boot-animate stagger-2 dash-span-8" style={{ padding: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '8px' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800 }}>ความเคลื่อนไหวสต็อกพัสดุ</h3>
+                <p style={{ margin: '2px 0 0 0', fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>นำเข้า vs เบิกออก ย้อนหลัง 6 เดือน</p>
+              </div>
+              <div style={{ display: 'flex', gap: '1rem', background: 'var(--bg-app)', padding: '6px 12px', borderRadius: '10px' }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.72rem', fontWeight: 800 }}>
+                  <span style={{ width: 10, height: 10, borderRadius: '3px', background: 'var(--primary)' }} /> นำเข้า
+                </span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.72rem', fontWeight: 800 }}>
+                  <span style={{ width: 10, height: 10, borderRadius: '3px', background: '#94a3b8' }} /> เบิกออก
+                </span>
+              </div>
+            </div>
+            <div style={{ height: '260px', width: '100%' }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={stockMovements.length > 0 ? stockMovements : []}>
+                  <defs>
+                    <linearGradient id="colorAdded" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="var(--primary)" stopOpacity={0.35} />
+                      <stop offset="95%" stopColor="var(--primary)" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                  <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: 'var(--text-main)', fontSize: 11, fontWeight: 700 }} dy={10} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fill: 'var(--text-muted)', fontSize: 11, fontWeight: 700 }} width={30} />
+                  <Tooltip contentStyle={chartTooltipStyle} itemStyle={{ color: 'var(--text-main)' }} labelStyle={{ color: 'var(--text-muted)', fontWeight: 800 }} />
+                  <Area type="monotone" dataKey="added" name="นำเข้า" stroke="var(--primary)" strokeWidth={3} fillOpacity={1} fill="url(#colorAdded)" animationDuration={1400} />
+                  <Area type="monotone" dataKey="withdrawn" name="เบิกจ่าย" stroke="#94a3b8" strokeWidth={2.5} fillOpacity={0} strokeDasharray="6 6" animationDuration={1600} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
 
-        <div style={{ marginTop: '1.75rem' }}>
-          <StyledCard 
-            title="ใบสั่งซื้อล่าสุด" 
-            icon={<ShoppingBag size={22} />} 
-            action={<Link to="/purchase-orders" className="link-hover-shift">ดูทั้งหมด <ChevronRight size={16} /></Link>} 
-            delay={500}
-          >
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              {(purchaseOrders.recentPurchaseOrders || []).map((po: PurchaseOrder & { total_cost?: number; total_items?: number }) => (
-                <div key={po.id} className="dashboard-list-row" style={{ display: 'flex', gap: '16px', alignItems: 'center', padding: '12px', borderRadius: '16px', borderBottom: '1px solid var(--border)' }}>
-                  <div style={{ 
-                    fontSize: '0.65rem', padding: '5px 10px', borderRadius: '10px', 
-                    background: po.status === 'Received' ? 'var(--success-light)' : po.status === 'Cancelled' ? 'var(--danger-light)' : 'var(--warning-light)',
-                    color: po.status === 'Received' ? 'var(--success)' : po.status === 'Cancelled' ? 'var(--danger)' : 'var(--warning)',
-                    fontWeight: 900, flexShrink: 0, letterSpacing: '0.04em'
-                  }}>
-                    {po.status === 'Draft' ? 'แบบร่าง' :
-                     po.status === 'Pending' ? 'รอรับของ' :
-                     po.status === 'Approved' ? 'อนุมัติแล้ว' :
-                     po.status === 'Received' ? 'รับของแล้ว' :
-                     po.status === 'Cancelled' ? 'ยกเลิก' : po.status}
+          {/* Critical stock */}
+          <Card className="glass-card boot-animate stagger-2 dash-span-4" style={{ padding: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800 }}>พัสดุวิกฤต</h3>
+                <p style={{ margin: '2px 0 0 0', fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>ต่ำกว่าเกณฑ์ Min Stock</p>
+              </div>
+              <AlertCircle size={18} color="var(--danger)" />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {inventory.criticalItems?.length > 0 ? inventory.criticalItems.map((item: { name: string; quantity: number; min_stock: number }, i: number) => (
+                <Link key={i} to="/inventory" className="dash-row-link" style={{ display: 'block', textDecoration: 'none', color: 'inherit', padding: '10px 12px', background: 'var(--danger-light)', borderRadius: '10px', border: '1px solid var(--danger-border)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                    <span style={{ fontWeight: 700, fontSize: '0.82rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '150px' }}>{item.name}</span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '2px', fontWeight: 800, color: 'var(--danger)', fontSize: '0.82rem' }}>
+                      {item.quantity}/{item.min_stock}
+                      <ChevronRight size={14} className="dash-row-chevron" />
+                    </span>
                   </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-main)' }}>{po.po_no}</div>
-                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '3px', fontWeight: 600 }}>
-                      ผู้สั่ง: {po.ordered_by || po.created_by} · {po.project_name || 'งานทั่วไป'}
-                    </div>
+                  <div style={{ height: '5px', background: 'rgba(239, 68, 68, 0.12)', borderRadius: '10px', overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: '100%', transform: `scaleX(${Math.min(1, item.quantity / item.min_stock)})`, transformOrigin: 'left', background: 'var(--danger)', borderRadius: '10px', transition: 'transform 1.4s cubic-bezier(0.16, 1, 0.3, 1)' }} />
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
-                    <div style={{ fontSize: '1.15rem', fontWeight: 900, color: 'var(--text-main)' }}>
-                      ฿{(po.total_cost || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}
-                    </div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>
-                      {po.total_items || 0} ชิ้น
-                    </div>
-                  </div>
+                </Link>
+              )) : (
+                <div style={{ textAlign: 'center', padding: '2.5rem 1rem', color: 'var(--success)', fontWeight: 700, fontSize: '0.85rem' }}>
+                  <Check size={32} style={{ marginBottom: '0.5rem', opacity: 0.4 }} />
+                  <div>สต็อกเพียงพอทุกรายการ</div>
                 </div>
-              ))}
-              {(!purchaseOrders.recentPurchaseOrders || purchaseOrders.recentPurchaseOrders.length === 0) && (
-                <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)', fontWeight: 600 }}>ไม่มีประวัติการสั่งซื้อ</div>
               )}
             </div>
-          </StyledCard>
+          </Card>
+
+          {/* Inventory conditions */}
+          <Card className="glass-card boot-animate stagger-3 dash-span-4" style={{ padding: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800 }}>สภาพอุปกรณ์ในคลัง</h3>
+                <p style={{ margin: '2px 0 0 0', fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>คัดแยกตามคุณภาพสินค้า (Instances)</p>
+              </div>
+              <Shield size={18} color="var(--primary)" />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {[
+                { name: 'สภาพใหม่ (New)', count: conditions.New, color: 'var(--primary)' },
+                { name: 'สภาพดี (Good)', count: conditions.Good, color: 'var(--success)' },
+                { name: 'สภาพพอใช้ (Fair)', count: conditions.Fair, color: 'var(--warning)' },
+                { name: 'ชำรุดชั่วคราว (Broken)', count: conditions.Broken, color: 'var(--danger)' }
+              ].map((item, i) => {
+                const percent = totalInstances ? Math.round((item.count / totalInstances) * 100) : 0;
+                return (
+                  <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', fontWeight: 700 }}>
+                      <span>{item.name}</span>
+                      <span>{item.count} ชิ้น ({percent}%)</span>
+                    </div>
+                    <div style={{ height: '6px', background: 'var(--border)', borderRadius: '10px', overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${percent}%`, background: item.color, borderRadius: '10px', transition: 'width 1s ease' }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+
+          {/* Top used items */}
+          <Card className="glass-card boot-animate stagger-3 dash-span-4" style={{ padding: '1.5rem' }}>
+            <h3 style={{ margin: '0 0 0.85rem 0', fontSize: '0.95rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <ShoppingBag size={16} color="var(--primary)" /> พัสดุที่ใช้บ่อย Top 5
+            </h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+              {inventory.topUsed?.length > 0 ? inventory.topUsed.slice(0, 5).map((item: { name: string; count: number }, i: number) => (
+                <Link key={i} to="/inventory" className="dash-row-link" style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '7px 9px', background: 'var(--bg-app)', borderRadius: '8px', textDecoration: 'none', color: 'inherit' }}>
+                  <div style={{ width: 24, height: 24, background: 'var(--bg-card)', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '0.75rem', color: 'var(--primary)', boxShadow: 'var(--elevation-1)', flexShrink: 0 }}>{i + 1}</div>
+                  <div style={{ flex: 1, minWidth: 0, fontWeight: 700, fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</div>
+                  <div style={{ fontSize: '0.78rem', fontWeight: 800 }}>{item.count} <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 600 }}>ชิ้น</span></div>
+                </Link>
+              )) : (
+                <div style={{ textAlign: 'center', padding: '1.5rem 1rem', color: 'var(--text-muted)', fontSize: '0.82rem' }}>ไม่มีข้อมูลการใช้งาน</div>
+              )}
+            </div>
+          </Card>
+
+          {/* Dead stock */}
+          <Card className="glass-card boot-animate stagger-3 dash-span-4" style={{ padding: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800 }}>พัสดุไม่มีการเคลื่อนไหว</h3>
+                <p style={{ margin: '2px 0 0 0', fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>Dead Stock (นิ่งเกิน 90 วัน)</p>
+              </div>
+              <AlertCircle size={18} color="var(--text-muted)" />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {inventory.leastUsed?.length > 0 ? (inventory.leastUsed as Array<{ name: string; days_idle: number | null }>).map((item, i: number) => (
+                <Link key={i} to="/inventory" className="dash-row-link" style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 10px', background: 'var(--bg-app)', borderRadius: '10px', textDecoration: 'none', color: 'inherit' }}>
+                  <div style={{ width: 24, height: 24, background: '#cbd5e1', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '0.75rem', color: 'white', flexShrink: 0 }}>
+                    !
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0, fontWeight: 700, fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                    {item.days_idle == null ? 'ไม่เคยเคลื่อนไหว' : `นิ่ง ${item.days_idle} วัน`}
+                  </div>
+                </Link>
+              )) : (
+                <div style={{ textAlign: 'center', padding: '2.5rem 1rem', color: 'var(--success)', fontWeight: 700, fontSize: '0.85rem' }}>
+                  ไม่มีสินค้าค้างสต็อก
+                </div>
+              )}
+            </div>
+          </Card>
+
+          {/* ============ Zone: บุคลากรและการเบิกจ่าย ============ */}
+          <SectionHeader icon={<Users size={17} />} title="บุคลากรและการเบิกจ่าย" subtitle="ผู้รับผิดชอบด่าน อุปกรณ์ค้างคืน และผู้เบิกบ่อย" />
+
+          {/* Supervisors */}
+          <Card className="glass-card boot-animate stagger-2 dash-span-8" style={{ padding: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '8px' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800 }}>ภาระงานและผู้รับผิดชอบด่าน</h3>
+                <p style={{ margin: '2px 0 0 0', fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>
+                  ด่านในความดูแลและจำนวนงานซ่อมที่กำลังดำเนินการ
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', fontSize: '0.72rem', fontWeight: 800, background: 'var(--bg-app)', padding: '6px 12px', borderRadius: '8px' }}>
+                <span style={{ color: 'var(--text-muted)' }}>ด่านไม่มีผู้ดูแล:</span>
+                <span style={{ color: (unassignedStationsCount || 0) > 0 ? 'var(--danger)' : 'var(--success)' }}>
+                  {unassignedStationsCount || 0} ด่าน
+                </span>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '250px', overflowY: 'auto', paddingRight: '4px' }}>
+              {supervisors && supervisors.length > 0 ? (
+                supervisors.map((sup, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '10px 14px',
+                      background: 'var(--bg-app)',
+                      borderRadius: '12px',
+                      border: '1px solid var(--border)',
+                      transition: 'all 0.2s ease',
+                      position: 'relative'
+                    }}
+                    title={sup.stations_list}
+                    className="dashboard-list-row"
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}>
+                      <div style={{
+                        width: 32,
+                        height: 32,
+                        borderRadius: '50%',
+                        background: sup.active_repairs > 0 ? 'var(--warning-light)' : 'var(--primary-light)',
+                        color: sup.active_repairs > 0 ? 'var(--warning)' : 'var(--primary)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontWeight: 800,
+                        fontSize: '0.85rem',
+                        flexShrink: 0
+                      }}>
+                        <Shield size={14} />
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ fontWeight: 800, fontSize: '0.88rem', color: 'var(--text-main)' }}>{sup.name}</span>
+                          <span style={{
+                            fontSize: '0.68rem',
+                            fontWeight: 700,
+                            background: 'var(--bg-card)',
+                            border: '1px solid var(--border)',
+                            color: 'var(--text-muted)',
+                            padding: '2px 6px',
+                            borderRadius: '6px'
+                          }}>
+                            ดูแล {sup.station_count} ด่าน
+                          </span>
+                        </div>
+                        <div style={{
+                          fontSize: '0.72rem',
+                          color: 'var(--text-muted)',
+                          marginTop: '2px',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          fontWeight: 500
+                        }}>
+                          <MapPin size={11} style={{ display: 'inline', marginRight: '3px', verticalAlign: 'middle' }} />
+                          {sup.stations_list || '-'}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexShrink: 0, marginLeft: '12px' }}>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{
+                          fontSize: '1rem',
+                          fontWeight: 800,
+                          color: sup.active_repairs > 0 ? 'var(--danger)' : 'var(--success)'
+                        }}>
+                          {sup.active_repairs}
+                        </div>
+                        <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)', fontWeight: 700 }}>งานซ่อมค้าง</div>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                  ยังไม่มีข้อมูลผู้รับผิดชอบด่าน
+                </div>
+              )}
+            </div>
+          </Card>
+
+          {/* Pending returns */}
+          <Card className={`glass-card boot-animate stagger-2 dash-span-4 ${people.pendingReturnsCount > 0 ? 'led-breathe-warning' : ''}`} style={{ padding: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800 }}>อุปกรณ์ค้างคืน</h3>
+                <p style={{ margin: '2px 0 0 0', fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>ยืม/ทดสอบ ที่ยังไม่ได้คืน</p>
+              </div>
+              <span style={{ fontSize: '0.7rem', fontWeight: 800, background: people.pendingReturnsCount > 0 ? 'rgba(217,119,6,0.12)' : 'var(--bg-app)', color: people.pendingReturnsCount > 0 ? '#d97706' : 'var(--text-muted)', padding: '3px 8px', borderRadius: '6px' }}>
+                {people.pendingReturnsCount} ค้าง
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {(people.pendingReturns || []).length > 0 ? people.pendingReturns.map((r: { name: string; product_name: string; serial_number?: string; transaction_type: string; withdrawal_type?: string; days_out: number }, i: number) => {
+                const urgent = r.days_out >= 14;
+                return (
+                  <Link key={i} to="/pending-returns" className="dash-row-link" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 10px', background: 'var(--bg-app)', borderRadius: '8px', border: `1px solid ${urgent ? 'var(--danger-border)' : 'var(--warning-border)'}`, textDecoration: 'none', color: 'inherit' }}>
+                    <Package size={15} color={urgent ? 'var(--danger)' : '#d97706'} style={{ flexShrink: 0 }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.product_name}</div>
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {r.name || 'ไม่ระบุ'}{r.serial_number ? ` · S/N ${r.serial_number}` : ''}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right', flexShrink: 0, color: urgent ? 'var(--danger)' : '#d97706', fontWeight: 800, fontSize: '0.85rem' }}>
+                      {r.days_out} วัน
+                    </div>
+                    <ChevronRight size={15} className="dash-row-chevron" style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                  </Link>
+                );
+              }) : (
+                <div style={{ textAlign: 'center', padding: '2.5rem 1rem', color: 'var(--success)', fontWeight: 700, fontSize: '0.85rem' }}>
+                  <Check size={32} style={{ opacity: 0.4, marginBottom: '0.5rem' }} />
+                  <div>ไม่มีอุปกรณ์ค้างคืน</div>
+                </div>
+              )}
+            </div>
+          </Card>
+
+          {/* Top recipients (leaderboard) */}
+          <Card className="glass-card boot-animate stagger-3 dash-span-4" style={{ padding: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800 }}>ผู้เบิกบ่อยที่สุด</h3>
+                <p style={{ margin: '2px 0 0 0', fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>5 อันดับผู้เบิกอุปกรณ์สูงสุด</p>
+              </div>
+              <Crown size={18} color="#d97706" />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '7px' }}>
+              {(people.topRecipients || []).length > 0 ? people.topRecipients.map((p: { name: string; count: number; items: number; last_withdrawal: string }, i: number) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 10px', background: i === 0 ? 'rgba(217,119,6,0.07)' : 'var(--bg-app)', borderRadius: '10px', border: i === 0 ? '1px solid rgba(217,119,6,0.2)' : '1px solid transparent' }}>
+                  <div style={{ width: 26, height: 26, flexShrink: 0, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '0.8rem', background: i === 0 ? '#d97706' : i === 1 ? '#94a3b8' : i === 2 ? '#b45309' : 'var(--bg-card)', color: i < 3 ? '#fff' : 'var(--text-muted)', boxShadow: 'var(--elevation-1)' }}>
+                    {i + 1}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: '0.85rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600 }}>{p.items} ชิ้น · {p.count} ใบเบิก</div>
+                  </div>
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div style={{ fontWeight: 800, fontSize: '1rem', color: 'var(--primary)' }}>{p.count}</div>
+                    <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', fontWeight: 600 }}>ครั้ง</div>
+                  </div>
+                </div>
+              )) : (
+                <div style={{ textAlign: 'center', padding: '2.5rem 1rem', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                  <Users size={32} style={{ opacity: 0.3, marginBottom: '0.5rem' }} />
+                  <div>ยังไม่มีข้อมูลผู้เบิก</div>
+                </div>
+              )}
+            </div>
+          </Card>
+
+          {/* Recent activity */}
+          <Card className="glass-card boot-animate stagger-4 dash-span-8" style={{ padding: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Clock size={18} color="var(--primary)" /> กิจกรรมล่าสุด
+              </h3>
+              <Link to="/transactions" style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--primary)', textDecoration: 'none', background: 'var(--primary-light)', padding: '4px 10px', borderRadius: '8px' }}>ดูทั้งหมด →</Link>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              {operationalPulse.length > 0 ? operationalPulse.map((event) => (
+                <div key={event.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.5rem 0.7rem', background: 'var(--bg-app)', borderRadius: '8px', border: `1px solid ${event.color}40` }} className="dashboard-list-row">
+                  <div style={{ width: 26, height: 26, borderRadius: '8px', backgroundColor: 'var(--bg-card)', color: event.color, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border)' }}>{event.icon}</div>
+                  <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', overflow: 'hidden' }}>
+                    <span style={{ fontWeight: 700, fontSize: '0.82rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flexShrink: 1, minWidth: 0 }}>{event.title}</span>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>· {event.subtitle}</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexShrink: 0 }}>
+                    <span style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)' }}>{event.user}</span>
+                    <span style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--text-muted)', background: 'var(--bg-card)', border: '1px solid var(--border)', padding: '2px 8px', borderRadius: '999px', whiteSpace: 'nowrap' }}>
+                      {timeAgo(event.time)}
+                    </span>
+                  </div>
+                </div>
+              )) : (
+                <div style={{ textAlign: 'center', padding: '2rem 1rem', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                  ยังไม่มีกิจกรรมในช่วงเวลานี้
+                </div>
+              )}
+            </div>
+          </Card>
         </div>
-      </section>
+      </div>
     </div>
   );
 };

@@ -38,6 +38,8 @@ The system uses SQLite. The primary tables are:
 - **`purchase_orders`**: Stores details of parts procurement tickets (requester, status, project, vendor).
 - **`purchase_order_items`**: Junction table mapping purchase orders to item specifications.
 - **`inventory_transactions`**: Audit trail ledger logs tracking all stock additions, withdrawals, and returns.
+- **`stations`**: Master data for monitoring stations (Codes, Names, Directions, Types, Regions).
+- **`audit_logs`**: System-wide audit trail for critical database mutations and user actions.
 
 ## API Design
 
@@ -47,6 +49,7 @@ The API is organized by resource:
 - `/api/inventory`: CRUD operations for equipment inventory and stock management.
 - `/api/withdrawals`: Handling equipment withdrawal requests, items, and returns.
 - `/api/purchase-orders`: Procurement workflow, stock replenishment upon receiving, and deletion with rollback.
+- `/api/stations`: Comprehensive station management, including automated code generation.
 - `/api/transactions`: Read-only queries for the unified inventory movement ledger history.
 - `/api/reports`: Analytics dashboard widgets data and CSV report generation.
 

@@ -1,23 +1,36 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { useEffect, useState, useRef } from 'react';
-import { inventoryApi, withdrawalApi, UPLOAD_URL } from '../api';
+import React, { useEffect, useState, useRef, Suspense } from 'react';
+import { inventoryApi, withdrawalApi, stationApi, UPLOAD_URL } from '../api';
 import { useNotification } from '../components/Layout';
-import { printElement } from '../utils/pdfGenerator';
+import { useAuth } from '../contexts/AuthContext';
+import { PrintDialog } from '../components/PrintDialog';
 import PrintWithdrawalTemplate from '../components/PrintWithdrawalTemplate';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input, TextArea } from '../components/ui/Input';
+import StationSelector from '../components/ui/StationSelector';
+import ContractSelector from '../components/ui/ContractSelector';
+import DatePicker from '../components/ui/DatePicker';
+import FormSection from '../components/ui/FormSection';
 import type { InventoryItem } from '../types';
-import { 
-  Package, 
+import {
+  Package,
   ChevronDown,
   Download,
   CheckCircle2,
   Trash2,
   Search,
-  X
+  X,
+  Plus,
+  Tag,
+  MapPin,
+  FileText,
+  User,
+  ScanLine
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
+
+// โหลด scanner (กล้อง + บาร์โค้ด + OCR) เฉพาะตอนเปิดใช้ เพื่อไม่ถ่วง bundle หลัก
+const SnScannerModal = React.lazy(() => import('../components/SnScannerModal'));
 
 interface WithdrawalItem {
   inventory_id: number;
@@ -29,29 +42,85 @@ interface WithdrawalItem {
   serial_numbers?: string[];
   available_serials?: string[];
   requires_sn?: number;
+  track_sn?: boolean; // ผู้ใช้กดปุ่มเปิดติดตาม S/N เอง
+}
+
+interface LastWithdrawalData {
+  recipient: string;
+  project_name?: string;
+  location: string;
+  station_id: number;
+  station_area_id?: number;
+  type: string;
+  note?: string;
+  return_due_date?: string;
+  id?: number;
+  created_at: string;
+  items: {
+    inventory_id: number;
+    quantity: number;
+    serial_numbers: string[];
+  }[];
+  items_detail: WithdrawalItem[];
 }
 
 const NewWithdrawal: React.FC = () => {
   const { notify, playNotificationSound } = useNotification();
+  const { user } = useAuth();
   const navigate = useNavigate();
+  const locationSearch = useLocation();
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [selectedItems, setSelectedItems] = useState<WithdrawalItem[]>([]);
-  const [recipient, setRecipient] = useState('');
+  const recipient = user?.full_name || '';
   const [projectName, setProjectName] = useState('');
   const [location, setLocation] = useState('');
+  const [stationId, setStationId] = useState<number | undefined>(undefined);
+  const [contractId, setContractId] = useState<number | undefined>(undefined);
+  const [subLocation, setSubLocation] = useState('');
   const [type, setType] = useState('ติดตั้งใหม่');
   const [selectedType, setSelectedType] = useState('ติดตั้งใหม่');
   const [customType, setCustomType] = useState('');
   const [note, setNote] = useState('');
+  const [borrowDuration, setBorrowDuration] = useState<'7' | '15' | '30' | 'custom'>('7');
+  const [customDueDate, setCustomDueDate] = useState('');
   
   const [loading, setLoading] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
-  const [lastWithdrawalData, setLastWithdrawalData] = useState<any>(null);
+  const [lastWithdrawalData, setLastWithdrawalData] = useState<LastWithdrawalData | null>(null);
+  const [isPrintDialogOpen, setIsPrintDialogOpen] = useState(false);
+
+  // อุปกรณ์ที่กำลังเปิดกล้องสแกน S/N อยู่ (เก็บ inventory_id) — null = ปิด
+  const [scanItemId, setScanItemId] = useState<number | null>(null);
+  // snapshot S/N ที่มีอยู่ตอนเปิดกล้อง — คงที่ระหว่างเซสชันสแกน กันกล้องรีสตาร์ท
+  const [scanKnownSns, setScanKnownSns] = useState<string[]>([]);
 
   // Custom Dropdown states
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const [isTypeDropdownOpen, setIsTypeDropdownOpen] = useState(false);
+  const typeDropdownRef = useRef<HTMLDivElement>(null);
+
+  const searchParams = new URLSearchParams(locationSearch.search);
+  const stationIdParam = searchParams.get('station_id');
+
+  useEffect(() => {
+    if (stationIdParam) {
+      const parsedId = parseInt(stationIdParam, 10);
+      if (!isNaN(parsedId)) {
+        stationApi.getUniqueList({ status: 1 }).then(list => {
+          const matched = list.find(st => st.id === parsedId);
+          if (matched) {
+            setStationId(matched.id);
+            setLocation(matched.name);
+          }
+        }).catch(err => {
+          console.error('Failed to prefetch station for prefill in withdrawal:', err);
+        });
+      }
+    }
+  }, [stationIdParam]);
 
   useEffect(() => {
     const fetchInventory = async () => {
@@ -70,6 +139,9 @@ const NewWithdrawal: React.FC = () => {
     const handleClickOutside = (event: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setIsDropdownOpen(false);
+      }
+      if (typeDropdownRef.current && !typeDropdownRef.current.contains(event.target as Node)) {
+        setIsTypeDropdownOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -139,6 +211,61 @@ const NewWithdrawal: React.FC = () => {
     }));
   };
 
+  // เปิด/ปิด การติดตามด้วย S/N สำหรับอุปกรณ์ที่ไม่ได้บังคับ
+  const toggleTrackSn = (inventoryId: number) => {
+    setSelectedItems(selectedItems.map(si => {
+      if (si.inventory_id === inventoryId) {
+        const enable = !si.track_sn;
+        // ถ้าเปิดใช้งาน → เตรียม array S/N ให้พอดีกับ quantity
+        // ถ้าปิด → ล้าง S/N ทิ้ง
+        const newSn = enable
+          ? Array.from({ length: si.quantity }, (_, i) => si.serial_numbers?.[i] || '')
+          : [''];
+        return { ...si, track_sn: enable, serial_numbers: newSn };
+      }
+      return si;
+    }));
+  };
+
+  // รับค่า S/N ที่สแกน/พิมพ์ มาลงช่องว่างของอุปกรณ์ — คืน true ถ้ารับเข้า
+  // ใช้ร่วมกันทั้งช่องพิมพ์ (เครื่องยิงบาร์โค้ด/มือ) และกล้องสแกน
+  const applyScannedSn = (inventoryId: number, rawVal: string): boolean => {
+    const scannedVal = rawVal.trim();
+    if (!scannedVal) return false;
+    const si = selectedItems.find(s => s.inventory_id === inventoryId);
+    if (!si) return false;
+
+    // กันซ้ำภายในอุปกรณ์เดียวกัน
+    if ((si.serial_numbers || []).some(sn => sn.trim().toLowerCase() === scannedVal.toLowerCase())) {
+      notify(`หมายเลข S/N ${scannedVal} ถูกกรอกไปแล้ว`, 'error');
+      return false;
+    }
+
+    // หาช่อง S/N ว่างช่องแรก
+    const emptyIndex = (si.serial_numbers || []).findIndex(sn => !sn.trim());
+    if (emptyIndex !== -1) {
+      updateItemSerial(inventoryId, emptyIndex, scannedVal);
+      notify(`สแกน S/N: ${scannedVal} สำเร็จ`);
+      return true;
+    }
+
+    // ไม่มีช่องว่าง → เพิ่มจำนวนถ้ายังไม่เกินคงเหลือ
+    if (si.quantity < si.max_quantity) {
+      const newQty = si.quantity + 1;
+      const newSn = [...(si.serial_numbers || []), scannedVal];
+      setSelectedItems(prevItems => prevItems.map(item =>
+        item.inventory_id === inventoryId
+          ? { ...item, quantity: newQty, serial_numbers: newSn }
+          : item
+      ));
+      notify(`เพิ่มจำนวนและสแกน S/N: ${scannedVal} สำเร็จ`);
+      return true;
+    }
+
+    notify(`ไม่สามารถสแกนเพิ่มได้เนื่องจากจำนวนพัสดุในคลังมีเพียง ${si.max_quantity} ชิ้น`, 'error');
+    return false;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmedRecipient = recipient.trim();
@@ -172,8 +299,14 @@ const NewWithdrawal: React.FC = () => {
       return;
     }
 
-    if (trimmedLocation.length > 100) {
-      notify('สถานที่ยาวเกินไป (ไม่เกิน 100 ตัวอักษร)', 'error', 'ระบบคลังพัสดุ', 'inventory');
+    if (!stationId) {
+      notify('กรุณาเลือกสถานที่/ด่านตรวจควบคุมน้ำหนัก', 'error', 'ระบบคลังพัสดุ', 'inventory');
+      return;
+    }
+
+    const finalLocation = trimmedLocation + (subLocation.trim() ? ` - ${subLocation.trim()}` : '');
+    if (finalLocation.length > 150) {
+      notify('สถานที่และจุดติดตั้งย่อยรวมกันยาวเกินไป (ไม่เกิน 150 ตัวอักษร)', 'error', 'ระบบคลังพัสดุ', 'inventory');
       return;
     }
 
@@ -199,12 +332,29 @@ const NewWithdrawal: React.FC = () => {
 
     setLoading(true);
     try {
+      let calculatedDueDate: string | undefined = undefined;
+      if (['สำรองใช้งาน', 'ทดสอบ', 'ยืมใช้งาน'].includes(trimmedType)) {
+        if (borrowDuration === 'custom') {
+          if (customDueDate) {
+            calculatedDueDate = customDueDate;
+          }
+        } else {
+          const d = new Date();
+          d.setDate(d.getDate() + parseInt(borrowDuration, 10));
+          calculatedDueDate = d.toISOString().split('T')[0];
+        }
+      }
+
       const payload = {
         recipient: trimmedRecipient,
         project_name: trimmedProjectName,
-        location: trimmedLocation,
+        location: finalLocation,
+        station_id: stationId,
+        station_area_id: undefined,
+        contract_id: contractId,
         type: trimmedType,
         note: trimmedNote,
+        return_due_date: calculatedDueDate,
         items: selectedItems.map(si => ({ 
           inventory_id: si.inventory_id, 
           quantity: si.quantity,
@@ -222,16 +372,26 @@ const NewWithdrawal: React.FC = () => {
       setIsSubmitted(true);
       notify('บันทึกการเบิกอุปกรณ์เรียบร้อยแล้ว', 'success', 'ระบบคลังพัสดุ', 'inventory');
       playNotificationSound();
-    } catch (error: any) {
-      notify(error.response?.data?.message || 'เกิดข้อผิดพลาดในการบันทึกข้อมูล', 'error', 'ระบบคลังพัสดุ', 'inventory');
+    } catch (error) {
+      const err = error as { response?: { data?: { message?: string } } };
+      notify(err.response?.data?.message || 'เกิดข้อผิดพลาดในการบันทึกข้อมูล', 'error', 'ระบบคลังพัสดุ', 'inventory');
     } finally {
       setLoading(false);
     }
   };
 
   const handleDownloadPDF = () => {
-    if (!lastWithdrawalData) return;
-    printElement('pdf-withdrawal-template', `ใบเบิกอุปกรณ์ - WD-${lastWithdrawalData.id || 'XXXXXX'}`);
+    setIsPrintDialogOpen(true);
+  };
+
+  const handleBeforePrint = async (companyId: number) => {
+    if (!lastWithdrawalData?.id) return;
+    try {
+      await withdrawalApi.updateCompany(lastWithdrawalData.id, companyId);
+      setLastWithdrawalData(prev => prev ? { ...prev, company_id: companyId } : null);
+    } catch (err) {
+      console.error('Failed to update company_id:', err);
+    }
   };
 
   const filteredInventory = inventory.filter(item => 
@@ -243,7 +403,7 @@ const NewWithdrawal: React.FC = () => {
   if (isSubmitted) {
     return (
       <div className="withdrawal-success-page" style={{ padding: '3rem 1rem', display: 'flex', justifyContent: 'center' }}>
-        <Card className="success-card" style={{ maxWidth: '600px', width: '100%', textAlign: 'center', padding: '3rem 2rem' }}>
+        <Card className="glass-card success-card" style={{ maxWidth: '600px', width: '100%', textAlign: 'center', padding: '3rem 2rem' }}>
           <div className="success-icon" style={{ display: 'inline-flex', justifyContent: 'center', alignItems: 'center', width: '80px', height: '80px', borderRadius: '50%', background: 'var(--success-light)', color: 'var(--success)', marginBottom: '1.5rem' }}>
             <CheckCircle2 size={48} />
           </div>
@@ -257,7 +417,7 @@ const NewWithdrawal: React.FC = () => {
             <div style={{ textAlign: 'left', background: 'var(--bg-app)', padding: '1.5rem', borderRadius: '12px', border: '1px solid var(--border)', marginBottom: '2rem' }}>
               <h4 style={{ fontWeight: 700, marginBottom: '1rem', color: 'var(--text-main)', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>รายละเอียดรายการที่เบิก:</h4>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {lastWithdrawalData.items_detail.map((item: any, idx: number) => (
+                {lastWithdrawalData.items_detail.map((item: WithdrawalItem, idx: number) => (
                   <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.95rem', alignItems: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <span style={{ minWidth: '20px' }}>{idx + 1}.</span>
@@ -287,36 +447,57 @@ const NewWithdrawal: React.FC = () => {
               </div>
               <div style={{ borderTop: '1px solid var(--border)', paddingTop: '8px', marginTop: '12px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
                 <strong>ผู้เบิก:</strong> {lastWithdrawalData.recipient} | <strong>โครงการ:</strong> {lastWithdrawalData.project_name || '-'} | <strong>สถานที่:</strong> {lastWithdrawalData.location || '-'}
+                {lastWithdrawalData.return_due_date && (
+                  <> | <strong style={{ color: 'var(--warning)' }}>กำหนดคืน:</strong> {lastWithdrawalData.return_due_date}</>
+                )}
               </div>
             </div>
           )}
           
-          <div className="form-actions" style={{ display: 'flex', gap: '1rem', justifyContent: 'center', marginBottom: '1.5rem' }}>
-            <Button variant="primary" onClick={handleDownloadPDF} icon={<Download size={20} style={{ marginRight: '8px' }} />}>
-              ดาวน์โหลดใบเบิกอุปกรณ์ (PDF)
-            </Button>
-            <Button variant="outline" onClick={() => navigate('/inventory')}>
-              กลับไปยังหน้าคลังพัสดุ
+          <div className="success-actions">
+            <div className="success-actions-row">
+              <Button variant="primary" onClick={handleDownloadPDF} icon={<Download size={20} style={{ marginRight: '8px' }} />}>
+                ดาวน์โหลดใบเบิกอุปกรณ์ (PDF)
+              </Button>
+              <Button variant="outline" onClick={() => navigate('/inventory')}>
+                กลับไปยังหน้าคลังพัสดุ
+              </Button>
+            </div>
+            <Button variant="text" onClick={() => {
+              setIsSubmitted(false);
+              setSelectedItems([]);
+              setProjectName('');
+              setLocation('');
+              setStationId(undefined);
+              setContractId(undefined);
+              setNote('');
+              setType('ติดตั้งใหม่');
+              setSelectedType('ติดตั้งใหม่');
+              setCustomType('');
+              setBorrowDuration('7');
+              setCustomDueDate('');
+            }}>
+              ทำการเบิกรายการใหม่
             </Button>
           </div>
-          <Button variant="text" onClick={() => {
-            setIsSubmitted(false);
-            setSelectedItems([]);
-            setRecipient('');
-            setProjectName('');
-            setLocation('');
-            setNote('');
-            setType('ติดตั้งใหม่');
-            setSelectedType('ติดตั้งใหม่');
-            setCustomType('');
-          }}>
-            ทำการเบิกรายการใหม่
-          </Button>
         </Card>
 
         {/* Hidden template for PDF generation */}
         {lastWithdrawalData && (
-          <PrintWithdrawalTemplate withdrawal={lastWithdrawalData} />
+          <PrintDialog
+            open={isPrintDialogOpen}
+            onClose={() => setIsPrintDialogOpen(false)}
+            templateId="pdf-withdrawal-template"
+            docTitle={`ใบเบิกอุปกรณ์ - WD-${lastWithdrawalData.id || 'XXXXXX'}`}
+            onBeforePrint={handleBeforePrint}
+            renderTemplate={(companyId, logoId) => (
+              <PrintWithdrawalTemplate
+                withdrawal={lastWithdrawalData}
+                companyId={companyId}
+                logoId={logoId}
+              />
+            )}
+          />
         )}
       </div>
     );
@@ -333,12 +514,12 @@ const NewWithdrawal: React.FC = () => {
 
       <form onSubmit={handleSubmit}>
         <div className="withdrawal-layout">
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', minWidth: 0 }}>
             {/* Item Selection Card */}
-            <Card title="รายการอุปกรณ์ที่ต้องการเบิก" icon={<Package size={20} />}>
+            <Card className="glass-card" title="รายการอุปกรณ์ที่ต้องการเบิก" icon={<Package size={20} />} style={{ padding: '2rem', overflow: 'visible' }}>
               <div className="form-group" style={{ marginBottom: '1.5rem' }}>
                 <label>เลือกอุปกรณ์เพิ่ม <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', fontWeight: 400 }}>(เลือกได้หลายอย่าง)</span></label>
-                
+
                 {/* Custom Searchable Dropdown */}
                 <div ref={dropdownRef} style={{ position: 'relative', marginTop: '8px' }}>
                   <div 
@@ -413,9 +594,9 @@ const NewWithdrawal: React.FC = () => {
                                   <Package size={18} style={{ opacity: 0.3 }} />
                                 </div>
                               )}
-                              <div style={{ flex: 1 }}>
-                                <div style={{ fontWeight: 600, color: 'var(--text-main)', fontSize: '0.95rem' }}>{item.name}</div>
-                                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{item.model || '-'}</div>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontWeight: 600, color: 'var(--text-main)', fontSize: '0.95rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={item.name}>{item.name}</div>
+                                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={item.model || ''}>{item.model || '-'}</div>
                               </div>
                               <div style={{ textAlign: 'right' }}>
                                 <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>คงเหลือ</div>
@@ -436,7 +617,7 @@ const NewWithdrawal: React.FC = () => {
 
               {selectedItems.length > 0 ? (
                 <div className="data-table-container" style={{ marginTop: '1.5rem' }}>
-                  <table className="data-table">
+                  <table className="data-table" style={{ minWidth: '750px' }}>
                     <thead>
                       <tr>
                         <th style={{ width: '60px' }}>ลำดับ</th>
@@ -465,8 +646,8 @@ const NewWithdrawal: React.FC = () => {
                                 </div>
                               )}
                               <div style={{ minWidth: 0, flex: 1 }}>
-                                <div style={{ fontWeight: 700, wordBreak: 'break-word', whiteSpace: 'normal' }}>{si.name}</div>
-                                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', wordBreak: 'break-all' }}>{si.model}</div>
+                                <div style={{ fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={si.name}>{si.name}</div>
+                                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={si.model}>{si.model}</div>
                               </div>
                             </div>
                           </td>
@@ -496,21 +677,84 @@ const NewWithdrawal: React.FC = () => {
                             </div>
                           </td>
                           <td style={{ verticalAlign: 'middle' }}>
-                            {si.requires_sn === 1 ? (
+                            {(si.requires_sn === 1 || si.track_sn) ? (
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                                  <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--primary)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                    <Tag size={11} /> ติดตามด้วย S/N ({si.quantity} ชิ้น)
+                                  </span>
+                                  {si.requires_sn !== 1 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleTrackSn(si.inventory_id)}
+                                      title="ยกเลิกการติดตามด้วย S/N"
+                                      style={{ background: 'transparent', border: 'none', color: 'var(--danger)', cursor: 'pointer', padding: '2px 4px', fontSize: '0.7rem', fontWeight: 600 }}
+                                    >
+                                      <X size={12} /> ยกเลิก
+                                    </button>
+                                  )}
+                                </div>
+
+                                {/* Quick Scan Barcode/QR input + camera scan */}
+                                <div style={{ display: 'flex', gap: '6px', marginBottom: '6px' }}>
+                                  <input
+                                    type="text"
+                                    placeholder="พิมพ์ / ยิงบาร์โค้ด S/N ที่นี่..."
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        applyScannedSn(si.inventory_id, e.currentTarget.value);
+                                        e.currentTarget.value = '';
+                                      }
+                                    }}
+                                    style={{
+                                      flex: 1,
+                                      minWidth: 0,
+                                      padding: '6px 10px',
+                                      fontSize: '0.8rem',
+                                      borderRadius: '8px',
+                                      border: '1.5px dashed var(--primary)',
+                                      background: 'var(--bg-card)',
+                                      color: 'var(--text-main)',
+                                      outline: 'none'
+                                    }}
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setScanKnownSns((si.serial_numbers || []).filter(Boolean));
+                                      setScanItemId(si.inventory_id);
+                                    }}
+                                    title="สแกน S/N ด้วยกล้อง (บาร์โค้ด/QR/OCR)"
+                                    style={{
+                                      display: 'inline-flex', alignItems: 'center', gap: '4px',
+                                      padding: '6px 10px', fontSize: '0.75rem', fontWeight: 700,
+                                      borderRadius: '8px', border: 'none', cursor: 'pointer',
+                                      background: 'var(--primary)', color: '#fff', whiteSpace: 'nowrap'
+                                    }}
+                                  >
+                                    <ScanLine size={14} /> กล้อง
+                                  </button>
+                                </div>
+
                                 {Array.from({ length: si.quantity }).map((_, i) => {
                                   const listId = `serials-${si.inventory_id}-${i}`;
                                   const otherSelected = (si.serial_numbers || []).filter((_, idx) => idx !== i && _ !== '');
                                   const available = (si.available_serials || []).filter(sn => !otherSelected.includes(sn));
-                                  
+
                                   return (
                                     <React.Fragment key={i}>
-                                      <input 
-                                        type="text" 
+                                      <input
+                                        type="text"
                                         list={listId}
-                                        value={si.serial_numbers?.[i] || ''} 
+                                        value={si.serial_numbers?.[i] || ''}
                                         placeholder={`ระบุหรือเลือก S/N ${si.quantity > 1 ? `ชิ้นที่ ${i+1}` : ''}...`}
                                         onChange={(e) => updateItemSerial(si.inventory_id, i, e.target.value)}
+                                        onKeyDown={(e) => {
+                                          if (e.key === 'Enter') {
+                                            e.preventDefault();
+                                          }
+                                        }}
                                         style={{ width: '100%', padding: '6px 10px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '8px', color: 'var(--text-main)', fontSize: '0.85rem' }}
                                       />
                                       {available.length > 0 && (
@@ -525,9 +769,31 @@ const NewWithdrawal: React.FC = () => {
                                 })}
                               </div>
                             ) : (
-                              <div style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '0.85rem', textAlign: 'center', background: 'var(--bg-app)', padding: '8px', borderRadius: '8px', border: '1px dashed var(--border)' }}>
-                                ไม่ต้องระบุ S/N
-                              </div>
+                              <button
+                                type="button"
+                                onClick={() => toggleTrackSn(si.inventory_id)}
+                                style={{
+                                  width: '100%',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: '6px',
+                                  padding: '10px',
+                                  background: 'var(--bg-app)',
+                                  border: '1.5px dashed var(--primary)',
+                                  borderRadius: '8px',
+                                  color: 'var(--primary)',
+                                  fontSize: '0.82rem',
+                                  fontWeight: 700,
+                                  cursor: 'pointer',
+                                  transition: 'all 0.2s'
+                                }}
+                                title={`เปิดใช้งานการติดตามด้วย S/N สำหรับอุปกรณ์นี้ (${si.quantity} ชิ้น)`}
+                                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(59, 130, 246, 0.08)'; }}
+                                onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--bg-app)'; }}
+                              >
+                                <Plus size={14} /> เพิ่ม S/N เพื่อติดตาม
+                              </button>
                             )}
                           </td>
                           <td style={{ textAlign: 'center', verticalAlign: 'middle', color: si.max_quantity < 5 ? 'var(--danger)' : 'inherit' }}>
@@ -558,65 +824,142 @@ const NewWithdrawal: React.FC = () => {
             </Card>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-            <Card title="ข้อมูลการเบิก">
-              <Input 
-                label="ชื่อผู้เบิก / หน่วยงาน"
-                type="text" 
-                required 
-                maxLength={100}
-                placeholder="ระบุชื่อผู้รับ..."
-                value={recipient}
-                onChange={e => setRecipient(e.target.value)}
-                disabled={loading}
-              />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', minWidth: 0 }}>
+            <Card className="glass-card" title="ข้อมูลการเบิก" style={{ padding: '2rem', overflow: 'visible' }}>
+              <FormSection title="ผู้เบิก & โครงการ" icon={<User size={18} />} columns={1}>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label style={{ fontSize: '0.85rem', fontWeight: 700, marginBottom: '6px', display: 'block' }}>ผู้เบิก</label>
+                  <div style={{
+                    padding: '10px 14px', background: 'var(--bg-app)',
+                    border: '1px solid var(--border)', borderRadius: '10px',
+                    fontSize: '0.9rem', color: 'var(--text-main)', fontWeight: 600,
+                  }}>
+                    👤 {user?.full_name || '—'}
+                    <span style={{ marginLeft: '8px', fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400 }}>
+                      (จากบัญชีที่เข้าสู่ระบบ)
+                    </span>
+                  </div>
+                </div>
 
-              <Input 
-                label="โครงการ / งาน"
-                type="text" 
-                required 
-                maxLength={100}
-                placeholder="ระบุชื่อโครงการ..."
-                value={projectName}
-                onChange={e => setProjectName(e.target.value)}
-                disabled={loading}
-              />
-
-              <Input 
-                label="สถานที่ / หน้างาน"
-                type="text" 
-                maxLength={100}
-                placeholder="ระบุสถานที่..."
-                value={location}
-                onChange={e => setLocation(e.target.value)}
-                disabled={loading}
-              />
-
-              <div className="form-group" style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '8px', fontSize: '0.9rem', fontWeight: 600 }}>ประเภทการเบิก</label>
-                <select 
-                  value={selectedType} 
-                  onChange={e => {
-                    const val = e.target.value;
-                    setSelectedType(val);
-                    if (val !== 'อื่นๆ') {
-                      setType(val);
-                    } else {
-                      setType(customType);
-                    }
-                  }}
+                <Input
+                  label="โครงการ / งาน"
+                  type="text"
+                  required
+                  maxLength={100}
+                  placeholder="ระบุชื่อโครงการ..."
+                  value={projectName}
+                  onChange={e => setProjectName(e.target.value)}
                   disabled={loading}
-                  style={{ width: '100%', padding: '10px 14px', borderRadius: '10px', background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-main)', fontSize: '0.95rem' }}
-                >
-                  <option value="ติดตั้งใหม่">ติดตั้งใหม่</option>
-                  <option value="ซ่อมแซม">ซ่อมแซม</option>
-                  <option value="สำรองใช้งาน">สำรองใช้งาน</option>
-                  <option value="ทดสอบ">ทดสอบ</option>
-                  <option value="อื่นๆ">อื่นๆ...</option>
-                </select>
+                />
+              </FormSection>
+
+              <FormSection title="สถานที่ & สัญญา" icon={<MapPin size={18} />} columns={1}>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label style={{ display: 'block', marginBottom: '8px', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-main)' }}>
+                    สถานที่ตั้งด่าน / จุดควบคุมน้ำหนักทางหลวง <span style={{ color: 'var(--danger)' }}>*</span>
+                  </label>
+                  <StationSelector
+                    selectedStationId={stationId}
+                    showArea={false}
+                    required={true}
+                    onChange={(data) => {
+                      setStationId(data.stationId);
+                      setLocation(data.stationName);
+                    }}
+                  />
+                </div>
+
+                <Input
+                  label="จุดติดตั้ง / บริเวณพื้นที่ย่อย"
+                  maxLength={100}
+                  placeholder="ระบุตำแหน่งติดตั้งย่อยอย่างอิสระ เช่น ข้างเลนชั่ง, กล่องควบคุมฝั่งขาออก, เสา ANPR ตัวที่ 2..."
+                  value={subLocation}
+                  onChange={(e) => setSubLocation(e.target.value)}
+                  disabled={loading}
+                />
+
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label style={{ display: 'block', marginBottom: '8px', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-main)' }}>
+                    สัญญา / ปีสัญญา
+                    <span style={{ marginLeft: '8px', fontSize: '0.75rem', fontWeight: 400, color: 'var(--text-muted)' }}>
+                      (ใช้ติดตามว่าอุปกรณ์หน้างานเป็นของสัญญาปีไหน)
+                    </span>
+                  </label>
+                  <ContractSelector
+                    selectedContractId={contractId}
+                    onChange={(id) => setContractId(id)}
+                  />
+                </div>
+              </FormSection>
+
+              <FormSection title="ประเภทการเบิก" icon={<Tag size={18} />} columns={1}>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+
+                <div ref={typeDropdownRef} style={{ position: 'relative' }}>
+                  <div 
+                    onClick={() => !loading && setIsTypeDropdownOpen(!isTypeDropdownOpen)}
+                    style={{ 
+                      padding: '12px 16px', 
+                      background: 'var(--bg-card)', 
+                      border: '1px solid var(--border)', 
+                      borderRadius: '12px',
+                      cursor: loading ? 'not-allowed' : 'pointer',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      fontSize: '0.85rem',
+                      color: 'var(--text-main)',
+                      opacity: loading ? 0.6 : 1
+                    }}
+                  >
+                    <span>{selectedType}</span>
+                    <ChevronDown size={16} style={{ transform: isTypeDropdownOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
+                  </div>
+
+                  {isTypeDropdownOpen && (
+                    <div style={{ 
+                      position: 'absolute', 
+                      top: '110%', 
+                      left: 0, 
+                      right: 0, 
+                      background: 'var(--bg-card)', 
+                      border: '1px solid var(--border)', 
+                      borderRadius: '12px', 
+                      boxShadow: '0 10px 25px rgba(0,0,0,0.15)', 
+                      zIndex: 100,
+                      overflow: 'hidden'
+                    }}>
+                      {['ติดตั้งใหม่', 'ซ่อมแซม', 'สำรองใช้งาน', 'ทดสอบ', 'ยืมใช้งาน', 'อื่นๆ...'].map((opt) => (
+                        <div 
+                          key={opt}
+                          onClick={() => {
+                            setSelectedType(opt);
+                            if (opt !== 'อื่นๆ...') {
+                              setType(opt);
+                            } else {
+                              setType(customType);
+                            }
+                            setIsTypeDropdownOpen(false);
+                          }}
+                          style={{ 
+                            padding: '10px 16px', 
+                            cursor: 'pointer', 
+                            fontSize: '0.85rem',
+                            color: 'var(--text-main)',
+                            borderBottom: opt === 'อื่นๆ...' ? 'none' : '1px solid var(--border)',
+                            transition: 'background 0.2s'
+                          }}
+                          className="dropdown-item-hover"
+                        >
+                          {opt}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
 
-              {selectedType === 'อื่นๆ' && (
+              {selectedType === 'อื่นๆ...' && (
                 <Input 
                   type="text" 
                   required 
@@ -630,17 +973,68 @@ const NewWithdrawal: React.FC = () => {
                   disabled={loading}
                 />
               )}
-              
-              <TextArea 
-                label="หมายเหตุเพิ่มเติม"
-                rows={4} 
-                maxLength={1000}
-                placeholder="ระบุหมายเหตุ..." 
-                value={note} 
-                onChange={e => setNote(e.target.value)} 
-                disabled={loading}
-              />
-              
+
+              {/* Due Date selection for returnable withdrawal types */}
+              {['สำรองใช้งาน', 'ทดสอบ', 'ยืมใช้งาน'].includes(type) && (
+                <div className="form-group" style={{ marginTop: '1rem', padding: '1rem', background: 'rgba(217, 119, 6, 0.05)', borderRadius: '12px', border: '1px solid rgba(217, 119, 6, 0.15)' }}>
+                  <label style={{ display: 'block', fontWeight: 700, fontSize: '0.85rem', marginBottom: '8px', color: 'var(--primary)' }}>
+                    กำหนดวันส่งคืนอุปกรณ์
+                  </label>
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+                    {[
+                      { label: '7 วัน', value: '7' },
+                      { label: '15 วัน', value: '15' },
+                      { label: '30 วัน', value: '30' },
+                      { label: 'กำหนดเอง', value: 'custom' }
+                    ].map((preset) => (
+                      <button
+                        key={preset.value}
+                        type="button"
+                        onClick={() => setBorrowDuration(preset.value as '7' | '15' | '30' | 'custom')}
+                        style={{
+                          flex: 1,
+                          padding: '8px 12px',
+                          borderRadius: '8px',
+                          border: '1px solid',
+                          borderColor: borrowDuration === preset.value ? 'var(--primary)' : 'var(--border)',
+                          background: borrowDuration === preset.value ? 'var(--primary)' : 'var(--bg-card)',
+                          color: borrowDuration === preset.value ? '#fff' : 'var(--text-main)',
+                          fontSize: '0.8rem',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          transition: 'all 0.2s'
+                        }}
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                  {borrowDuration === 'custom' && (
+                    <div style={{ marginTop: '8px' }}>
+                      <DatePicker
+                        value={customDueDate}
+                        onChange={(val) => setCustomDueDate(val)}
+                        placeholder="เลือกวันกำหนดส่งคืน"
+                        style={{ width: '100%' }}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+              </FormSection>
+
+              <FormSection title="หมายเหตุ" icon={<FileText size={18} />} columns={1}>
+                <TextArea
+                  label="หมายเหตุเพิ่มเติม"
+                  rows={4}
+                  maxLength={1000}
+                  placeholder="ระบุหมายเหตุ..."
+                  value={note}
+                  onChange={e => setNote(e.target.value)}
+                  disabled={loading}
+                />
+              </FormSection>
+
               <Button 
                 type="submit" 
                 variant="primary" 
@@ -654,6 +1048,18 @@ const NewWithdrawal: React.FC = () => {
           </div>
         </div>
       </form>
+
+      {/* Camera S/N scanner (lazy) — เปิดต่ออุปกรณ์ */}
+      {scanItemId !== null && (
+        <Suspense fallback={null}>
+          <SnScannerModal
+            isOpen={scanItemId !== null}
+            onClose={() => setScanItemId(null)}
+            onDetected={(value) => applyScannedSn(scanItemId, value)}
+            knownSns={scanKnownSns}
+          />
+        </Suspense>
+      )}
 
       {/* Global CSS for dropdown hover */}
       <style>{`

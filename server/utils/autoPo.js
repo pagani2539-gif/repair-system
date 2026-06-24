@@ -1,4 +1,5 @@
 const db = require('../database/init');
+const { generateDocNo } = require('./docNumber');
 
 function checkAndGenerateAutoPOs(callback) {
   // 1. Get all low stock items
@@ -76,22 +77,24 @@ function checkAndGenerateAutoPOs(callback) {
         // Use existing Draft PO
         processItems(draftPo.id);
       } else {
-        // Create new Draft PO
-        const now = new Date();
-        const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
-        const timeStr = String(now.getHours()).padStart(2, '0') + String(now.getMinutes()).padStart(2, '0');
-        const poNo = `PO-AUTO-${dateStr}-${timeStr}`;
+        // Create new Draft PO — same "PO-YYMMDD-NNN" format as manual POs
+        // (the "auto" origin is shown via the note/badge, not a separate prefix)
         const note = 'สั่งซื้ออัตโนมัติเนื่องจากสินค้าต่ำกว่าเกณฑ์ขั้นต่ำ';
 
-        db.run('INSERT INTO purchase_orders (po_no, status, created_by, note) VALUES (?, "Draft", "System", ?)',
-          [poNo, note], function(err) {
-            if (err) {
-              console.error('Error creating auto PO:', err.message);
-              if (callback) callback(err);
-              return;
-            }
-            processItems(this.lastID);
-          });
+        generateDocNo('PO', { table: 'purchase_orders', column: 'po_no' }).then((poNo) => {
+          db.run('INSERT INTO purchase_orders (po_no, status, created_by, note) VALUES (?, "Draft", "System", ?)',
+            [poNo, note], function(err) {
+              if (err) {
+                console.error('Error creating auto PO:', err.message);
+                if (callback) callback(err);
+                return;
+              }
+              processItems(this.lastID);
+            });
+        }).catch((err) => {
+          console.error('Error generating auto PO number:', err.message);
+          if (callback) callback(err);
+        });
       }
     });
   });

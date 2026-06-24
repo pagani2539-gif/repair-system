@@ -12,21 +12,28 @@ import {
   Trash2, 
   MapPin, 
   Laptop, 
-  AlertTriangle,
   Wrench,
+  PlusCircle,
   Calendar,
   CheckCircle2,
   Clock,
   Settings
 } from 'lucide-react';
 import PrintTemplate from '../components/PrintTemplate';
+import { PrintDialog } from '../components/PrintDialog';
+import PermissionGate from '../components/PermissionGate';
+import { Select } from '../components/ui/Input';
+import StationSelector from '../components/ui/StationSelector';
+import FormSection from '../components/ui/FormSection';
+import Lightbox from '../components/ui/Lightbox';
 
 const RepairDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { notify } = useNotification();
+  const { notify, confirm } = useNotification();
   const [repair, setRepair] = useState<IRepairDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isPrintDialogOpen, setIsPrintDialogOpen] = useState(false);
   const [showStatusModal, setShowStatusModal] = useState(false);
   const [showDeviceModal, setShowDeviceModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -46,10 +53,14 @@ const RepairDetail: React.FC = () => {
     reporter: '',
     project_name: '',
     location: '',
+    station_id: null as number | null,
+    station_area_id: null as number | null,
     device_name: '',
     problem: '',
     priority: ''
   });
+  const [subLocation, setSubLocation] = useState('');
+  const [activeLightboxImage, setActiveLightboxImage] = useState<string | null>(null);
 
   const parseDate = (dateStr: string) => {
     if (!dateStr) return new Date();
@@ -70,11 +81,21 @@ const RepairDetail: React.FC = () => {
       setEditForm({
         reporter: data.reporter,
         project_name: data.project_name || '',
-        location: data.location,
+        location: data.location || '',
+        station_id: data.station_id || null,
+        station_area_id: data.station_area_id || null,
         device_name: data.device_name,
         problem: data.problem,
         priority: data.priority
       });
+      let initialSubLocation = '';
+      if (data.station_name && data.location_snapshot && data.location_snapshot.startsWith(data.station_name)) {
+        const suffix = data.location_snapshot.slice(data.station_name.length).trim();
+        if (suffix.startsWith('-')) {
+          initialSubLocation = suffix.slice(1).trim();
+        }
+      }
+      setSubLocation(initialSubLocation);
     } catch (error) {
       console.error('Error fetching repair detail:', error);
       notify('ไม่สามารถดึงข้อมูลรายการนี้ได้', 'error');
@@ -175,6 +196,7 @@ const RepairDetail: React.FC = () => {
     const trimmedLocation = editForm.location.trim();
     const trimmedDeviceName = editForm.device_name.trim();
     const trimmedProblem = editForm.problem.trim();
+    const finalLocation = trimmedLocation + (subLocation.trim() ? ` - ${subLocation.trim()}` : '');
 
     if (!trimmedReporter || !trimmedProjectName || !trimmedDeviceName || !trimmedProblem) {
       notify('กรุณากรอกข้อมูลให้ครบถ้วนในช่องที่จำเป็น', 'error');
@@ -189,8 +211,8 @@ const RepairDetail: React.FC = () => {
       notify('ชื่อโครงการยาวเกินไป (ไม่เกิน 100 ตัวอักษร)', 'error');
       return;
     }
-    if (trimmedLocation.length > 100) {
-      notify('สถานที่ยาวเกินไป (ไม่เกิน 100 ตัวอักษร)', 'error');
+    if (finalLocation.length > 150) {
+      notify('สถานที่และจุดติดตั้งย่อยรวมกันยาวเกินไป (ไม่เกิน 150 ตัวอักษร)', 'error');
       return;
     }
     if (trimmedDeviceName.length > 100) {
@@ -207,7 +229,9 @@ const RepairDetail: React.FC = () => {
       await repairApi.update(id, {
         reporter: trimmedReporter,
         project_name: trimmedProjectName,
-        location: trimmedLocation,
+        location: finalLocation,
+        station_id: editForm.station_id || undefined,
+        station_area_id: undefined,
         device_name: trimmedDeviceName,
         problem: trimmedProblem,
         priority: editForm.priority
@@ -228,7 +252,13 @@ const RepairDetail: React.FC = () => {
     const msg = isClaim 
       ? 'คุณต้องการลบรายการแจ้งเคลมนี้ใช่หรือไม่? การกระทำนี้ไม่สามารถย้อนกลับได้'
       : 'คุณต้องการลบรายการแจ้งซ่อมนี้ใช่หรือไม่? การกระทำนี้ไม่สามารถย้อนกลับได้';
-    if (!id || !window.confirm(msg)) return;
+    if (!id) return;
+    const isConfirmed = await confirm({
+      title: isClaim ? 'ยืนยันการลบรายการแจ้งเคลม' : 'ยืนยันการลบรายการแจ้งซ่อม',
+      message: msg,
+      variant: 'danger'
+    });
+    if (!isConfirmed) return;
     try {
       await repairApi.delete(id);
       notify(isClaim ? 'ลบรายการแจ้งเคลมสำเร็จ' : 'ลบรายการแจ้งซ่อมสำเร็จ');
@@ -239,53 +269,18 @@ const RepairDetail: React.FC = () => {
   };
 
   const handlePrint = () => {
-    const element = document.getElementById('pdf-print-template');
-    if (!element) return;
+    if (!repair) return;
+    setIsPrintDialogOpen(true);
+  };
 
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) {
-      alert('กรุณาอนุญาตให้เปิด Pop-up window เพื่อพิมพ์ใบงาน\n(Allow pop-up in your browser)');
-      return;
+  const handleBeforePrint = async (companyId: number) => {
+    if (!repair) return;
+    try {
+      await repairApi.updateCompany(repair.id, companyId);
+      setRepair(prev => prev ? { ...prev, company_id: companyId } : null);
+    } catch (err) {
+      console.error('Failed to update company_id:', err);
     }
-
-    printWindow.document.write('<!DOC' + 'TYPE html>\n' + `
-<html lang="th">
-<head>
-  <meta charset="UTF-8">
-  <title>ใบงาน - ${repair?.ticket_no || ''}</title>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Sarabun:wght@300;400;600;700;800&display=swap" rel="stylesheet">
-  <style>
-    @page { size: A4 portrait; margin: 0; }
-    html, body {
-      font-family: 'Outfit', 'Sarabun', sans-serif;
-      margin: 0; padding: 0;
-      width: 210mm; height: 297mm;
-      background: #fff;
-      -webkit-print-color-adjust: exact;
-      print-color-adjust: exact;
-      overflow: hidden;
-    }
-    * { box-sizing: border-box; }
-    #pdf-print-template {
-      position: relative !important;
-      left: 0 !important;
-      top: 0 !important;
-    }
-  </style>
-</head>
-<body>
-  ${element.outerHTML}
-</body>
-</html>`);
-
-    printWindow.document.close();
-    printWindow.focus();
-
-    // Wait for fonts/images to load then print
-    setTimeout(() => {
-      printWindow.print();
-      printWindow.close();
-    }, 800);
   };
 
   if (loading) return (
@@ -300,196 +295,268 @@ const RepairDetail: React.FC = () => {
   }
 
   return (
-    <div className="repair-detail">
-      <PrintTemplate repair={repair} />
+    <div className="repair-detail-page" style={{ padding: '0 0 4rem 0' }}>
+      <PrintDialog
+        open={isPrintDialogOpen}
+        onClose={() => setIsPrintDialogOpen(false)}
+        templateId="pdf-print-template"
+        docTitle={`${repair.type === 'claim' ? 'ใบเคลม' : 'ใบซ่อม'} - ${repair.ticket_no || repair.id}`}
+        onBeforePrint={handleBeforePrint}
+        renderTemplate={(companyId, logoId) => (
+          <PrintTemplate
+            repair={repair}
+            companyId={companyId}
+            logoId={logoId}
+          />
+        )}
+      />
 
-      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', paddingBottom: '1.5rem', borderBottom: '1px solid var(--border)' }}>
-        <button className="btn btn-outline" onClick={() => navigate(-1)}>
-          <ArrowLeft size={18} /> ย้อนกลับ
-        </button>
-        <div style={{ display: 'flex', gap: '10px' }}>
-          <button className="btn btn-danger" onClick={handleDelete}>
-            <Trash2 size={18} style={{ marginRight: '6px' }} /> ลบรายการ
+      {/* Sticky Glass Header */}
+      <div className="glass-card" style={{ 
+        position: 'sticky', 
+        top: 0, 
+        zIndex: 20, 
+        padding: '1rem 2.5rem', 
+        display: 'flex', 
+        justifyContent: 'space-between', 
+        alignItems: 'center',
+        borderBottom: '1px solid var(--glass-border)',
+        borderRadius: 0,
+        margin: '0 -2.5rem 2.5rem -2.5rem'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <button className="btn btn-outline" style={{ border: 'none', padding: '10px' }} onClick={() => navigate(-1)}>
+            <ArrowLeft size={20} />
           </button>
-          <button 
-            className="btn btn-primary" 
-            style={{ backgroundColor: '#dc2626' }} 
-            onClick={handlePrint}
-          >
-            <FileText size={18} /> ปริ้นใบงาน
-          </button>
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2.5rem', padding: '1.5rem', backgroundColor: '#f1f5f9', borderRadius: '12px', border: '1px solid var(--border)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
           <div>
-            <h2 style={{ margin: 0, fontSize: '1.75rem', fontWeight: 800 }}>TICKET: {repair.ticket_no}</h2>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginTop: '0.5rem', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Clock size={14}/> รับเรื่องเมื่อ: {parseDate(repair.received_at).toLocaleString('th-TH')}</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Calendar size={14}/> บันทึกเมื่อ: {parseDate(repair.created_at).toLocaleString('th-TH')}</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Settings size={14}/> อัปเดตล่าสุด: {parseDate(repair.updated_at).toLocaleString('th-TH')}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--primary)', fontWeight: 700, fontSize: '0.75rem', textTransform: 'uppercase' }}>
+              <Wrench size={14} /> แฟ้มบันทึกงานซ่อม
             </div>
+            <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800 }}>{repair.ticket_no}</h2>
           </div>
-          <span className={`badge badge-${repair.status}`} style={{ fontSize: '0.9rem', padding: '6px 16px' }}>
-            {repair.status}
-          </span>
         </div>
-        <div style={{ display: 'flex', gap: '0.75rem' }}>
-          <button className="btn btn-outline" onClick={() => setShowEditModal(true)}>
-             <Settings size={18} /> แก้ไข
-          </button>
-          <button className="btn btn-outline" onClick={() => setShowDeviceModal(true)}>
-             <Wrench size={18} /> อุปกรณ์
+        <div style={{ display: 'flex', gap: '12px' }}>
+          <PermissionGate require={[repair.type === 'claim' ? 'delete.claims' : 'delete.repairs']}>
+            <button className="btn btn-outline" style={{ borderColor: 'var(--danger)', color: 'var(--danger)' }} onClick={handleDelete}>
+              <Trash2 size={18} /> <span className="hide-on-mobile">ลบรายการ</span>
+            </button>
+          </PermissionGate>
+          <button className="btn btn-primary" style={{ background: 'var(--text-main)' }} onClick={handlePrint}>
+            <FileText size={18} /> <span className="hide-on-mobile">พิมพ์ใบงาน</span>
           </button>
           <button className="btn btn-primary" onClick={() => setShowStatusModal(true)}>
-            <CheckCircle2 size={18} /> อัปเดตสถานะ
+            <CheckCircle2 size={18} /> <span className="hide-on-mobile">อัปเดตสถานะ</span>
           </button>
         </div>
       </div>
 
-      <div className="detail-grid">
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-          <div className="card">
-            <h3 style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-               <FileText color="var(--primary)" /> รายละเอียดการแจ้ง{repair.type === 'claim' ? 'เคลม' : 'ซ่อม'}
-            </h3>
-            <div className="form-grid">
-              <div className="info-item">
-                <label style={{ color: 'var(--text-muted)', fontSize: '0.85rem', fontWeight: 600, display: 'block', marginBottom: '4px' }}>
-                  <User size={14} style={{ verticalAlign: 'middle', marginRight: '4px' }} /> ชื่อผู้เบิก / หน่วยงาน
-                </label>
-                <p style={{ fontWeight: 700, fontSize: '1.1rem' }}>{repair.reporter}</p>
-              </div>
-              <div className="info-item">
-                <label style={{ color: 'var(--text-muted)', fontSize: '0.85rem', fontWeight: 600, display: 'block', marginBottom: '4px' }}>
-                  <AlertTriangle size={14} style={{ verticalAlign: 'middle', marginRight: '4px' }} /> ระดับความสำคัญ
-                </label>
-                <p className={`priority-${repair.priority === 'วิกฤต' || repair.priority === 'ด่วนมาก' ? 'high' : repair.priority === 'ด่วน' ? 'medium' : 'low'}`} style={{ fontWeight: 700 }}>{repair.priority}</p>
-              </div>
-              <div className="info-item">
-                <label style={{ color: 'var(--text-muted)', fontSize: '0.85rem', fontWeight: 600, display: 'block', marginBottom: '4px' }}>
-                  <HistoryIcon size={14} style={{ verticalAlign: 'middle', marginRight: '4px' }} /> โครงการ / งาน
-                </label>
-                <p style={{ fontWeight: 600 }}>{repair.project_name || '-'}</p>
-              </div>
-              <div className="info-item">
-                <label style={{ color: 'var(--text-muted)', fontSize: '0.85rem', fontWeight: 600, display: 'block', marginBottom: '4px' }}>
-                  <MapPin size={14} style={{ verticalAlign: 'middle', marginRight: '4px' }} /> สถานที่ / หน้างาน
-                </label>
-                <p style={{ fontWeight: 600 }}>{repair.location || '-'}</p>
-              </div>
-              <div className="info-item">
-                <label style={{ color: 'var(--text-muted)', fontSize: '0.85rem', fontWeight: 600, display: 'block', marginBottom: '4px' }}>
-                  <Laptop size={14} style={{ verticalAlign: 'middle', marginRight: '4px' }} /> ชื่ออุปกรณ์ / รุ่น
-                </label>
-                <p style={{ fontWeight: 600 }}>{repair.device_name}</p>
-              </div>
+      <div style={{ padding: '0 2.5rem' }}>
+        {/* Metadata Strip */}
+        <div className="glass-card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2.5rem', padding: '1.5rem 2rem', borderRadius: '20px' }}>
+          <div style={{ display: 'flex', gap: '3rem' }}>
+            <div>
+              <label style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>สถานะ</label>
+              <span className={`badge badge-${repair.status}`} style={{ fontSize: '0.85rem', padding: '6px 16px', fontWeight: 800 }}>
+                {repair.status}
+              </span>
             </div>
-            <div style={{ marginTop: '2rem', borderTop: '1px solid var(--border)', paddingTop: '1.5rem' }}>
-            <label style={{ color: 'var(--text-muted)', fontSize: '0.85rem', fontWeight: 600, display: 'block', marginBottom: '10px' }}>อาการเสีย / ปัญหาที่พบ</label>
-            <p style={{ background: '#f1f5f9', padding: '1.25rem', borderRadius: '12px', border: '1px solid var(--border)', fontSize: '1rem', lineHeight: '1.6' }}>
-              {repair.problem}
-            </p>
+            <div>
+              <label style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>ความสำคัญ</label>
+              <p className={`priority-${repair.priority === 'วิกฤต' || repair.priority === 'ด่วนมาก' ? 'high' : repair.priority === 'ด่วน' ? 'medium' : 'low'}`} style={{ fontWeight: 800, margin: 0, fontSize: '1.1rem' }}>{repair.priority}</p>
             </div>
-            {repair.repair_note && (
-            <div style={{ marginTop: '1.5rem' }}>
-              <label style={{ color: '#15803d', fontSize: '0.85rem', fontWeight: 700, display: 'block', marginBottom: '10px' }}>บันทึกการแก้ไขจากช่าง (Final Note)</label>
-              <p style={{ background: '#f0fdf4', padding: '1.25rem', borderRadius: '12px', border: '1px solid #bbf7d0', color: '#15803d', fontWeight: 500 }}>
-                {repair.repair_note}
-              </p>
+            <div className="hide-on-tablet">
+              <label style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>วันที่ได้รับแจ้ง</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, fontSize: '0.95rem' }}><Clock size={16} color="var(--primary)"/> {parseDate(repair.received_at).toLocaleString('th-TH')}</div>
             </div>
-            )}
-          </div>
-
-          <div className="card">
-            <h3 style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-              <HistoryIcon color="var(--primary)" /> ประวัติการดำเนินการ (Activity Timeline)
-            </h3>
-            <div className="timeline" style={{ paddingLeft: '1rem' }}>
-              {repair.logs.map((log, index) => (
-                <div key={log.id} style={{ display: 'flex', gap: '1.5rem', marginBottom: '2rem', position: 'relative' }}>
-                  <div style={{ flexShrink: 0, width: '40px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                    <div style={{ 
-                      width: '16px', 
-                      height: '16px', 
-                      borderRadius: '50%', 
-                      backgroundColor: index === 0 ? 'var(--primary)' : '#cbd5e1', 
-                      zIndex: 1,
-                      boxShadow: index === 0 ? '0 0 0 4px rgba(59, 130, 246, 0.2)' : 'none'
-                    }}></div>
-                    {index !== repair.logs.length - 1 && <div style={{ flexGrow: 1, width: '2px', backgroundColor: '#e2e8f0', margin: '4px 0' }}></div>}
-                  </div>
-                  <div style={{ paddingBottom: '0.5rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.5rem' }}>
-                      <span style={{ fontWeight: 800, color: index === 0 ? 'var(--text-main)' : 'var(--text-muted)' }}>{log.action}</span>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', background: '#f1f5f9', padding: '2px 8px', borderRadius: '4px' }}>{parseDate(log.created_at).toLocaleString('th-TH')}</span>
-                    </div>
-                    <p style={{ fontSize: '0.95rem', color: 'var(--text-main)', marginBottom: '0.5rem', lineHeight: '1.5' }}>{log.note}</p>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: 'var(--primary)', fontWeight: 600 }}>
-                      <User size={14} /> โดย: {log.user}
-                    </div>
-                  </div>
-                </div>
-              ))}
+            <div className="hide-on-tablet">
+              <label style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>อัปเดตล่าสุด</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, fontSize: '0.95rem' }}><Settings size={16} color="var(--primary)"/> {parseDate(repair.updated_at).toLocaleString('th-TH')}</div>
             </div>
           </div>
+          <button className="btn btn-outline" style={{ borderRadius: '12px' }} onClick={() => setShowEditModal(true)}>
+             <Settings size={18} /> แก้ไขข้อมูล
+          </button>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-          <div className="card">
-            <h3 style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-              <ImageIcon color="var(--primary)" /> รูปภาพหลักฐาน
-            </h3>
-            {repair.images.length > 0 ? (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                {repair.images.map(img => (
-                  <div key={img.id} style={{ borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--border)', cursor: 'zoom-in' }}>
-                    <img 
-                      src={`${UPLOAD_URL}/${img.file_path}`} 
-                      crossOrigin="anonymous"
-                      alt="repair evidence" 
-                      style={{ width: '100%', height: '120px', objectFit: 'cover' }} 
-                      onClick={() => window.open(`${UPLOAD_URL}/${img.file_path}`, '_blank')}
-                    />
+        <div className="detail-grid" style={{ display: 'grid', gridTemplateColumns: '8fr 4fr', gap: '2rem' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+            {/* Core Info Card */}
+            <div className="card glass-card" style={{ borderRadius: '24px', padding: '2.5rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '2.5rem' }}>
+                <h3 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <FileText size={28} color="var(--primary)" /> รายละเอียดงาน{repair.type === 'claim' ? 'เคลม' : 'ซ่อม'}
+                </h3>
+                <div style={{ padding: '8px 16px', background: 'var(--primary-light)', color: 'var(--primary)', borderRadius: '12px', fontWeight: 800, fontSize: '0.8rem' }}>
+                  รหัสงาน: #{repair.id}
+                </div>
+              </div>
+
+              <div className="form-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
+                <div className="info-item">
+                  <label style={{ color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', display: 'block', marginBottom: '8px' }}>
+                    ผู้แจ้ง / หน่วยงาน
+                  </label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div style={{ width: 36, height: 36, background: 'var(--bg-app)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <User size={18} color="var(--primary)" />
+                    </div>
+                    <p style={{ fontWeight: 800, fontSize: '1.15rem', margin: 0 }}>{repair.reporter}</p>
+                  </div>
+                </div>
+                <div className="info-item">
+                  <label style={{ color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', display: 'block', marginBottom: '8px' }}>
+                    ชื่ออุปกรณ์ / รุ่น
+                  </label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div style={{ width: 36, height: 36, background: 'var(--bg-app)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <Laptop size={18} color="var(--primary)" />
+                    </div>
+                    <p style={{ fontWeight: 800, fontSize: '1.15rem', margin: 0 }}>{repair.device_name}</p>
+                  </div>
+                </div>
+                <div className="info-item">
+                  <label style={{ color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', display: 'block', marginBottom: '8px' }}>
+                    โครงการ / งาน
+                  </label>
+                  <p style={{ fontWeight: 700, margin: 0, paddingLeft: '46px' }}>{repair.project_name || '-'}</p>
+                </div>
+                <div className="info-item">
+                  <label style={{ color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', display: 'block', marginBottom: '8px' }}>
+                    สถานที่ / หน้างาน
+                  </label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', paddingLeft: '46px' }}>
+                    <MapPin size={16} color="var(--danger)" />
+                    <p style={{ fontWeight: 700, margin: 0 }}>
+                      {repair.station_name
+                        ? `${repair.station_name}${repair.location_snapshot && repair.location_snapshot.startsWith(repair.station_name) && repair.location_snapshot.length > repair.station_name.length ? ' - ' + repair.location_snapshot.slice(repair.station_name.length).replace(/^[-\s]+/, '') : ''}`
+                        : (repair.location || repair.location_snapshot || '-')}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ marginTop: '3rem' }}>
+                <label style={{ color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', display: 'block', marginBottom: '12px' }}>อาการเสีย / ปัญหาที่พบ</label>
+                <div style={{ background: 'var(--bg-app)', padding: '2rem', borderRadius: '20px', border: '1px solid var(--border)', fontSize: '1.1rem', lineHeight: '1.7', fontWeight: 500, color: 'var(--text-main)' }}>
+                  {repair.problem}
+                </div>
+              </div>
+
+              {repair.repair_note && (
+                <div style={{ marginTop: '2rem' }}>
+                  <label style={{ color: 'var(--success)', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', display: 'block', marginBottom: '12px' }}>บันทึกการแก้ไขจากช่าง (Final Solution)</label>
+                  <div style={{ background: 'var(--success-light)', padding: '2rem', borderRadius: '20px', border: '1px solid var(--success-border)', color: 'var(--success)', fontWeight: 700, fontSize: '1.1rem', display: 'flex', gap: '1rem' }}>
+                    <CheckCircle2 size={24} style={{ flexShrink: 0 }} />
+                    {repair.repair_note}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Timeline Card */}
+            <div className="card glass-card" style={{ borderRadius: '24px', padding: '2.5rem' }}>
+              <h3 style={{ marginBottom: '2.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem', fontSize: '1.25rem', fontWeight: 800 }}>
+                <HistoryIcon size={24} color="var(--primary)" /> บันทึกกิจกรรมและประวัติการตรวจสอบ
+              </h3>
+              <div className="timeline" style={{ paddingLeft: '0.5rem' }}>
+                {repair.logs.map((log, index) => (
+                  <div key={log.id} style={{ display: 'flex', gap: '2rem', marginBottom: '2.5rem', position: 'relative' }}>
+                    <div style={{ flexShrink: 0, width: '40px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                      <div style={{ 
+                        width: '20px', 
+                        height: '20px', 
+                        borderRadius: '50%', 
+                        backgroundColor: index === 0 ? 'var(--primary)' : '#cbd5e1', 
+                        zIndex: 1,
+                        boxShadow: index === 0 ? '0 0 0 6px var(--primary-light)' : 'none',
+                        border: '3px solid white'
+                      }}></div>
+                      {index !== repair.logs.length - 1 && <div style={{ flexGrow: 1, width: '2px', backgroundColor: '#e2e8f0', margin: '6px 0' }}></div>}
+                    </div>
+                    <div style={{ background: index === 0 ? 'var(--bg-app)' : 'transparent', padding: index === 0 ? '1.25rem' : '0', borderRadius: '16px', flex: 1, transition: 'all 0.3s' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                        <span style={{ fontWeight: 800, fontSize: '1.05rem', color: index === 0 ? 'var(--primary)' : 'var(--text-main)' }}>{log.action}</span>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 700, background: 'rgba(0,0,0,0.04)', padding: '4px 10px', borderRadius: '99px' }}>{parseDate(log.created_at).toLocaleString('th-TH')}</span>
+                      </div>
+                      <p style={{ fontSize: '1rem', color: 'var(--text-muted)', marginBottom: '0.75rem', lineHeight: '1.6', fontWeight: 500 }}>{log.note}</p>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', color: 'var(--text-main)', fontWeight: 800 }}>
+                        <div style={{ width: 24, height: 24, background: 'var(--primary-light)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <User size={12} color="var(--primary)" />
+                        </div>
+                        {log.user}
+                      </div>
+                    </div>
                   </div>
                 ))}
               </div>
-            ) : (
-              <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)', background: '#f8fafc', borderRadius: '12px', border: '1.5px dashed var(--border)' }}>
-                <ImageIcon size={32} style={{ opacity: 0.3, marginBottom: '0.5rem' }} />
-                <p style={{ fontSize: '0.85rem' }}>ไม่มีรูปภาพประกอบ</p>
-              </div>
-            )}
+            </div>
           </div>
 
-          <div className="card">
-            <h3 style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-              <Wrench color="var(--primary)" /> อุปกรณ์ที่ติดตั้งใหม่
-            </h3>
-            {repair.devices.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)', background: '#f8fafc', borderRadius: '12px', border: '1.5px dashed var(--border)' }}>
-                <p style={{ fontSize: '0.85rem' }}>ยังไม่มีการบันทึกการเปลี่ยนอะไหล่</p>
+          {/* Sidebar Info Column */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+            {/* Evidence Card */}
+            <div className="card glass-card" style={{ borderRadius: '24px', padding: '1.75rem' }}>
+              <h3 style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem', fontSize: '1.1rem', fontWeight: 800 }}>
+                <ImageIcon size={20} color="var(--primary)" /> แกลเลอรีหลักฐาน
+              </h3>
+              {repair.images.length > 0 ? (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1rem' }}>
+                  {repair.images.map(img => (
+                    <div key={img.id} style={{ borderRadius: '16px', overflow: 'hidden', border: '1px solid var(--border)', cursor: 'zoom-in', boxShadow: 'var(--elevation-1)', transition: 'transform 0.2s' }}>
+                      <img
+                        src={`${UPLOAD_URL}/uploads/${img.file_path}`}
+                        crossOrigin="anonymous"
+                        alt="repair evidence"
+                        style={{ width: '100%', height: '180px', objectFit: 'cover' }}
+                        onClick={() => setActiveLightboxImage(`${UPLOAD_URL}/uploads/${img.file_path}`)}
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--text-muted)', background: 'var(--bg-app)', borderRadius: '20px', border: '2px dashed var(--border)' }}>
+                  <ImageIcon size={40} style={{ opacity: 0.2, marginBottom: '1rem' }} />
+                  <p style={{ fontSize: '0.85rem', fontWeight: 700 }}>ไม่มีรูปภาพประกอบในเคสนี้</p>
+                </div>
+              )}
+            </div>
+
+            {/* Components Card */}
+            <div className="card glass-card" style={{ borderRadius: '24px', padding: '1.75rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                  <Wrench size={20} color="var(--primary)" /> อะไหล่ที่เปลี่ยน
+                </h3>
+                <button className="btn btn-outline" style={{ padding: '6px', border: 'none' }} onClick={() => setShowDeviceModal(true)}>
+                  <PlusCircle size={20} />
+                </button>
               </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                {repair.devices.map(dev => (
-                  <div key={dev.id} style={{ padding: '1rem', background: '#f8fafc', border: '1px solid var(--border)', borderRadius: '12px', fontSize: '0.9rem' }}>
-                    <div style={{ marginBottom: '0.75rem', fontWeight: 700, color: 'var(--primary)', borderBottom: '1px solid var(--border)', paddingBottom: '4px' }}>
-                      <Calendar size={14} /> {parseDate(dev.changed_at).toLocaleDateString('th-TH')}
+              {repair.devices.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '2rem 1rem', color: 'var(--text-muted)', background: 'var(--bg-app)', borderRadius: '20px' }}>
+                  <p style={{ fontSize: '0.85rem', fontWeight: 600 }}>ยังไม่มีประวัติการเปลี่ยนอะไหล่</p>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                  {repair.devices.map(dev => (
+                    <div key={dev.id} style={{ padding: '1.25rem', background: 'var(--bg-app)', border: '1px solid var(--border)', borderRadius: '20px', fontSize: '0.9rem' }}>
+                      <div style={{ marginBottom: '1rem', fontWeight: 800, color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '6px', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>
+                        <Calendar size={14} /> {parseDate(dev.changed_at).toLocaleDateString('th-TH')}
+                      </div>
+                      <div style={{ marginBottom: '12px' }}>
+                         <div style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--danger)', textTransform: 'uppercase', marginBottom: '4px' }}>อุปกรณ์ที่ถอดออก</div>
+                         <div style={{ fontWeight: 800 }}>{dev.old_model}</div>
+                         <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>S/N (หมายเลขเครื่อง): {dev.old_serial}</div>
+                      </div>
+                      <div>
+                         <div style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--success)', textTransform: 'uppercase', marginBottom: '4px' }}>อุปกรณ์ที่ติดตั้งใหม่</div>
+                         <div style={{ fontWeight: 800 }}>{dev.new_model}</div>
+                         <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>S/N (หมายเลขเครื่อง): {dev.new_serial}</div>
+                      </div>
                     </div>
-                    <div style={{ color: '#ef4444', marginBottom: '8px' }}>
-                       <strong>ถอดออก:</strong> {dev.old_model} <br/>
-                       <span style={{ fontSize: '0.8rem', opacity: 0.8 }}>S/N: {dev.old_serial}</span>
-                    </div>
-                    <div style={{ color: '#10b981' }}>
-                       <strong>ติดตั้งใหม่:</strong> {dev.new_model} <br/>
-                       <span style={{ fontSize: '0.8rem', opacity: 0.8 }}>S/N: {dev.new_serial}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -500,35 +567,74 @@ const RepairDetail: React.FC = () => {
           <div className="modal-content">
             <h3><Settings size={20} color="var(--primary)" /> แก้ไขข้อมูลใบแจ้ง{repair.type === 'claim' ? 'เคลม' : 'ซ่อม'}</h3>
             <form onSubmit={handleEditUpdate}>
-              <div className="form-group" style={{ marginBottom: '1.25rem' }}>
-                <label>ชื่อผู้เบิก / หน่วยงาน</label>
-                <input type="text" required maxLength={100} value={editForm.reporter} onChange={e => setEditForm({...editForm, reporter: e.target.value})} disabled={updatingEdit} />
-              </div>
-              <div className="form-group" style={{ marginBottom: '1.25rem' }}>
-                <label>โครงการ / งาน</label>
-                <input type="text" required maxLength={100} value={editForm.project_name} onChange={e => setEditForm({...editForm, project_name: e.target.value})} disabled={updatingEdit} />
-              </div>
-              <div className="form-group" style={{ marginBottom: '1.25rem' }}>
-                <label>สถานที่ / หน้างาน</label>
-                <input type="text" maxLength={100} value={editForm.location} onChange={e => setEditForm({...editForm, location: e.target.value})} disabled={updatingEdit} />
-              </div>
-              <div className="form-group" style={{ marginBottom: '1.25rem' }}>
-                <label>อุปกรณ์ / รุ่น</label>
-                <input type="text" required maxLength={100} value={editForm.device_name} onChange={e => setEditForm({...editForm, device_name: e.target.value})} disabled={updatingEdit} />
-              </div>
-              <div className="form-group" style={{ marginBottom: '1.25rem' }}>
-                <label>ความสำคัญ</label>
-                <select value={editForm.priority} onChange={e => setEditForm({...editForm, priority: e.target.value})} disabled={updatingEdit}>
+              <FormSection title="ข้อมูลการแจ้ง" icon={<FileText size={18} />} columns={1}>
+                <div className="form-group">
+                  <label>ชื่อผู้เบิก / หน่วยงาน</label>
+                  <input type="text" required maxLength={100} value={editForm.reporter} onChange={e => setEditForm({...editForm, reporter: e.target.value})} disabled={updatingEdit} />
+                </div>
+                <div className="form-group">
+                  <label>โครงการ / งาน</label>
+                  <input type="text" required maxLength={100} value={editForm.project_name} onChange={e => setEditForm({...editForm, project_name: e.target.value})} disabled={updatingEdit} />
+                </div>
+                <Select
+                  label="ความสำคัญ"
+                  value={editForm.priority}
+                  onChange={e => setEditForm({...editForm, priority: e.target.value})}
+                  disabled={updatingEdit}
+                  triggerStyle={{
+                    padding: '12px 16px',
+                    borderRadius: '12px',
+                    border: '1px solid var(--border)',
+                    fontSize: '0.95rem',
+                    color: 'var(--text-main)',
+                    backgroundColor: 'var(--bg-card)'
+                  }}
+                >
                   <option value="ปกติ">ปกติ</option>
                   <option value="ด่วน">ด่วน</option>
                   <option value="ด่วนมาก">ด่วนมาก</option>
                   <option value="วิกฤต">วิกฤต</option>
-                </select>
-              </div>
-              <div className="form-group" style={{ marginBottom: '1.25rem' }}>
-                <label>อาการเสีย/ปัญหา</label>
-                <textarea rows={3} required maxLength={1000} value={editForm.problem} onChange={e => setEditForm({...editForm, problem: e.target.value})} disabled={updatingEdit}></textarea>
-              </div>
+                </Select>
+              </FormSection>
+
+              <FormSection title="สถานที่ / ด่าน" icon={<MapPin size={18} />} columns={1}>
+                <div className="form-group">
+                  <label style={{ display: 'block', marginBottom: '8px', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-main)' }}>สถานที่ / ด่านชั่ง</label>
+                  <StationSelector
+                    selectedStationId={editForm.station_id || undefined}
+                    showArea={false}
+                    onChange={(data) => {
+                      setEditForm({
+                        ...editForm,
+                        station_id: data.stationId || null,
+                        location: data.stationName || ''
+                      });
+                    }}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>จุดติดตั้ง / บริเวณพื้นที่ย่อย</label>
+                  <input
+                    type="text"
+                    maxLength={100}
+                    placeholder="ระบุตำแหน่งติดตั้งย่อยอย่างอิสระ เช่น ข้างเลนชั่ง, กล่องควบคุมฝั่งขาออก..."
+                    value={subLocation}
+                    onChange={(e) => setSubLocation(e.target.value)}
+                    disabled={updatingEdit}
+                  />
+                </div>
+              </FormSection>
+
+              <FormSection title="อุปกรณ์และอาการ" icon={<Wrench size={18} />} columns={1}>
+                <div className="form-group">
+                  <label>อุปกรณ์ / รุ่น</label>
+                  <input type="text" required maxLength={100} value={editForm.device_name} onChange={e => setEditForm({...editForm, device_name: e.target.value})} disabled={updatingEdit} />
+                </div>
+                <div className="form-group">
+                  <label>อาการเสีย/ปัญหา</label>
+                  <textarea rows={3} required maxLength={1000} value={editForm.problem} onChange={e => setEditForm({...editForm, problem: e.target.value})} disabled={updatingEdit}></textarea>
+                </div>
+              </FormSection>
               <div className="modal-actions" style={{ marginTop: '1.5rem' }}>
                 <button type="button" className="btn btn-outline" onClick={() => setShowEditModal(false)} disabled={updatingEdit}>ยกเลิก</button>
                 <button type="submit" className="btn btn-primary" disabled={updatingEdit}>บันทึกการแก้ไข</button>
@@ -544,15 +650,26 @@ const RepairDetail: React.FC = () => {
           <div className="modal-content">
             <h3><CheckCircle2 size={20} color="var(--primary)" /> อัปเดตสถานะงาน</h3>
             <form onSubmit={handleStatusUpdate}>
-              <div className="form-group" style={{ marginBottom: '1.25rem' }}>
-                <label>เปลี่ยนสถานะเป็น</label>
-                <select value={statusForm.status} onChange={e => setStatusForm({...statusForm, status: e.target.value})} disabled={updatingStatus}>
-                  <option value="รอดำเนินการ">รอดำเนินการ</option>
-                  <option value="กำลังซ่อม">กำลังซ่อม</option>
-                  <option value="รออะไหล่">รออะไหล่</option>
-                  <option value="เสร็จสิ้น">เสร็จสิ้น</option>
-                </select>
-              </div>
+              <Select 
+                label="เปลี่ยนสถานะเป็น"
+                value={statusForm.status} 
+                onChange={e => setStatusForm({...statusForm, status: e.target.value})} 
+                disabled={updatingStatus}
+                style={{ marginBottom: '1.25rem' }}
+                triggerStyle={{
+                  padding: '12px 16px',
+                  borderRadius: '12px',
+                  border: '1px solid var(--border)',
+                  fontSize: '0.95rem',
+                  color: 'var(--text-main)',
+                  backgroundColor: 'var(--bg-card)'
+                }}
+              >
+                <option value="รอดำเนินการ">รอดำเนินการ</option>
+                <option value="กำลังซ่อม">กำลังซ่อม</option>
+                <option value="รออะไหล่">รออะไหล่</option>
+                <option value="เสร็จสิ้น">เสร็จสิ้น</option>
+              </Select>
               <div className="form-group" style={{ marginBottom: '1.25rem' }}>
                 <label>บันทึกสรุปผล / หมายเหตุ</label>
                 <textarea rows={4} maxLength={1000} value={statusForm.note} onChange={e => setStatusForm({...statusForm, note: e.target.value})} placeholder="ระบุรายละเอียดการดำเนินการ..." disabled={updatingStatus}></textarea>
@@ -580,7 +697,7 @@ const RepairDetail: React.FC = () => {
                     <input type="text" required placeholder="ระบุรุ่นที่ถอดออก" maxLength={100} value={deviceForm.old_model} onChange={e => setDeviceForm({...deviceForm, old_model: e.target.value})} disabled={replacingDevice} />
                   </div>
                   <div className="form-group" style={{ marginBottom: '1rem' }}>
-                    <label>Serial No.</label>
+                    <label>หมายเลขเครื่อง (S/N)</label>
                     <input type="text" required placeholder="ระบุ Serial เดิม" maxLength={100} value={deviceForm.old_serial} onChange={e => setDeviceForm({...deviceForm, old_serial: e.target.value})} disabled={replacingDevice} />
                   </div>
                 </div>
@@ -591,7 +708,7 @@ const RepairDetail: React.FC = () => {
                     <input type="text" required placeholder="ระบุรุ่นที่ติดตั้งใหม่" maxLength={100} value={deviceForm.new_model} onChange={e => setDeviceForm({...deviceForm, new_model: e.target.value})} disabled={replacingDevice} />
                   </div>
                   <div className="form-group" style={{ marginBottom: '1rem' }}>
-                    <label>Serial No.</label>
+                    <label>หมายเลขเครื่อง (S/N)</label>
                     <input type="text" required placeholder="ระบุ Serial ใหม่" maxLength={100} value={deviceForm.new_serial} onChange={e => setDeviceForm({...deviceForm, new_serial: e.target.value})} disabled={replacingDevice} />
                   </div>
                 </div>
@@ -603,6 +720,14 @@ const RepairDetail: React.FC = () => {
             </form>
           </div>
         </div>
+      )}
+
+      {activeLightboxImage && (
+        <Lightbox 
+          src={activeLightboxImage} 
+          alt="รูปภาพหลักฐานการทำงาน" 
+          onClose={() => setActiveLightboxImage(null)} 
+        />
       )}
     </div>
   );

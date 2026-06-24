@@ -1,0 +1,20 @@
+const REPAIR_STATUS = {
+  PENDING: 'รอดำเนินการ',
+  IN_PROGRESS: 'กำลังดำเนินการ',
+  ON_HOLD: 'รออะไหล่',
+  COMPLETED: 'เสร็จสิ้น',
+  CANCELLED: 'ยกเลิก'
+};
+
+const INSTANCE_STATUS = {
+  IN_STOCK: 'In Stock',
+  WITHDRAWN: 'Withdrawn',
+  UNDER_REPAIR: 'Under Repair',
+  CLAIMING: 'Claiming',
+  DAMAGED: 'Damaged'
+};
+
+module.exports = {
+  REPAIR_STATUS,
+  INSTANCE_STATUS
+};

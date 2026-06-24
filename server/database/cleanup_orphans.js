@@ -41,5 +41,18 @@ db.serialize(() => {
     }
   });
 
+  // 4. Cleanup orphaned inventory transactions
+  db.run(`
+    DELETE FROM inventory_transactions 
+    WHERE withdrawal_id IS NOT NULL 
+      AND withdrawal_id NOT IN (SELECT id FROM withdrawals)
+  `, function(err) {
+    if (err) {
+      console.error('Error cleaning up inventory_transactions:', err.message);
+    } else {
+      console.log(`Cleaned up ${this.changes} orphaned inventory transactions.`);
+    }
+  });
+
   console.log('--- Database Cleanup Finished ---');
 });

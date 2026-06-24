@@ -1,550 +1,334 @@
 import React from 'react';
+import { Camera } from 'lucide-react';
 import type { RepairDetail } from '../types';
 import { UPLOAD_URL } from '../api';
-import { 
-  User, 
-  Calendar, 
-  Laptop, 
-  CheckCircle2,
-  FileText,
-  QrCode
-} from 'lucide-react';
+import { useCompanyData } from '../hooks/useCompanyData';
+import { pdfTheme, docLabels } from './pdf/pdfTheme';
+import PdfPage from './pdf/PdfPage';
+import PdfHeader from './pdf/PdfHeader';
+import PdfFooter from './pdf/PdfFooter';
+import PdfInfoGrid from './pdf/PdfInfoGrid';
+import PdfTable, { type PdfTableColumn } from './pdf/PdfTable';
+import PdfSignatureBlock from './pdf/PdfSignatureBlock';
 
 interface Props {
   repair: RepairDetail;
   isPreview?: boolean;
+  companyId?: number | null;
+  logoId?: number | null;
 }
 
-const PrintTemplate: React.FC<Props> = ({ repair, isPreview }) => {
+const parseDate = (dateStr: string): Date => {
+  if (!dateStr) return new Date();
+  if (dateStr.includes(' ') && !dateStr.includes('T')) {
+    return new Date(dateStr.replace(' ', 'T') + 'Z');
+  }
+  return new Date(dateStr);
+};
+
+const formatDateThai = (date: Date): string => {
+  return date.toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' });
+};
+
+const formatDateTimeThai = (date: Date): string => {
+  return date.toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' })
+    + ' ' + date.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+};
+
+const formatDuration = (fromStr: string, toStr: string): string => {
+  if (!fromStr || !toStr) return '-';
+  const from = parseDate(fromStr).getTime();
+  const to = parseDate(toStr).getTime();
+  if (isNaN(from) || isNaN(to) || to < from) return '-';
+  const diffMs = to - from;
+  const totalMinutes = Math.floor(diffMs / 60000);
+  const days = Math.floor(totalMinutes / (60 * 24));
+  const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
+  const minutes = totalMinutes % 60;
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days} วัน`);
+  if (hours > 0) parts.push(`${hours} ชม.`);
+  if (days === 0 && minutes > 0) parts.push(`${minutes} นาที`);
+  return parts.length > 0 ? parts.join(' ') : 'น้อยกว่า 1 นาที';
+};
+
+const statusToTone = (status: string): 'success' | 'warning' | 'danger' | 'neutral' => {
+  if (status === 'เสร็จสิ้น') return 'success';
+  if (status === 'รอดำเนินการ') return 'warning';
+  if (status === 'รออะไหล่') return 'danger';
+  return 'neutral';
+};
+
+const PrintTemplate: React.FC<Props> = ({ repair, isPreview, companyId, logoId }) => {
+  const { company, logo } = useCompanyData(companyId ?? null, logoId ?? null);
+
   const isClaim = repair.type === 'claim';
-  
-  // Dashboard Theme Palette
-  const primaryColor = isClaim ? '#ea580c' : '#0284c7'; // Dark Orange vs Sky Blue
-  const accentColor = isClaim ? '#f97316' : '#0ea5e9'; // Orange vs Light Blue
-  const lightBgColor = isClaim ? '#fff7ed' : '#f0f9ff'; // Warm Amber vs Ice Blue
-  const textDark = '#0f172a';
-  const textMuted = '#64748b';
-  const borderColor = '#e2e8f0'; // Modern soft border
-  
-  const cardStyle = {
-    border: `1px solid ${borderColor}`,
-    borderRadius: '10px',
-    backgroundColor: '#fff',
-    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03)',
-    overflow: 'hidden'
-  };
+  const docType = isClaim ? 'claim' : 'repair';
+  const prefix = docLabels[docType].prefix;
+  const docNumber = repair.ticket_no || `${prefix}-${String(repair.id || 0).padStart(6, '0')}`;
+  const docDate = formatDateThai(parseDate(repair.created_at));
+  const printedAt = formatDateTimeThai(new Date());
 
-  const parseDate = (dateStr: string) => {
-    if (!dateStr) return new Date();
-    if (dateStr.includes(' ') && !dateStr.includes('T')) {
-      return new Date(dateStr.replace(' ', 'T') + 'Z');
+  let derivedAreaName = repair.station_area_name;
+  if (!derivedAreaName && repair.station_name && repair.location_snapshot && repair.location_snapshot.startsWith(repair.station_name)) {
+    const suffix = repair.location_snapshot.slice(repair.station_name.length).trim();
+    if (suffix.startsWith('-')) {
+      derivedAreaName = suffix.slice(1).trim();
     }
-    return new Date(dateStr);
-  };
+  }
 
-  const dateObj = parseDate(repair.created_at);
+  const locationText = repair.station_name
+    ? `${repair.station_name}${derivedAreaName ? ' / ' + derivedAreaName : ''}`
+    : (repair.location || repair.location_snapshot || '-');
+
   const devices = repair.devices || [];
+  const logs = repair.logs || [];
+
+  const isClosed = repair.status === 'เสร็จสิ้น';
+  const closedAtText = isClosed && repair.updated_at
+    ? formatDateThai(parseDate(repair.updated_at))
+    : '— ยังไม่ปิดงาน —';
+  const durationEnd = isClosed && repair.updated_at ? repair.updated_at : new Date().toISOString();
+  const durationText = formatDuration(repair.received_at || repair.created_at, durationEnd);
+  const durationLabel = isClosed ? 'ระยะเวลาดำเนินการ' : 'ดำเนินการมาแล้ว';
+
+  const deviceColumns: PdfTableColumn<typeof devices[0]>[] = [
+    {
+      key: 'old',
+      header: 'อุปกรณ์เดิม',
+      render: (row) => (
+        <>
+          <div style={{ fontWeight: 700 }}>{row.old_model || '-'}</div>
+          {row.old_serial && (
+            <div style={{ fontFamily: pdfTheme.fonts.mono, fontSize: pdfTheme.size.small, color: pdfTheme.colors.textMuted, marginTop: '2px' }}>
+              S/N: {row.old_serial}
+            </div>
+          )}
+        </>
+      ),
+    },
+    {
+      key: 'new',
+      header: 'อุปกรณ์ใหม่',
+      render: (row) => (
+        <>
+          <div style={{ fontWeight: 700 }}>{row.new_model || '-'}</div>
+          {row.new_serial && (
+            <div style={{ fontFamily: pdfTheme.fonts.mono, fontSize: pdfTheme.size.small, color: pdfTheme.colors.textMuted, marginTop: '2px' }}>
+              S/N: {row.new_serial}
+            </div>
+          )}
+        </>
+      ),
+    },
+    {
+      key: 'changed_by',
+      header: 'ผู้เปลี่ยน',
+      width: '110px',
+      render: (row) => row.changed_by || '-',
+    },
+    {
+      key: 'changed_at',
+      header: 'วันที่เปลี่ยน',
+      width: '120px',
+      align: 'center',
+      render: (row) => row.changed_at ? formatDateThai(parseDate(row.changed_at)) : '-',
+    },
+  ];
+
+  const priorityTone: Record<string, { bg: string; text: string }> = {
+    'ปกติ':    { bg: '#dbeafe', text: '#1e40af' },
+    'ด่วน':    { bg: '#fef3c7', text: '#78350f' },
+    'ด่วนมาก': { bg: '#fee2e2', text: '#7f1d1d' },
+    'วิกฤต':   { bg: '#fecaca', text: '#7f1d1d' },
+  };
+  const priorityColors = priorityTone[repair.priority] || priorityTone['ปกติ'];
 
   return (
-    <div 
-      id="pdf-print-template" 
-      style={{ 
-        width: '210mm',
-        padding: '12mm', 
-        backgroundColor: 'white', 
-        color: textDark,
-        fontFamily: '"Sarabun", sans-serif',
-        fontSize: '12px',
+    <div
+      id="pdf-print-template"
+      style={{
         position: isPreview ? 'relative' : 'absolute',
-        left: isPreview ? '0' : '-9999px',
-        top: 0,
-        boxSizing: 'border-box',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '14px'
+        left: isPreview ? 'auto' : '-99999px',
+        top: isPreview ? 'auto' : 0,
       }}
     >
-      {/* Top Gradient Accent Band */}
-      <div style={{ 
-        position: 'absolute', 
-        top: 0, 
-        left: 0, 
-        right: 0, 
-        height: '6px', 
-        backgroundImage: `linear-gradient(90deg, ${primaryColor}, ${accentColor})` 
-      }} />
+      <PdfPage isPreview={isPreview}>
+        <PdfHeader
+          docType={docType}
+          docNumber={docNumber}
+          docDate={docDate}
+          company={company}
+          logo={logo}
+          statusBadge={{ label: repair.status, tone: statusToTone(repair.status) }}
+        />
 
-      {/* ═══ HEADER (Dashboard Style) ═══ */}
-      <header style={{ 
-        display: 'flex', 
-        justifyContent: 'space-between', 
-        alignItems: 'center',
-        borderBottom: `2px solid ${borderColor}`,
-        paddingBottom: '14px',
-        marginTop: '8px'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <div style={{ 
-            background: lightBgColor, 
-            padding: '8px', 
-            borderRadius: '10px', 
-            border: `1.5px solid ${accentColor}30`,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center'
+        {/* 1. Operational Info Grid (3 columns) */}
+        <PdfInfoGrid
+          title={isClaim ? 'ข้อมูลการเคลม' : 'ข้อมูลการแจ้งซ่อม'}
+          columns={3}
+          docType={docType}
+          fields={[
+            { label: 'ผู้แจ้ง', value: repair.reporter || '-' },
+            { label: 'วันที่รับเรื่อง', value: repair.received_at ? formatDateThai(parseDate(repair.received_at)) : '-' },
+            {
+              label: 'ความเร่งด่วน',
+              value: (
+                <span style={{
+                  display: 'inline-block',
+                  padding: '1px 6px',
+                  borderRadius: pdfTheme.radius.sm,
+                  background: priorityColors.bg,
+                  color: priorityColors.text,
+                  fontWeight: 700,
+                  fontSize: pdfTheme.size.micro,
+                }}>
+                  {repair.priority}
+                </span>
+              ),
+            },
+            { label: 'ผู้รับผิดชอบ / ช่าง', value: repair.technician || '— ยังไม่ได้มอบหมาย —' },
+            { label: 'วันที่ปิดงาน', value: closedAtText },
+            { label: durationLabel, value: durationText },
+            { label: 'ชื่อโครงการ / งาน', value: repair.project_name || '-', span: 2 },
+            { label: 'อุปกรณ์ที่แจ้ง', value: repair.device_name || '-' },
+            { label: 'สถานที่ / หน้างาน', value: locationText, span: 2 },
+            { label: 'อาการ / รายละเอียดปัญหา', value: repair.problem || '-', span: 3 },
+            { label: 'หมายเหตุการซ่อม / ผลการดำเนินการ', value: repair.repair_note || '— ยังไม่มีบันทึก —', span: 3 },
+          ]}
+        />
+
+        {/* 2. Replaced Devices Table (S/N Table) */}
+        {devices.length > 0 && (
+          <div style={{ marginBottom: `${pdfTheme.space.sectionGap}px` }}>
+            <PdfTable
+              docType={docType}
+              title="ประวัติการเปลี่ยนอุปกรณ์ (รายการ S/N)"
+              columns={deviceColumns}
+              rows={devices.slice(0, 3)}
+              emptyMessage="ไม่มีการเปลี่ยนอุปกรณ์"
+              showRowNumber
+            />
+          </div>
+        )}
+
+        {/* 3. Evidence Images Grid (Always 4 frames) */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: `${pdfTheme.space.sectionGap}px` }}>
+          <h2 style={{
+            fontSize: `${pdfTheme.size.h2}px`,
+            fontWeight: 800,
+            color: pdfTheme.colors.primary,
+            textTransform: 'uppercase',
+            letterSpacing: '0.04em',
+            margin: '4px 0 6px 0',
+            paddingBottom: '2px',
           }}>
-            <Laptop size={24} color={primaryColor} />
-          </div>
-          <div>
-            <h1 style={{ color: textDark, fontSize: '18px', margin: 0, fontWeight: 800, lineHeight: 1.1, letterSpacing: '-0.3px' }}>
-              CMA - CENTRAL MAINTENANCE & ASSET
-            </h1>
-            <p style={{ margin: '3px 0 0 0', fontSize: '10.5px', color: primaryColor, fontWeight: 700 }}>
-              ระบบบริหารจัดการงานซ่อมบำรุงและพัสดุอุปกรณ์
-            </p>
-            <p style={{ margin: '1px 0 0 0', fontSize: '8.5px', color: textMuted }}>
-              Ref. Document — For internal use only | ใช้ภายในองค์กรเท่านั้น
-            </p>
-          </div>
-        </div>
-
-        <div style={{ textAlign: 'right' }}>
-          <div style={{ 
-            fontSize: '15px', 
-            fontWeight: 800, 
-            color: textDark, 
-            letterSpacing: '0.3px',
-            backgroundColor: lightBgColor,
-            border: `1px solid ${borderColor}`,
-            padding: '4px 12px',
-            borderRadius: '8px',
-            display: 'inline-block'
+            รูปภาพหลักฐานการดำเนินงาน
+          </h2>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(2, 1fr)',
+            gap: '8px',
           }}>
-            {isClaim ? 'ใบคำขอเคลมประกันสินค้า' : 'ใบสั่งงานซ่อมบำรุงรักษา'}
-          </div>
-          <div style={{ marginTop: '5px' }}>
-            <span style={{ 
-              backgroundColor: '#f1f5f9', 
-              color: textDark, 
-              padding: '2px 8px', 
-              borderRadius: '20px', 
-              fontSize: '10px', 
-              fontWeight: 700, 
-              border: `1px solid ${borderColor}`
-            }}>
-              เลขที่: {repair.ticket_no}
-            </span>
-          </div>
-        </div>
-      </header>
-
-      {/* ═══ INFO GRID (KPI Dashboard Cards) ═══ */}
-      <div style={{ 
-        display: 'grid', 
-        gridTemplateColumns: '1fr 1fr 1fr', 
-        gap: '12px'
-      }}>
-        {/* Card 1: Document Info */}
-        <div style={{ 
-          border: `1px solid ${borderColor}`,
-          borderRadius: '8px',
-          padding: '10px 12px',
-          backgroundColor: '#fff',
-          boxShadow: '0 2px 4px rgba(15, 23, 42, 0.02)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '6px'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <FileText size={13} color={accentColor} />
-            <span style={{ color: textMuted, fontSize: '9px', fontWeight: 600 }}>ข้อมูลเอกสาร</span>
-          </div>
-          <div style={{ fontSize: '10px', color: textDark }}>
-            <span style={{ display: 'block', color: textMuted, fontSize: '8px' }}>ประเภทเอกสาร:</span>
-            <strong>{isClaim ? 'เคลมประกัน / ส่งศูนย์' : 'ซ่อมบำรุง / ปรับปรุง'}</strong>
-          </div>
-          <div style={{ fontSize: '10px', color: textDark }}>
-            <span style={{ display: 'block', color: textMuted, fontSize: '8px' }}>โครงการ / งาน:</span>
-            <strong>{repair.project_name || '-'}</strong>
-          </div>
-        </div>
-
-        {/* Card 2: User & Location */}
-        <div style={{ 
-          border: `1px solid ${borderColor}`,
-          borderRadius: '8px',
-          padding: '10px 12px',
-          backgroundColor: '#fff',
-          boxShadow: '0 2px 4px rgba(15, 23, 42, 0.02)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '6px'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <User size={13} color={accentColor} />
-            <span style={{ color: textMuted, fontSize: '9px', fontWeight: 600 }}>ผู้รับผิดชอบ & หน้างาน</span>
-          </div>
-          <div style={{ fontSize: '10px', color: textDark }}>
-            <span style={{ display: 'block', color: textMuted, fontSize: '8px' }}>ผู้เบิก / หน่วยงาน:</span>
-            <strong>{repair.reporter}</strong>
-          </div>
-          <div style={{ fontSize: '10px', color: textDark }}>
-            <span style={{ display: 'block', color: textMuted, fontSize: '8px' }}>สถานที่ / หน้างาน:</span>
-            <strong>{repair.location || '-'}</strong>
-          </div>
-        </div>
-
-        {/* Card 3: Priority & Schedule */}
-        <div style={{ 
-          border: `1px solid ${borderColor}`,
-          borderRadius: '8px',
-          padding: '10px 12px',
-          backgroundColor: '#fff',
-          boxShadow: '0 2px 4px rgba(15, 23, 42, 0.02)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '6px'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <Calendar size={13} color={accentColor} />
-            <span style={{ color: textMuted, fontSize: '9px', fontWeight: 600 }}>ความสำคัญ & วันเวลา</span>
-          </div>
-          <div style={{ fontSize: '10px', color: textDark }}>
-            <span style={{ display: 'block', color: textMuted, fontSize: '8px' }}>วันที่แจ้งข้อมูล:</span>
-            <strong>{dateObj.toLocaleDateString('th-TH')}</strong>
-          </div>
-          <div style={{ fontSize: '10px', color: textDark }}>
-            <span style={{ display: 'block', color: textMuted, fontSize: '8px' }}>ระดับความสำคัญ:</span>
-            <span style={{ 
-              color: repair.priority === 'วิกฤต' || repair.priority === 'ด่วนมาก' ? '#ef4444' : textDark,
-              fontWeight: 800
-            }}>
-              {repair.priority}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* ═══ PROBLEM + RESOLUTION (Dashboard style double cards) ═══ */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', pageBreakInside: 'avoid' }}>
-        {/* Problem Card */}
-        <div style={cardStyle}>
-          <div style={{ 
-            background: 'linear-gradient(90deg, #f8fafc, #f1f5f9)', 
-            borderBottom: `1px solid ${borderColor}`, 
-            padding: '6px 12px', 
-            display: 'flex', 
-            alignItems: 'center', 
-            justifyContent: 'space-between'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-              <Laptop size={13} color={primaryColor} />
-              <strong style={{ fontSize: '10.5px', color: textDark }}>รายละเอียดอุปกรณ์และอาการเสีย</strong>
-            </div>
-            <span style={{ fontSize: '8px', color: textMuted, fontWeight: 700, textTransform: 'uppercase' }}>Issue Details</span>
-          </div>
-          <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: '8px', minHeight: '135px', boxSizing: 'border-box' }}>
-            <div>
-              <span style={{ color: textMuted, fontSize: '8.5px', display: 'block' }}>เครื่อง / อุปกรณ์ / รุ่น:</span>
-              <div style={{ fontSize: '11px', fontWeight: 800, color: primaryColor }}>{repair.device_name}</div>
-            </div>
-            <div style={{ 
-              border: `1.5px dashed ${borderColor}`, 
-              borderRadius: '6px', 
-              padding: '8px', 
-              backgroundColor: '#fafafa', 
-              flex: 1 
-            }}>
-              <span style={{ color: textMuted, fontSize: '8px', display: 'block', fontWeight: 700 }}>อาการเสียที่ตรวจพบ:</span>
-              <div style={{ fontSize: '10px', color: textDark, lineHeight: 1.35, whiteSpace: 'pre-line' }}>{repair.problem}</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Resolution Card */}
-        <div style={cardStyle}>
-          <div style={{ 
-            background: 'linear-gradient(90deg, #f8fafc, #f1f5f9)', 
-            borderBottom: `1px solid ${borderColor}`, 
-            padding: '6px 12px', 
-            display: 'flex', 
-            alignItems: 'center', 
-            justifyContent: 'space-between'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-              <CheckCircle2 size={13} color={primaryColor} />
-              <strong style={{ fontSize: '10.5px', color: textDark }}>สรุปผลการซ่อมบำรุงรักษา</strong>
-            </div>
-            <span style={{ 
-              fontSize: '8.5px', 
-              fontWeight: 800, 
-              color: repair.status === 'เสร็จสิ้น' ? '#10b981' : '#f97316',
-              backgroundColor: repair.status === 'เสร็จสิ้น' ? '#ecfdf5' : '#fff7ed',
-              padding: '1px 6px',
-              borderRadius: '10px',
-              border: `1px solid ${repair.status === 'เสร็จสิ้น' ? '#d1fae5' : '#ffedd5'}`
-            }}>{repair.status}</span>
-          </div>
-          <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: '8px', minHeight: '135px', boxSizing: 'border-box' }}>
-            <div style={{ 
-              border: `1.5px dashed ${borderColor}`, 
-              borderRadius: '6px', 
-              padding: '8px', 
-              backgroundColor: '#fcfcfc', 
-              flex: 1 
-            }}>
-              <span style={{ color: textMuted, fontSize: '8px', display: 'block', fontWeight: 700 }}>การแก้ไข / บันทึกช่าง:</span>
-              <div style={{ fontSize: '10px', color: textDark, lineHeight: 1.35, whiteSpace: 'pre-line' }}>{repair.repair_note || '-'}</div>
-            </div>
-            <div style={{ 
-              display: 'grid', 
-              gridTemplateColumns: '1.2fr 0.8fr', 
-              gap: '6px', 
-              fontSize: '9.5px', 
-              borderTop: `1px solid ${borderColor}`, 
-              paddingTop: '6px' 
-            }}>
-              <div>
-                <span style={{ color: textMuted, fontSize: '8px' }}>ช่างผู้ซ่อม/ผู้ดูแล:</span>
-                <div style={{ fontWeight: 800, color: textDark }}>{repair.technician || '-'}</div>
-              </div>
-              <div style={{ textAlign: 'right' }}>
-                <span style={{ color: textMuted, fontSize: '8px' }}>ผู้ประเมินผล:</span>
-                <div style={{ fontWeight: 800, color: primaryColor }}>{repair.reporter}</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ═══ REPLACEMENT PARTS TABLE (Dashboard Clean style) ═══ */}
-      <div style={{ ...cardStyle, pageBreakInside: 'avoid' }}>
-        <div style={{ 
-          background: 'linear-gradient(90deg, #f8fafc, #f1f5f9)', 
-          borderBottom: `1px solid ${borderColor}`, 
-          padding: '6px 12px', 
-          display: 'flex', 
-          alignItems: 'center', 
-          gap: '5px' 
-        }}>
-          <FileText size={13} color={primaryColor} />
-          <strong style={{ fontSize: '10.5px', color: textDark }}>บันทึกรายการอะไหล่ / อุปกรณ์ที่ติดตั้งทดแทน</strong>
-        </div>
-        <div style={{ padding: '8px' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '10px' }}>
-            <thead>
-              <tr style={{ background: primaryColor, color: '#fff' }}>
-                <th style={{ padding: '6px 8px', textAlign: 'center', width: '8%', borderRadius: '4px 0 0 4px', fontWeight: 700 }}>ลำดับ</th>
-                <th style={{ padding: '6px 8px', textAlign: 'left', width: '43%', fontWeight: 700 }}>อุปกรณ์เดิม (ถอดออก)</th>
-                <th style={{ padding: '6px 8px', textAlign: 'left', width: '43%', fontWeight: 700 }}>อุปกรณ์ใหม่ (ติดตั้งแทน)</th>
-                <th style={{ padding: '6px 8px', textAlign: 'center', width: '6%', borderRadius: '0 4px 4px 0', fontWeight: 700 }}>จำนวน</th>
-              </tr>
-            </thead>
-            <tbody>
-              {Array.from({ length: 4 }).map((_, idx) => {
-                const item = devices[idx];
-                return (
-                  <tr 
-                    key={idx} 
-                    style={{ 
-                      height: '24px',
-                      backgroundColor: idx % 2 === 1 ? '#f8fafc' : 'transparent',
-                      borderBottom: `1px solid ${borderColor}`
-                    }}
-                  >
-                    <td style={{ padding: '3px 8px', textAlign: 'center', color: textMuted, fontWeight: 700 }}>{idx + 1}</td>
-                    <td style={{ padding: '3px 8px', color: item ? textDark : '#cbd5e1' }}>
-                      {item ? `${item.old_model} (S/N: ${item.old_serial})` : '.........................................................................................'}
-                    </td>
-                    <td style={{ padding: '3px 8px', color: item ? textDark : '#cbd5e1', fontWeight: item ? 700 : 'normal' }}>
-                      {item ? `${item.new_model} (S/N: ${item.new_serial})` : '.........................................................................................'}
-                    </td>
-                    <td style={{ padding: '3px 8px', textAlign: 'center', color: primaryColor, fontWeight: 800 }}>
-                      {item ? '1' : ''}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* ═══ EVIDENCE IMAGES GRID (ตารางกรอบรูป Dashboard Infographic) ═══ */}
-      <div style={{ ...cardStyle, pageBreakInside: 'avoid' }}>
-        <div style={{ 
-          background: 'linear-gradient(90deg, #f8fafc, #f1f5f9)', 
-          borderBottom: `1px solid ${borderColor}`, 
-          padding: '6px 12px', 
-          display: 'flex', 
-          alignItems: 'center', 
-          gap: '5px' 
-        }}>
-          <FileText size={13} color={primaryColor} />
-          <strong style={{ fontSize: '10.5px', color: textDark }}>ตารางภาพถ่ายหลักฐานประกอบอาการเสีย / หลักฐานการซ่อมเคลม</strong>
-        </div>
-        <div style={{ padding: '12px', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px' }}>
-          {Array.from({ length: 4 }).map((_, idx) => {
-            const img = repair.images && repair.images[idx];
-            if (img) {
-              const timestamp = parseDate(img.uploaded_at).getTime();
+            {[0, 1, 2, 3].map((index) => {
+              const img = repair.images && repair.images[index];
               return (
-                <div 
-                  key={img.id} 
-                  style={{ 
-                    border: `1.5px solid ${borderColor}`, 
-                    padding: '4px', 
-                    borderRadius: '8px',
-                    backgroundColor: '#fcfcfc', 
-                    height: '115px',
-                    display: 'flex', 
-                    justifyContent: 'center', 
-                    alignItems: 'center',
-                    position: 'relative',
-                    boxShadow: '0 2px 4px rgba(0,0,0,0.02)'
-                  }}
-                >
-                  <img 
-                    src={`${UPLOAD_URL}/uploads/${img.file_path}?t=${timestamp}`} 
-                    crossOrigin="anonymous" 
-                    alt={`evidence-${idx}`} 
-                    style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '4px' }} 
-                  />
-                  <span style={{
-                    position: 'absolute',
-                    bottom: '6px',
-                    right: '6px',
-                    backgroundColor: 'rgba(15, 23, 42, 0.65)',
-                    color: '#fff',
-                    fontSize: '7.5px',
-                    padding: '1px 5px',
-                    borderRadius: '10px',
-                    fontWeight: 700
-                  }}>
-                    รูปที่ {idx + 1}
+                <div key={index} style={{
+                  height: '140px',
+                  border: img ? '1px solid #cbd5e1' : '1px dashed #94a3b8',
+                  borderRadius: pdfTheme.radius.md,
+                  background: img ? pdfTheme.colors.bgPage : '#f8fafc',
+                  overflow: 'hidden',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.02)',
+                }}>
+                  {img ? (
+                    <img
+                      src={`${UPLOAD_URL}/uploads/${img.file_path}`}
+                      alt={`หลักฐาน ${index + 1}`}
+                      crossOrigin="anonymous"
+                      style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+                    />
+                  ) : (
+                    <div style={{ 
+                      display: 'flex', 
+                      flexDirection: 'column', 
+                      alignItems: 'center', 
+                      justifyContent: 'center', 
+                      gap: '4px',
+                      color: '#94a3b8',
+                    }}>
+                      <Camera size={24} style={{ opacity: 0.5 }} />
+                      <span style={{ fontSize: '8px', fontWeight: 600 }}>ไม่มีรูปภาพ {index + 1}</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* 4. Activity Timeline */}
+        {logs.length > 0 && (
+          <PdfTable
+            docType={docType}
+            title="ประวัติการดำเนินงาน"
+            columns={[
+              {
+                key: 'created_at',
+                header: 'วัน-เวลา',
+                width: '110px',
+                render: (row) => (
+                  <span style={{ fontFamily: pdfTheme.fonts.mono, fontSize: pdfTheme.size.small }}>
+                    {formatDateTimeThai(parseDate(row.created_at))}
                   </span>
-                </div>
-              );
-            } else {
-              return (
-                <div 
-                  key={`empty-${idx}`} 
-                  style={{ 
-                    border: `1.5px dashed ${borderColor}`, 
-                    borderRadius: '8px',
-                    backgroundColor: '#fafafa', 
-                    height: '115px',
-                    display: 'flex', 
-                    flexDirection: 'column', 
-                    justifyContent: 'center', 
-                    alignItems: 'center',
-                    color: '#94a3b8', 
-                    fontSize: '9px', 
-                    gap: '6px'
-                  }}
-                >
-                  <div style={{ 
-                    border: '1.5px solid #f1f5f9', 
-                    borderRadius: '50%', 
-                    padding: '6px', 
-                    backgroundColor: '#fff',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center'
-                  }}>
-                    <FileText size={13} color="#cbd5e1" />
-                  </div>
-                  <span style={{ fontSize: '8px', fontWeight: 600 }}>กรอบรูปภาพหลักฐาน {idx + 1}</span>
-                </div>
-              );
-            }
-          })}
-        </div>
-      </div>
+                ),
+              },
+              {
+                key: 'user',
+                header: 'ผู้ดำเนินการ',
+                width: '120px',
+                render: (row) => row.user || '-',
+              },
+              {
+                key: 'action',
+                header: 'การกระทำ',
+                width: '120px',
+                render: (row) => <span style={{ fontWeight: 700 }}>{row.action || '-'}</span>,
+              },
+              {
+                key: 'note',
+                header: 'หมายเหตุ',
+                render: (row) => row.note || '-',
+              },
+            ]}
+            rows={logs.slice(0, 6)}
+            emptyMessage="ไม่มีบันทึก"
+            showRowNumber
+          />
+        )}
 
-      {/* ═══ SIGNATURES (Digital Stamp Boxes) ═══ */}
-      <div style={{ 
-        marginTop: '8px',
-        pageBreakInside: 'avoid',
-        borderTop: `1.5px solid ${borderColor}`, 
-        paddingTop: '14px', 
-        display: 'grid', 
-        gridTemplateColumns: '1fr 1fr 1fr', 
-        gap: '16px',
-        width: '100%',
-        boxSizing: 'border-box'
-      }}>
-        {/* Sign 1 */}
-        <div style={{ 
-          border: `1.5px dashed ${borderColor}`, 
-          borderRadius: '8px', 
-          backgroundColor: '#fafafa', 
-          padding: '10px',
-          textAlign: 'center'
-        }}>
-          <div style={{ borderBottom: `1px solid ${textMuted}`, width: '130px', margin: '4px auto 8px auto', height: '22px' }}></div>
-          <p style={{ margin: 0, fontWeight: 700, fontSize: '10px', color: textDark }}>ลงชื่อ ............................................</p>
-          <p style={{ margin: '2px 0 0 0', color: textMuted, fontSize: '8.5px' }}>({repair.reporter})</p>
-          <p style={{ margin: '1px 0 0 0', color: primaryColor, fontSize: '8.5px', fontWeight: 800 }}>
-            {isClaim ? 'ผู้ประสานงานจัดส่งเคลม' : 'ผู้แจ้งซ่อม / ผู้รับมอบงาน'}
-          </p>
-          <p style={{ margin: '2px 0 0 0', color: textMuted, fontSize: '7.5px' }}>วันที่: ....../……/……</p>
-        </div>
+        <div style={{ marginTop: 'auto' }} />
 
-        {/* Sign 2 */}
-        <div style={{ 
-          border: `1.5px dashed ${borderColor}`, 
-          borderRadius: '8px', 
-          backgroundColor: '#fafafa', 
-          padding: '10px',
-          textAlign: 'center'
-        }}>
-          <div style={{ borderBottom: `1px solid ${textMuted}`, width: '130px', margin: '4px auto 8px auto', height: '22px' }}></div>
-          <p style={{ margin: 0, fontWeight: 700, fontSize: '10px', color: textDark }}>ลงชื่อ ............................................</p>
-          <p style={{ margin: '2px 0 0 0', color: textMuted, fontSize: '8.5px' }}>({repair.technician || '............................................'})</p>
-          <p style={{ margin: '1px 0 0 0', color: primaryColor, fontSize: '8.5px', fontWeight: 800 }}>
-            {isClaim ? 'เจ้าหน้าที่จัดส่งเคลม' : 'ช่างผู้ดำเนินการ / ผู้ส่งมอบงาน'}
-          </p>
-          <p style={{ margin: '2px 0 0 0', color: textMuted, fontSize: '7.5px' }}>วันที่: ....../……/……</p>
-        </div>
+        <PdfSignatureBlock
+          slots={[
+            { role: 'ผู้แจ้งซ่อม', name: repair.reporter || undefined },
+            { role: isClaim ? 'ผู้อนุมัติเคลม' : 'ผู้อนุมัติซ่อม' },
+            { role: isClaim ? 'ผู้ดำเนินการเคลม' : 'ช่างผู้ดำเนินการ', name: repair.technician || undefined },
+          ]}
+        />
 
-        {/* Sign 3 */}
-        <div style={{ 
-          border: `1.5px dashed ${borderColor}`, 
-          borderRadius: '8px', 
-          backgroundColor: '#fafafa', 
-          padding: '10px',
-          textAlign: 'center'
-        }}>
-          <div style={{ borderBottom: `1px solid ${textMuted}`, width: '130px', margin: '4px auto 8px auto', height: '22px' }}></div>
-          <p style={{ margin: 0, fontWeight: 700, fontSize: '10px', color: textDark }}>ลงชื่อ ............................................</p>
-          <p style={{ margin: '2px 0 0 0', color: textMuted, fontSize: '8.5px' }}>( .......................................... )</p>
-          <p style={{ margin: '1px 0 0 0', color: primaryColor, fontSize: '8.5px', fontWeight: 800 }}>
-            {isClaim ? 'ผู้อนุมัติรับเครื่องเคลม' : 'ผู้อนุมัติ / ผู้ตรวจรับ'}
-          </p>
-          <p style={{ margin: '2px 0 0 0', color: textMuted, fontSize: '7.5px' }}>วันที่: ....../……/……</p>
-        </div>
-      </div>
-
-      {/* ═══ FOOTER ═══ */}
-      <footer style={{ 
-        display: 'flex', 
-        justifyContent: 'space-between', 
-        alignItems: 'flex-end', 
-        marginTop: '10px', 
-        borderTop: `1px solid ${borderColor}`, 
-        paddingTop: '6px' 
-      }}>
-        <p style={{ margin: 0, fontSize: '8.5px', color: '#94a3b8', letterSpacing: '0.3px' }}>
-          พิมพ์เมื่อ: {new Date().toLocaleString('th-TH')} | ระบบบริหารจัดการ INDIANA Maintenance System Pro
-        </p>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#cbd5e1' }}>
-          <QrCode size={18} color={accentColor} />
-          <div style={{ fontSize: '7.5px', lineHeight: 1.1, textAlign: 'left', color: textMuted }}>
-            แสกนตรวจสอบ<br/>ข้อมูลงานซ่อมออนไลน์
-          </div>
-        </div>
-      </footer>
+        <PdfFooter
+          docType={docType}
+          docNumber={docNumber}
+          company={company}
+          pageNumber={1}
+          totalPages={1}
+          printedAt={printedAt}
+        />
+      </PdfPage>
     </div>
   );
 };

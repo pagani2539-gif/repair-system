@@ -4,7 +4,8 @@ const fs = require('fs');
 const { runMigrations } = require('./migrationRunner');
 const { scheduleBackups } = require('./backup');
 
-const dbPath = path.join(__dirname, 'repair_system.db');
+const dbFileName = process.env.NODE_ENV === 'test' ? 'repair_system_test.db' : 'repair_system.db';
+const dbPath = path.join(__dirname, dbFileName);
 const db = new sqlite3.Database(dbPath);
 
 // Enable Foreign Key support
@@ -114,7 +115,9 @@ db.serialize(() => {
   // Run migrations and then start backups
   runMigrations(db)
     .then(() => {
-      scheduleBackups(db);
+      if (process.env.NODE_ENV !== 'test' && process.env.DISABLE_BACKUP_SCHEDULER !== '1') {
+        scheduleBackups(db);
+      }
     })
     .catch(err => {
       console.error('CRITICAL: Migration runner failed. Terminating process.', err);

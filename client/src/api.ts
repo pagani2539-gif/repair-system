@@ -1,5 +1,13 @@
 import axios from 'axios';
-import type { Repair, RepairDetail, RepairStatsResponse, InventoryItem, Withdrawal, InventoryStats, DashboardData, GlobalSearchResults, PurchaseOrder, PurchaseOrderItem } from './types';
+import type { Repair, RepairDetail, RepairStatsResponse, InventoryItem, Withdrawal, InventoryStats, DashboardData, GlobalSearchResults, PurchaseOrder, StationDetailResponse, Station, StationArea, VendorContact, Company, CompanyLogo, User, SystemSettings, AuditLog, AssetLifecycleItem, Contract, AssetManualStatus } from './types';
+
+const TOKEN_KEY = 'maintenance_auth_token';
+
+export const tokenStorage = {
+  get: () => localStorage.getItem(TOKEN_KEY),
+  set: (token: string) => localStorage.setItem(TOKEN_KEY, token),
+  clear: () => localStorage.removeItem(TOKEN_KEY),
+};
 
 const API_URL = import.meta.env.DEV 
   ? 'http://localhost:5221/api' 
@@ -13,19 +21,39 @@ const api = axios.create({
   baseURL: API_URL,
 });
 
-// VERY AGGRESSIVE DEBUGGING
-api.interceptors.response.use(response => {
-  if (response.config.url?.includes('/repairs/stats')) {
-    console.log('--- STATS API RAW DATA ---');
-    console.log(JSON.stringify(response.data, null, 2));
-    console.log('pending type:', typeof response.data.pending);
-    console.log('completed type:', typeof response.data.completed);
+// Attach JWT to every request when available
+api.interceptors.request.use((config) => {
+  const token = tokenStorage.get();
+  if (token) {
+    config.headers = config.headers || {};
+    config.headers.Authorization = `Bearer ${token}`;
   }
-  return response;
+  return config;
 });
 
+// On 401, clear token + redirect to /login (skip if already on auth pages)
+api.interceptors.response.use(
+  (response) => {
+    if (import.meta.env.DEV && response.config.url?.includes('/repairs/stats')) {
+      console.log('--- STATS API RAW DATA ---');
+      console.log(JSON.stringify(response.data, null, 2));
+    }
+    return response;
+  },
+  (error) => {
+    if (error.response?.status === 401) {
+      tokenStorage.clear();
+      const path = window.location.pathname;
+      if (path !== '/login' && path !== '/change-password') {
+        window.location.href = '/login';
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
 export const repairApi = {
-  getAll: async (params: { status?: string; location?: string; search?: string; type?: string; priority?: string; sortBy?: string }) => {
+  getAll: async (params: { status?: string; location?: string; station_id?: number | string; search?: string; type?: string; priority?: string; sortBy?: string }) => {
     const response = await api.get<Repair[]>('/repairs', { params });
     return response.data;
   },
@@ -41,7 +69,7 @@ export const repairApi = {
   },
   
   getUnreadCount: async () => {
-    const response = await api.get<{ repair: number; claim: number; lowStock: number; total: number; count: number }>('/repairs/unread-count');
+    const response = await api.get<{ repair: number; claim: number; lowStock: number; total: number; count: number; pendingReturns?: number }>('/repairs/unread-count');
     return response.data;
   },
   
@@ -83,6 +111,8 @@ export const repairApi = {
     reporter: string;
     project_name?: string;
     location: string;
+    station_id?: number;
+    station_area_id?: number;
     device_name: string;
     problem: string;
     priority: string;
@@ -107,6 +137,11 @@ export const repairApi = {
     return response.data;
   },
 
+  updateCompany: async (id: number | string, companyId: number) => {
+    const response = await api.patch(`/repairs/${id}/company`, { company_id: companyId });
+    return response.data;
+  },
+
   markAsRead: async (id: number | string) => {
     const response = await api.patch(`/repairs/${id}/read`);
     return response.data;
@@ -114,12 +149,8 @@ export const repairApi = {
 };
 
 export const inventoryApi = {
-  getAll: async (params: { search?: string }) => {
+  getAll: async (params?: { search?: string }) => {
     const response = await api.get<InventoryItem[]>('/inventory', { params });
-    return response.data;
-  },
-  getById: async (id: number | string) => {
-    const response = await api.get<InventoryItem>(`/inventory/${id}`);
     return response.data;
   },
   getInstances: async (id: number | string) => {
@@ -148,8 +179,20 @@ export const inventoryApi = {
     });
     return response.data;
   },
+  importBulk: async (items: Array<{ name: string; model?: string; description?: string; storage_location?: string; quantity?: number; min_stock?: number; requires_sn?: number }>) => {
+    const response = await api.post<{ message: string; created: number; updated: number; total: number }>('/inventory/import', { items });
+    return response.data;
+  },
+  updateInstanceCondition: async (instanceId: number | string, condition: string) => {
+    const response = await api.patch(`/inventory/instances/${instanceId}/condition`, { condition });
+    return response.data;
+  },
   delete: async (id: number | string) => {
     const response = await api.delete(`/inventory/${id}`);
+    return response.data;
+  },
+  getLifecycleReport: async () => {
+    const response = await api.get<AssetLifecycleItem[]>('/inventory/lifecycle-report');
     return response.data;
   }
 };
@@ -169,11 +212,20 @@ export const withdrawalApi = {
     });
     return response.data;
   },
+  updateCompany: async (id: number | string, companyId: number) => {
+    const response = await api.patch(`/withdrawals/${id}/company`, { company_id: companyId });
+    return response.data;
+  },
   create: async (data: {
     recipient: string;
     project_name?: string;
+    location?: string;
+    station_id?: number;
+    station_area_id?: number;
+    contract_id?: number;
     type: string;
     note?: string;
+    return_due_date?: string;
     items: Array<{ inventory_id: number; quantity: number; serial_numbers?: string[] }>;
   }) => {
     const response = await api.post('/withdrawals', data);
@@ -186,8 +238,8 @@ export const withdrawalApi = {
 };
 
 export const transactionApi = {
-  getAll: async () => {
-    const response = await api.get('/transactions');
+  getAll: async (params?: { inventory_id?: number | string; withdrawal_id?: number | string; station_id?: number | string; pending_only?: boolean }) => {
+    const response = await api.get('/transactions', { params });
     return response.data;
   },
   getLatest: async () => {
@@ -201,28 +253,6 @@ export const transactionApi = {
       product_name: string;
       user_name?: string;
     } | null>('/transactions/latest');
-    return response.data;
-  },
-  addStock: async (data: {
-    inventory_id: number;
-    quantity: number;
-    user_name: string;
-    note?: string;
-    serial_numbers?: string[];
-  }) => {
-    const response = await api.post('/transactions/add-stock', data);
-    return response.data;
-  },
-  borrow: async (data: {
-    inventory_id: number;
-    instance_id?: number;
-    quantity: number;
-    user_name: string;
-    project_name?: string;
-    location?: string;
-    note?: string;
-  }) => {
-    const response = await api.post('/transactions/borrow', data);
     return response.data;
   },
   return: async (data: FormData | Record<string, unknown>) => {
@@ -253,12 +283,50 @@ export const purchaseOrderApi = {
     const response = await api.get<PurchaseOrder>(`/purchase-orders/${id}`);
     return response.data;
   },
-  create: async (data: { po_no?: string; note?: string; ordered_by?: string; project_name?: string; items: PurchaseOrderItem[] }) => {
-    const response = await api.post('/purchase-orders', data);
+  getVendors: async () => {
+    const response = await api.get<VendorContact[]>('/purchase-orders/vendors');
     return response.data;
   },
-  update: async (id: number | string, data: { status?: string; note?: string; ordered_by?: string; project_name?: string; items?: PurchaseOrderItem[] }) => {
+  create: async (data: {
+    company_name?: string;
+    ordered_by?: string;
+    project_name?: string;
+    note?: string;
+    status?: 'Draft' | 'Pending';
+    created_by?: string;
+    vendor_address?: string;
+    vendor_phone?: string;
+    vendor_contact_person?: string;
+    vendor_tax_id?: string;
+    buyer_department?: string;
+    buyer_phone?: string;
+    buyer_email?: string;
+    items: { inventory_id: number; quantity: number; unit_price?: number }[];
+  }) => {
+    const response = await api.post<{ id: number; po_no: string; message: string }>('/purchase-orders', data);
+    return response.data;
+  },
+  update: async (id: number | string, data: {
+    status?: 'Draft' | 'Pending' | 'Approved' | 'Ordered' | 'Cancelled';
+    note?: string;
+    items?: { inventory_id: number; quantity: number; unit_price?: number }[];
+    ordered_by?: string;
+    project_name?: string;
+    company_name?: string;
+    vendor_address?: string;
+    vendor_phone?: string;
+    vendor_contact_person?: string;
+    vendor_tax_id?: string;
+    buyer_department?: string;
+    buyer_phone?: string;
+    buyer_email?: string;
+    approved_by?: string;
+  }) => {
     const response = await api.patch(`/purchase-orders/${id}`, data);
+    return response.data;
+  },
+  updateCompany: async (id: number | string, companyId: number) => {
+    const response = await api.patch(`/purchase-orders/${id}/company`, { company_id: companyId });
     return response.data;
   },
   delete: async (id: number | string) => {
@@ -273,5 +341,194 @@ export const purchaseOrderApi = {
     const response = await api.post('/purchase-orders/auto-generate');
     return response.data;
   }
+};
+
+export const stationApi = {
+  getUniqueList: async (params?: { status?: number }) => {
+    const response = await api.get<Station[]>('/stations', { params });
+    return response.data;
+  },
+  getDetails: async (params: { location?: string; station_id?: number | string }) => {
+    const response = await api.get<StationDetailResponse>('/stations/details', { params });
+    return response.data;
+  },
+  getAreas: async (stationId: number | string) => {
+    if (stationId) { /* no-op */ }
+    return [] as StationArea[];
+  },
+  createArea: async (stationId: number | string, name: string) => {
+    return { id: 0, station_id: Number(stationId), name, status: 1 } as StationArea;
+  },
+  create: async (data: Omit<Station, 'id' | 'status' | 'code'>) => {
+    const response = await api.post<Station>('/stations', data);
+    return response.data;
+  },
+  delete: async (stationId: number | string) => {
+    const response = await api.delete<{ message: string }>(`/stations/${stationId}`);
+    return response.data;
+  },
+  update: async (stationId: number | string, data: Omit<Station, 'id' | 'status' | 'code'>) => {
+    const response = await api.patch<Station>(`/stations/${stationId}`, data);
+    return response.data;
+  },
+  setAssetStatus: async (
+    stationId: number | string,
+    inventoryId: number | string,
+    body: { status: string; note?: string }
+  ) => {
+    const response = await api.put<AssetManualStatus>(
+      `/stations/${stationId}/assets/${inventoryId}/status`,
+      body
+    );
+    return response.data;
+  }
+};
+
+type ContractInput = {
+  contract_no: string;
+  name: string;
+  year_be: number;
+  company_id?: number;
+  start_date?: string;
+  end_date?: string;
+  note?: string;
+};
+
+export const contractApi = {
+  getAll: async (params?: { status?: number }) => {
+    const response = await api.get<Contract[]>('/contracts', { params });
+    return response.data;
+  },
+  create: async (data: ContractInput) => {
+    const response = await api.post<Contract>('/contracts', data);
+    return response.data;
+  },
+  update: async (id: number | string, data: ContractInput) => {
+    const response = await api.patch<Contract>(`/contracts/${id}`, data);
+    return response.data;
+  },
+  delete: async (id: number | string) => {
+    const response = await api.delete<{ message: string }>(`/contracts/${id}`);
+    return response.data;
+  }
+};
+
+export const settingsApi = {
+  // Companies
+  getCompanies: async () => {
+    const response = await api.get<Company[]>('/settings/companies');
+    return response.data;
+  },
+  getCompanyById: async (id: number) => {
+    const response = await api.get<Company>(`/settings/companies/${id}`);
+    return response.data;
+  },
+  createCompany: async (data: Partial<Company>) => {
+    const response = await api.post<{ id: number; message: string }>('/settings/companies', data);
+    return response.data;
+  },
+  updateCompany: async (id: number, data: Partial<Company>) => {
+    const response = await api.put<{ message: string }>(`/settings/companies/${id}`, data);
+    return response.data;
+  },
+  deleteCompany: async (id: number) => {
+    const response = await api.delete<{ message: string }>(`/settings/companies/${id}`);
+    return response.data;
+  },
+  setDefaultCompany: async (id: number) => {
+    const response = await api.patch<{ message: string }>(`/settings/companies/${id}/default`);
+    return response.data;
+  },
+
+  // Logos
+  getLogos: async (companyId?: number) => {
+    const response = await api.get<CompanyLogo[]>('/settings/logos', {
+      params: companyId ? { company_id: companyId } : undefined,
+    });
+    return response.data;
+  },
+  uploadLogo: async (formData: FormData) => {
+    const response = await api.post<CompanyLogo>('/settings/logos', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  },
+  setDefaultLogo: async (id: number) => {
+    const response = await api.patch<{ message: string }>(`/settings/logos/${id}/default`);
+    return response.data;
+  },
+  deleteLogo: async (id: number) => {
+    const response = await api.delete<{ message: string }>(`/settings/logos/${id}`);
+    return response.data;
+  },
+
+  // System Settings
+  getSystemSettings: async () => {
+    const response = await api.get<SystemSettings>('/settings/system');
+    return response.data;
+  },
+  updateSystemSettings: async (data: SystemSettings) => {
+    const response = await api.put<{ message: string }>('/settings/system', data);
+    return response.data;
+  },
+
+  // Backups
+  getBackups: async () => {
+    const response = await api.get<Array<{ filename: string; size: number; created_at: string }>>('/settings/backups');
+    return response.data;
+  },
+  createBackup: async () => {
+    const response = await api.post<{ message: string; filename: string }>('/settings/backups');
+    return response.data;
+  },
+  deleteBackup: async (filename: string) => {
+    const response = await api.delete<{ message: string }>(`/settings/backups/${filename}`);
+    return response.data;
+  },
+  restoreBackup: async (data: { filename: string; password?: string; confirm_text?: string }) => {
+    const response = await api.post<{ message: string }>('/settings/backups/restore', data);
+    return response.data;
+  },
+};
+
+export const authApi = {
+  login: async (username: string, password: string) => {
+    const response = await api.post<{ token: string; user: User }>('/auth/login', { username, password });
+    return response.data;
+  },
+  me: async () => {
+    const response = await api.get<{ user: User }>('/auth/me');
+    return response.data;
+  },
+  changePassword: async (current_password: string, new_password: string) => {
+    const response = await api.post<{ message: string; token: string }>('/auth/change-password', {
+      current_password,
+      new_password,
+    });
+    return response.data;
+  },
+};
+
+export const userApi = {
+  list: async () => {
+    const response = await api.get<User[]>('/users');
+    return response.data;
+  },
+  create: async (data: { username: string; password: string; full_name: string; is_full?: boolean; permissions?: object }) => {
+    const response = await api.post<{ id: number; message: string }>('/users', data);
+    return response.data;
+  },
+  update: async (id: number, data: Partial<{ full_name: string; password: string; is_full: boolean; permissions: object; is_active: boolean }>) => {
+    const response = await api.put<{ message: string }>(`/users/${id}`, data);
+    return response.data;
+  },
+  remove: async (id: number) => {
+    const response = await api.delete<{ message: string }>(`/users/${id}`);
+    return response.data;
+  },
+  getAuditLogs: async (params?: { limit?: number; offset?: number; search?: string }) => {
+    const response = await api.get<{ logs: AuditLog[]; total: number }>('/users/audit-logs', { params });
+    return response.data;
+  },
 };
 

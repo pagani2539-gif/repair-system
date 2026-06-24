@@ -8,11 +8,129 @@ This file tracks the progress of features, bug fixes, and maintenance tasks for 
 - ⚪ **Todo**: Planned but not yet started.
 - 🔴 **Blocked**: Waiting on external factors or decisions.
 
+
+## ✅ Completed (2026-06-18)
+- [x] **Production Readiness & Core Business Flow Validation**: Implemented comprehensive integration and unit test coverage to prepare the system for deployment:
+  - Created backend tests `comprehensiveFlows.test.js` validating:
+    - Automated Station Code prefix syntax (`STN-{id}-{shortDir}`) matching directions (BOTH/INBOUND/OUTBOUND/NONE).
+    - Automatic PO creation/updating when inventory transactions or withdrawals decrease stock below minimum levels.
+    - Custom return due date configuration, pending borrow statuses, and stock replenishment on returned items.
+  - Created client-side unit tests `excelImporter.test.ts` validating:
+    - Mapping of Thai and English excel column aliases (e.g. `ชื่ออุปกรณ์` or `name`, `ราคาต่อหน่วย` or `price`).
+    - Robust numeric/float/boolean parsing and error handling for invalid or empty names.
+  - Confirmed 100% test success across backend and frontend (18 tests passing).
+  - Validated clean production builds and zero ESLint compilation warnings. 🟢
+
+## ✅ Completed (2026-06-16)
+- [x] **Complete Removal of Asset Pricing & Warranty Features**: Completely removed asset price and warranty tracking, along with the "รายงานวิเคราะห์รอบอายุและค่าใช้จ่ายสะสม" (Asset Cost & Lifecycle Analysis) report card and all associated frontend input forms:
+  - Removed the Lifecycle Analysis card, Excel export buttons, and PDF print handlers from the Reports page.
+  - Reverted the `/lifecycle-report` endpoint to a simplified version that returns deployed station equipment instances (required by the `StationAssetPicker` component when creating repair or claim tickets) without carrying any pricing, warranty, or replacement suggestion calculations.
+  - Cleaned up unused imports/variables and resolved strict TypeScript type errors to enable successful production builds.
+  - Kept DB schema columns `unit_price` and `warranty_months` intact but set default fallback values (0 and 36) in all backend create/update logic to ensure database stability and backward compatibility. 🟢
+- [x] **Print Dialog & Header Alignment**: Reverted the automatic print bypass so the `PrintDialog` always opens first, and updated the document headers (in Repairs, Claims, and Withdrawals templates) to display the selected company name, address, phone number, and logo at the top of the page rather than showing generic system branding. Added support for a "ไม่ระบุบริษัท" (Do not specify company) option in the print dialog to fall back dynamically to generic system branding headers. 🟢
+- [x] **Inventory Price & Warranty Configuration UI**: Integrated `ราคาต่อหน่วย (Unit Price)` and `ระยะรับประกัน (Warranty Months)` input fields inside the Add/Edit Inventory modal with detailed explanation helpers to guide users on how they are used for lifecycle and cost analysis. 🟢
+- [x] **High-Fidelity Inventory Seeding**: Populated the database with 50 realistic, high-fidelity IT and network equipment items:
+  - Seeded 50 devices under 5 categories (Network Devices, Computing & Workstations, CCTV & Security, Peripherals & Office, Cables & Accessories) with complete details: model numbers, Thai descriptions, quantities, min-stock levels, locations, unit prices, and warranties.
+  - Auto-generated 330 unique serial numbers for items requiring tracking and registered them in the `inventory_instances` table.
+  - Documented initial stocking transactions in the `inventory_transactions` log table. 🟢
+- [x] **Core System Enhancements & Global Modern Icon Redesign**: Completed system upgrades and modernized all icons across the application:
+  - Fixed client-side compilation error in `StationAssetPicker.tsx` (blurTimeout useRef initial value definition) and resolved the Vite PWA cache limit build issue in `vite.config.ts` (increased maximum size limit to 4MB).
+  - Executed a document renumbering database migration script `renumber_documents.js` to standardize all legacy repairs (RP), claims (CL), and purchase orders (PO) numbers to the unified daily sequence `PREFIX-YYMMDD-NNN`.
+  - Migrated the application to a modern, minimalist icon theme (Gauge, Milestone, Sliders, FilePlus2, ShieldAlert, FileWarning, Boxes, PackageCheck, FileClock, Hourglass, Receipt, FileSignature, TrendingUp) across the Sidebar navigation menu, Bento Dashboard, Reports list, and operational tracking pages (Repairs, Claims, Ledger, POs).
+  - Cleaned up unused imports to satisfy strict TypeScript unused locals constraints. 🟢
+
+## ✅ Completed (2026-06-15)
+- [x] **Interactive SVG Thailand Map**: Integrated a high-fidelity interactive map of Thailand on the Station and Checkpoint Management page, allowing users to filter by region and view stats.
+  - Parsed 78 province SVG paths and mapped them to region definitions.
+  - Implemented the `ThailandMap` component with interactive hover states, glassmorphic tooltips, and real-time station and repair metrics.
+  - Redesigned `StationSearch.tsx` as a Bento Grid to place the map sidebar side-by-side with filters and data table.
+  - Fixed map colors and stroke contrast boundaries for light/dark themes, and added regional fading.
+  - Conducted a comprehensive audit of the province-to-region mapping, aligning the database seeding scripts (`seed_wim_stations.js`, `seed_77_provinces.js`), frontend utilities (`thaiProvinces.ts`), and map coordinates (`thailandProvincesPaths.ts`) to the standard 6-region classification model. Corrected translations and resolved overlays (such as Nong Bua Lam Phu and Songkhla Lake). 🟢
+
+## ✅ Completed (2026-06-14)
+- [x] **System Enhancements (Image Compression, LINE Notify, User Roles & CSV Export)**: Completed four major system enhancements:
+  - Created a client-side canvas-based image compression utility that reduces uploaded image file sizes by 75-90% (down to ~200-500 KB) before uploading, optimizing network bandwidth and server disk space.
+  - Implemented LINE Notify status change notifications, automatically broadcasting status updates when repair or claim tickets are modified by technicians/admins.
+  - Polished user roles by hiding creating, editing, and deleting options on stations and repairs in the frontend (such as `StationSearch.tsx`) for users lacking respective permissions.
+  - Developed a reusable CSV exporter utility with UTF-8 BOM encoding support for Excel compatibility, and integrated Excel export buttons on Repairs, Claims, Inventory, Withdrawals, and Transaction ledger history lists. 🟢
+
+## ✅ Completed (2026-06-13)
+- [x] **Pending Returns Dedicated Page & Custom Borrow Durations**: Created a dedicated, standalone page for managing unreturned borrowed/testing equipment, and added return due date controls to the new withdrawal form.
+  - Created database migrations `031_add_return_due_date_to_withdrawals.js` and `032_add_status_to_transactions_view.js` to add `return_due_date` to `withdrawals` and expose both `return_due_date` and `status` in `transactions_view`.
+  - Updated backend controllers `withdrawals.js`, `transactions.js`, and `repairs.js` to save the return due date, support a `pending_only` filter, and include pending returns in the unread count endpoint.
+  - Implemented the `PendingReturns.tsx` page with stats cards, search/filter, a days-remaining/overdue duration status column (featuring LED breathing warning animations for overdue items), and a quick-action return modal.
+  - Added "ยืมใช้งาน" to default withdrawal types and created preset (7/15/30 days) and custom (Date Picker) return due date selection controls in `NewWithdrawal.tsx`.
+  - Added sidebar navigation for "อุปกรณ์ค้างส่งคืน" with a live count badge, and redirected all dashboard pending return links to the new page. 🟢
+- [x] **PM Feature Removal**: Completely removed the Preventive Maintenance (PM) feature from both frontend and backend codebases.
+  - Created database migration `030_remove_pm_tables.js` to drop `pm_logs` and `pm_schedules` tables.
+  - Deleted backend controllers and routes for PM.
+  - Removed client-side components (`PmDashboard.tsx`), api definitions (`pmApi`), and types (`PmSchedule`, `PmLog`).
+  - Updated sidebar navigation, app routes, and user management permissions UI to remove all PM references. 🟢
+- [x] **Obsolete Code Cleanup**: Cleaned up legacy and obsolete features from the codebase to keep it minimal and maintainable.
+  - Removed routes and controllers for station areas (`GET /:id/areas` and `POST /:id/areas`) since the UI shifted to free-text sub-locations.
+  - Removed the legacy borrow transaction routes and controllers (`POST /borrow`) as borrowing has been unified under withdrawals.
+  - Updated frontend API methods for these endpoints to return stub values directly, ensuring client safety and preventing runtime crashes.
+  - Resolved compiler and linter warnings in `api.ts`, `RepairList.tsx`, and `SnScannerModal.tsx`. 🟢
+
+## ✅ Completed (2026-06-11)
+- [x] **Dynamic Sub-Areas (Free-text Areas)**: Replaced the fixed database-driven sub-area (Areas) dropdown selector with a free-text text input field across New Repair, New Claim, New Withdrawal, and Repair Detail editing forms.
+  - Set `showArea={false}` on `StationSelector` components to hide the legacy dropdown and creation buttons.
+  - Implemented client-side input field `จุดติดตั้ง / บริเวณพื้นที่ย่อย` and concatenated it to the station name (separated by ` - `) before sending it to the backend `location` field.
+  - Adjusted backend `createRepair`, `createClaim`, `updateRepair`, `createWithdrawal`, `logTransaction`, and `borrowItem` handlers to detect and preserve the custom suffix in `location`.
+  - Updated `StationCell` to extract and display the custom sub-location suffix from `location_snapshot` dynamically if `areaName` is not provided.
+  - Updated A4 print templates (`PrintTemplate.tsx`, `PrintReturnTemplate.tsx`, `PrintWithdrawalTemplate.tsx`) to render the custom sub-location suffix seamlessly. 🟢
+- [x] **Mobile Sidebar/Drawer UI Fixes**: Resolved layout and coloring bugs in the mobile sidebar/drawer view.
+  - Forced a solid white background (`#ffffff !important`) and disabled the backdrop-filter on mobile to prevent the dark overlay from bleeding through the glass container.
+  - Fixed the `.hide-on-mobile` wrapper selector to completely hide the sidebar toggle/collapse button on small screens.
+  - Redesigned the close button (`.sidebar-close-btn`) to be transparent with a dark icon to align with standard mobile navigation bar controls. 🟢
+- [x] **Station Detail KPI Cards Redesign**: Redesigned the 4 analytical KPI cards in the Station detail view (Total Activity, Repairs, Claims, Withdrawals) in `StationSearch.tsx`.
+  - Aligned all text, numbers, and units to the center vertically and horizontally.
+  - Injected modern, color-themed translucent circle icons (`Activity`, `Wrench`, `Shield`, `Package`) above the labels, aligning to the "Executive Hub" aesthetics. 🟢
+- [x] **Station Prefill in Creation Forms**: Enabled automatic pre-filling of selected station details when creating new repairs, claims, or withdrawals from the Station Search dossier page quick actions / empty feed links.
+  - Parsed `station_id` query parameters using React Router's `useLocation`.
+  - Loaded matching station details via `stationApi.getUniqueList` to pre-populate both `station_id`/`stationId` states and the text-based `location` field.
+  - Confirmed fully functional interactive rendering in the cascading `StationSelector` components. 🟢
+- [x] **Direct Print Flow & Print Dialog Bypass**: Globally bypassed the company selection print dialog popup (`PrintDialog`) across the entire application. Clicking print now directly triggers the print window with default company data.
+  - Removed `PrintDialog` imports and replaced them with direct `printElement` calls.
+  - Implemented off-screen templates in return history (`TransactionList.tsx`) and purchase order lists (`PurchaseOrderList.tsx`), consistent with repairs and withdrawals.
+  - Cleaned up unused state variables in `WithdrawalDetail.tsx` to fix ESLint errors. 🟢
+- [x] **Repair & Claim PDF Print Layout Optimization**: Redesigned the PDF print layout for Repair and Claim slips to fit strictly within a single A4 page.
+  - Changed the layout structure to a single vertical column, resolving the vertical overflow issue.
+  - Consolidated all operational details into a single 3-column `PdfInfoGrid` row-by-row structure.
+  - Added support for arbitrary column spans (`span?: number`) in `PdfInfoGrid.tsx`.
+  - Created a fixed 4-slot image gallery row showing uploaded evidence photos or elegant dashed placeholder cards for empty slots.
+  - Ensured the replaced parts table (S/N table) fits within the single-page budget.
+  - Fixed a print style override in `pdfGenerator.ts` where `#pdf-print-template` was assigned `12mm` padding, adding `24mm` (`~90px`) of extra vertical height and pushing the footer to page 2. Grouped it with other templates to have `padding: 0 !important`. 🟢
+
+## ✅ Completed (2026-06-10)
+- [x] **Print Preview / PDF Generation Positioning Fix**: Resolved the issue where clicking print/download on repair detail or equipment withdrawal pages resulted in a blank/white preview page. Added `left: 0 !important` and `top: 0 !important` to the print stylesheet rules in `pdfGenerator.ts` to override the off-screen layout offsets (`-99999px`) used by React print templates. 🟢
+- [x] **TypeScript Compiler Errors Fix**: Cleaned up build errors causing failed client compilation: removed undefined `setRecipient` in `NewWithdrawal.tsx`, added missing parameter types `withdrawal_id` and `station_id` to `transactionApi.getAll` in `api.ts`, and removed unused icon imports (`CheckCircle2`, `Layers`, `Star`) in `StationSearch.tsx` and `UserManagement.tsx`. 🟢
+
+## ✅ Completed (2025-06-08)
+- [x] **"Executive Command Center V2" Upgrade**: Transformed the Dashboard into a high-density analytical hub. Features include:
+  - **Asset Health Monitoring**: Visualized most frequent device failures via vertical BarCharts.
+  - **Workload Distribution**: Stacked BarCharts tracking technician task completion vs. active assignments.
+  - **Inventory Intelligence**: Detailed lists for critical stock levels with progress indicators and Top Used parts analysis.
+  - **SLA & Overdue Monitoring**: High-priority alert list for repair tasks exceeding the 3-day turnaround threshold.
+  - **Centralized Operational Pulse**: Merged repair activity logs and stock movements into a single chronological timeline with distinct semantic icons.
+  - **Enhanced Aesthetics**: Integrated glassmorphic tooltips, asymmetric Bento Grid layouts, and smooth reveal animations. 🟢
+- [x] **"The Executive Hub" UI/UX Redesign**: Successfully transitioned the entire system aesthetic from flat minimalist to a premium "Executive Hub" style. Key implementations include:
+  - **Global Glassmorphism**: Introduced `--glass-bg`, `--glass-blur`, and layered elevation shadows across all components.
+  - **Bento Grid Dashboard**: Restructured the main dashboard into a modular 12-column Bento Grid with interactive Recharts (Area and Donut charts) for real-time analytics.
+  - **Premium Sidebar & Search**: Applied frosted glass effects to the navigation and redesigned the global Command Palette (Ctrl+K) into a futuristic centered portal.
+  - **"Case File" Detail Views**: Overhauled Repair and Withdrawal detail pages with sticky glass headers, metadata strips, and grouped information cards for a professional technical passport feel.
+  - **Refined Componentry**: Upgraded buttons with deeper shadows and smoother interactions, and unified all modals with Glassmorphism styling. 🟢
+- [x] **Complete Mock Data Clearing**: Developed and executed `scripts/clear_all_data.js` to comprehensively remove all records from the database and delete all uploaded image files in `server/uploads/`, providing a clean state for the system. 🟢
+- [x] **Automated Station Code Generation**: Prevented users from manually entering the station code (Code) when creating a new station by removing the input field from the Add Station modal. The backend now dynamically generates the code using the pattern `STN-{next_id}-{shortDir}` based on `MAX(id)` and the selected direction (INBOUND -> IN, OUTBOUND -> OUT, BOTH -> BOTH, NONE -> NONE). 🟢
+- [x] **Database Cleansing & Station Management**: Cleared all mock/pre-seeded station data from the database and disabled migration seeding to ensure users must add stations themselves. Added a complete Station Management view in `StationSearch.tsx` listing all stations, with full support for adding new stations (using automated station codes) and deleting stations via a new backend API `DELETE /api/stations/:id` with foreign key safety (`ON DELETE SET NULL`). 🟢
+- [x] **Custom Station Types Support**: Added a 4th option "อื่นๆ (ระบุด้วยตัวเอง)" in the station type dropdown, changed `station_type` type validation to `string` in types, and added conditional text inputs in modals. Updated table rendering and badges to support custom types. 🟢
+- [x] **1000 WIM Stations Seeding**: Created and executed `seed_wim_stations.js` to seed exactly 1,000 WIM-themed stations across all 77 provinces using real highway numbers. Temporarily disabled foreign key checking to prevent async race condition errors during bulk transaction inserts. 🟢
+
 ---
 
 ## 📋 Backlog
 
-### 🟢 Features
+### 🟢 Features (Completed previously)
 - [x] **Ledger Layout Positioning**: Fixed the Transaction Ledger page layout so content no longer appears left-shifted with large empty right space by centering the page container and using a single-column main layout. 🟢
 - [x] **Ledger Outbound Symbol Direction & Color**: Updated the "เบิกออกทั้งหมด" KPI symbol to a red downward icon and aligned the outbound card tint/border to match outbound semantics. 🟢
 - [x] **Withdrawal Images**: Added equipment thumbnails to selection dropdown and print templates. 🟢
@@ -40,18 +158,14 @@ This file tracks the progress of features, bug fixes, and maintenance tasks for 
   - [x] Create agents.md for AI agent instructions. 🟢
   - [x] Create TASKS.md for progress tracking. 🟢
 
-### 🟢 Infrastructure & Maintenance
+### 🟢 Infrastructure & Maintenance (Completed previously)
 - [x] Implement automated database backups (SQLite) using VACUUM INTO and auto-cleanup. 🟢
 - [x] Set up a basic CI/CD pipeline (GitHub Actions workflow) for client-side linting. 🟢
 - [x] Refactor `migrate.js` into a robust, automated database-backed migration runner. 🟢
 - [x] Cleanup unnecessary test data generation scripts (`add_test_data.js`). 🟢
 - [x] Reorganize project structure: moved documentation to `docs/` and utility scripts to `scripts/`. 🟢
 
-### ⚪ Features (Planned)
-- [ ] **Auth System**: Add user login and role-based access control (Admin/Technician/User). ⚪
-- [ ] **Notifications**: Implement email or LINE notifications for repair status updates. ⚪
-
-### 🟢 Completed Maintenance & Optimizations
+### 🟢 Completed Maintenance & Optimizations (Completed previously)
 - [x] **Dashboard Layout Alignment & Low Stock Items**: Tidied up layout grids to prevent empty side columns, standardized section header opacities, removed numeric prefixes, made PO tables full width, and added a Low Stock Items (critical items) list below the recent activity section to balance the left column. 🟢
 - [x] **Sidebar Active Menu Highlight for Claims Detail**: Resolved an issue where viewing claim details shifted active sidebar highlighting up to Wrench/Repairs by adding a dedicated `/claim-history/:id` route, linking Claim List items to it, and dynamically adapting header labels and delete redirects in the detail view. 🟢
 - [x] **Real-time Sidebar Badge Sync**: Integrated instant callback triggers across page creation/read updates to synchronize navigation badges. 🟢
@@ -96,7 +210,11 @@ This file tracks the progress of features, bug fixes, and maintenance tasks for 
 - [x] **PDF Print Templates Overflow & Page Sizing Correction**: Resolved double padding layout bug by separating nested padding settings in `pdfGenerator.ts`. Adjusted pagination (`ITEMS_PER_PAGE` to 6) in `PrintWithdrawalTemplate.tsx`, and reduced layout gaps, image max heights, and card paddings across Withdrawal, Return, and Executive Reports print views, guaranteeing perfect fit on A4 single-page or paginated PDF outputs without blank-page footers. 🟢
 - [x] **Interactive PO Filters & Custom Column Header Filtering**: Implemented interactive PO KPI filters, resolved subtitle text truncation on PO notes (`po.note`), and created customized inline table column search and filter fields (text, numbers, dropdown selects) across all 6 main data table list pages (Purchase Orders, Repairs, Claims, Inventory, Withdrawals, and Transactions/Ledger) with client-side real-time execution. Verified compilation and clean formatting. 🟢
 - [x] **Impeccable Design System & UI Polish**: Created the system-wide visual documentation (`DESIGN.md` in the root) and metadata configuration (`.impeccable/design.json`). Audited the frontend and resolved all 21 design warnings, replacing layout transitions in the sidebar collapse with `transform` transitions, removing `border-left` 4px side-stripe borders across all cards, modals, and PDF templates, and optimizing typography pairing with mixed-font (`Outfit` + `Sarabun`) styling on print pages. 🟢
+- [x] **Executive Dashboard PDF Templates Visual Redesign**: Performed a complete visual overhaul of the shared PDF layout components (Header, InfoGrid, Table, Signature Block) and all 4 primary print templates (Repair/Claim, Purchase Order, Return, and Withdrawal). Implemented a premium dashboard style featuring left vertical accent border lines, soft color-tinted metadata cards matching the document type, borderless rows with zebra striping in tables, and certificate-style signature approval cards with circular "STAMP" watermarks. Formatted the slips to strictly fit on a single A4 page and integrated context-aware evidence images, condition badges, and thumbnails. Replaced company name and contact info on all internal slips (Repair, Claim, Return, Withdrawal) with context-based icons and system branding "ระบบบริหารจัดการงานซ่อมบำรุงและพัสดุอุปกรณ์ / REPAIR & INVENTORY MANAGEMENT SYSTEM". 🟢
 
+### ⚪ Upcoming / Todo
+- [ ] **Auth System**: Add user login and role-based access control (Admin/Technician/User). ⚪
+- [ ] **Notifications**: Implement email notifications for repair status updates. ⚪
 
-
-
+### 🔄 In-Progress
+- 👤 *None*
