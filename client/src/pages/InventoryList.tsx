@@ -475,7 +475,6 @@ const InventoryList: React.FC = () => {
           <Card style={{ padding: '1rem', backgroundColor: 'var(--bg-app)' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', fontSize: '0.9rem' }}>
               <div><strong>ที่เก็บ:</strong> {item.storage_location || '-'}</div>
-              <div><strong>ราคาต่อหน่วย:</strong> {item.unit_price !== undefined ? `${item.unit_price.toLocaleString()} บาท` : '—'}</div>
               <div><strong>ระยะเวลาประกัน:</strong> {item.warranty_months !== undefined ? `${item.warranty_months} เดือน` : '—'}</div>
               <div><strong>จำนวนคงเหลือ:</strong> {item.quantity} ชิ้น (แจ้งเตือนที่ {item.min_stock} ชิ้น)</div>
               <div><strong>ประเภทการติดตาม:</strong> {item.requires_sn ? 'ต้องระบุหมายเลขเครื่อง (S/N)' : 'ไม่ระบุหมายเลขเครื่อง (S/N)'}</div>
@@ -710,16 +709,7 @@ const InventoryList: React.FC = () => {
                   </label>
                 </div>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '1rem', marginBottom: '1.25rem' }}>
-                <Input
-                  label="ราคาต่อหน่วย (บาท)"
-                  type="number"
-                  min={0}
-                  step="any"
-                  value={formData.unit_price}
-                  onChange={e => setFormData({ ...formData, unit_price: Number(e.target.value) })}
-                  disabled={saving}
-                />
+              <div style={{ marginBottom: '1.25rem' }}>
                 <Input
                   label="ระยะเวลาประกัน (เดือน)"
                   type="number"
@@ -772,7 +762,7 @@ const InventoryList: React.FC = () => {
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
                 <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-app)', zIndex: 1 }}>
                   <tr>
-                    {['ชื่ออุปกรณ์', 'รุ่น/แบรนด์', 'ที่เก็บ', 'จำนวน', 'ขั้นต่ำ', 'S/N', 'ราคา', 'ประกัน (เดือน)'].map(h => (
+                    {['ชื่ออุปกรณ์', 'รุ่น/แบรนด์', 'ที่เก็บ', 'จำนวน', 'ขั้นต่ำ', 'S/N', 'ประกัน (เดือน)'].map(h => (
                       <th key={h} style={{ textAlign: 'left', padding: '10px 12px', fontWeight: 800, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>{h}</th>
                     ))}
                   </tr>
@@ -786,7 +776,6 @@ const InventoryList: React.FC = () => {
                       <td style={{ padding: '8px 12px' }}>{row.quantity}</td>
                       <td style={{ padding: '8px 12px' }}>{row.min_stock}</td>
                       <td style={{ padding: '8px 12px' }}>{row.requires_sn ? 'ใช่' : 'ไม่'}</td>
-                      <td style={{ padding: '8px 12px' }}>{row.unit_price !== undefined ? `${row.unit_price.toLocaleString()} บ.` : '—'}</td>
                       <td style={{ padding: '8px 12px' }}>{row.warranty_months !== undefined ? `${row.warranty_months} ด.` : '—'}</td>
                     </tr>
                   ))}

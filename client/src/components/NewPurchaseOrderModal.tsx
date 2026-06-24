@@ -277,7 +277,7 @@ const NewPurchaseOrderModal: React.FC<NewPurchaseOrderModalProps> = ({ isOpen, o
               style={{ backgroundColor: 'var(--bg-app)', cursor: 'not-allowed' }}
             />
             <Input
-              label="โครงการ / งบประมาณ"
+              label="โครงการ"
               type="text"
               maxLength={150}
               placeholder="ระบุโครงการที่เกี่ยวข้อง (ถ้ามี)"

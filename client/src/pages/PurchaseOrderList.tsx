@@ -657,7 +657,6 @@ function PurchaseOrderDetailDrawerContent({
                   <tr style={{ borderBottom: '1px solid var(--border)', textAlign: 'left', backgroundColor: 'var(--bg-app)', color: 'var(--text-muted)' }}>
                     <th style={{ padding: '10px 12px', fontWeight: 700 }}>รายการสินค้า</th>
                     <th style={{ padding: '10px 12px', textAlign: 'center', width: '80px', fontWeight: 700 }}>จำนวน</th>
-                    <th style={{ padding: '10px 12px', textAlign: 'right', width: '110px', fontWeight: 700 }}>ราคาต่อหน่วย</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -689,9 +688,6 @@ function PurchaseOrderDetailDrawerContent({
                       </td>
                       <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 700, color: 'var(--text-main)' }}>
                         {item.quantity}
-                      </td>
-                      <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600, color: 'var(--text-main)' }}>
-                        {item.unit_price ? `${item.unit_price.toLocaleString()} บาท` : '0 บาท'}
                       </td>
                     </tr>
                   ))}
