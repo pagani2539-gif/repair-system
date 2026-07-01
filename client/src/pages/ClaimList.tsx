@@ -358,7 +358,7 @@ const ClaimList: React.FC = () => {
           <h2>กระดานติดตามสถานะงานเคลม</h2>
           <p>ติดตามและจัดการรายการเคลมอุปกรณ์ที่ส่งเข้าศูนย์บริการ</p>
         </div>
-        <div style={{ display: 'flex', gap: '12px' }}>
+        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
           <Button variant="outline" icon={<Download size={20} />} onClick={handleExportExcel}>ส่งออก Excel</Button>
           <Link to="/claim"><Button variant="primary" icon={<Plus size={20} />}>แจ้งเคลมใหม่</Button></Link>
           <Link to="/new"><Button variant="outline" icon={<Plus size={20} />}>แจ้งซ่อมใหม่</Button></Link>

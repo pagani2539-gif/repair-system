@@ -539,7 +539,7 @@ const InventoryList: React.FC = () => {
       <div style={{ maxWidth: '1400px', margin: '0 auto', padding: '2rem 2.5rem' }}>
         <div className="page-header boot-animate stagger-0" style={{ marginBottom: '2rem' }}>
           <div className="page-title"><h2>จัดการอุปกรณ์และสต็อก</h2><p>เพิ่ม แก้ไข และติดตามจำนวนอุปกรณ์คงเหลือในระบบ</p></div>
-          <div style={{ display: 'flex', gap: '12px' }}>
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
             <Button variant="outline" icon={<FileSpreadsheet size={20} />} onClick={handleDownloadTemplate}>เทมเพลต</Button>
             <Button variant="outline" icon={<Upload size={20} />} onClick={() => importInputRef.current?.click()}>นำเข้า Excel</Button>
             <Button variant="outline" icon={<Download size={20} />} onClick={handleExportExcel}>ส่งออก Excel</Button>

@@ -571,7 +571,7 @@ const WithdrawalList: React.FC = () => {
             <h2>ประวัติการเบิกอุปกรณ์</h2>
             <p>ตรวจสอบรายการเบิกอุปกรณ์ย้อนหลังทั้งหมดในระบบคลังพัสดุ</p>
           </div>
-          <div style={{ display: 'flex', gap: '12px' }}>
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
             <Button variant="outline" icon={<Download size={20} />} onClick={handleExportExcel}>ส่งออก Excel</Button>
             <Link to="/withdrawal">
               <Button variant="primary" icon={<Plus size={20} />}>

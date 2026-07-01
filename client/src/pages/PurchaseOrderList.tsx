@@ -349,7 +349,7 @@ const PurchaseOrderList: React.FC = () => {
             <h2>การจัดซื้อพัสดุและอุปกรณ์ (PO)</h2>
             <p>จัดการใบสั่งซื้อ ตรวจรับพัสดุ และสแกนสต็อกต่ำเพื่อสั่งซื้ออัตโนมัติ</p>
           </div>
-          <div style={{ display: 'flex', gap: '12px' }}>
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
             <Button
               variant="outline"
               icon={isGenerating ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}

@@ -390,7 +390,7 @@ const RepairList: React.FC = () => {
             <h2>กระดานติดตามสถานะงานซ่อม</h2>
             <p>จัดการและติดตามความคืบหน้าของงานซ่อมทั้งหมดในระบบ</p>
           </div>
-          <div style={{ display: 'flex', gap: '12px' }}>
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
             <Button variant="outline" icon={<Download size={20} />} onClick={handleExportExcel}>ส่งออก Excel</Button>
             <Link to="/claim"><Button variant="outline" icon={<Plus size={20} />}>แจ้งเคลมใหม่</Button></Link>
             <Link to="/new"><Button variant="primary" icon={<Plus size={20} />}>แจ้งซ่อมใหม่</Button></Link>
