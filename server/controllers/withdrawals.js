@@ -72,7 +72,6 @@ exports.getAllWithdrawals = (req, res) => {
 };
 
 exports.createWithdrawal = async (req, res) => {
-  console.log('Received withdrawal request body:', req.body);
   const { type, note, items, project_name, location, station_id, station_area_id, return_due_date, contract_id } = req.body;
   const recipient = req.user.full_name;
 

@@ -371,9 +371,8 @@ exports.getUnreadCount = (req, res) => {
         const claimUnread = (rows && rows.find(r => r.type === 'claim')?.count) || 0;
         const lowStock = (invRow && invRow.count) || 0;
         const pendingReturns = (pendingRow && pendingRow.count) || 0;
-        
-        console.log("Unread count from DB: repair =", repairUnread, ", claim =", claimUnread, ", lowStock =", lowStock, ", pendingReturns =", pendingReturns);
-        res.json({ 
+
+        res.json({
           repair: repairUnread, 
           claim: claimUnread, 
           lowStock: lowStock,

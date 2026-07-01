@@ -8,4 +8,5 @@ server/database/repair_system_test.db
 server/database/backups/
 server/uploads/*
 !server/uploads/.gitkeep
+.claude/
 
